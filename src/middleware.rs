@@ -60,7 +60,7 @@ pub async fn audit(
     resource: Option<&str>,
     ip: Option<&str>,
 ) {
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO audit_log (project_id, actor, action, resource, ip) VALUES ($1, $2, $3, $4, $5)"
     )
     .bind(project_id)
@@ -69,5 +69,7 @@ pub async fn audit(
     .bind(resource)
     .bind(ip)
     .execute(pool)
-    .await;
+    .await {
+        tracing::warn!("Audit log write failed: {}", e);
+    }
 }

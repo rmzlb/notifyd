@@ -38,7 +38,7 @@ pub async fn register_token(
     .bind(req.device_name.as_deref())
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({"success": true})))
 }
@@ -58,7 +58,7 @@ pub async fn list_tokens(
     .bind(&subscriber_id)
     .fetch_all(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let items: Vec<Value> = tokens.iter().map(|t| json!({
         "id": t.id,
@@ -81,7 +81,7 @@ pub async fn delete_token(
     sqlx::query("DELETE FROM push_tokens WHERE id=$1 AND project_id=$2")
         .bind(id).bind(&project.id)
         .execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({"success": true})))
 }

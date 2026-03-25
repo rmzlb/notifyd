@@ -69,7 +69,7 @@ pub async fn list_notifications(
     .bind(limit)
     .fetch_all(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     // Apply in-memory filter (simple, avoids dynamic SQL)
     let search = query.q.as_deref().unwrap_or("").to_lowercase();
@@ -120,7 +120,7 @@ pub async fn unread_count(
     .bind(&sub_id)
     .fetch_one(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({"unread_count": count})))
 }
@@ -174,7 +174,7 @@ pub async fn update_notification(
     .bind(&sub_id)
     .fetch_one(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let ev = json!({"type": "count_update", "unread_count": count});
     state.broadcaster.send(&project_id, &sub_id, ev.to_string()).await;
@@ -196,12 +196,25 @@ pub async fn read_all(
     .bind(&sub_id)
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let ev = json!({"type": "count_update", "unread_count": 0});
     state.broadcaster.send(&project_id, &sub_id, ev.to_string()).await;
 
     Ok(Json(json!({"success": true, "updated": result.rows_affected()})))
+}
+
+/// POST /v1/inbox/:subscriber_id/stream-ticket
+/// Returns a one-time ticket for SSE connection (valid 60s).
+/// Avoids putting JWT in query params where it can leak into logs.
+pub async fn stream_ticket(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(subscriber_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
+    let ticket = state.broadcaster.issue_ticket(&project_id, &sub_id).await;
+    Ok(Json(json!({"ticket": ticket, "expires_in_seconds": 60})))
 }
 
 pub async fn sse_stream(
@@ -210,18 +223,26 @@ pub async fn sse_stream(
     Query(query): Query<InboxQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<Value>)> {
-    // Accept token via query param for EventSource (can't set headers)
-    let headers = if let Some(token) = &query.token {
-        let mut h = headers.clone();
-        if let Ok(val) = axum::http::HeaderValue::from_str(&format!("Bearer {}", token)) {
-            h.insert("authorization", val);
+    // Prefer one-time ticket (no JWT in URL/logs)
+    let (project_id, sub_id) = if let Some(ticket) = &query.token {
+        // Try ticket first
+        if let Some((pid, sid)) = state.broadcaster.consume_ticket(ticket).await {
+            if sid == subscriber_id {
+                (pid, sid)
+            } else {
+                return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Ticket subscriber mismatch"}))));
+            }
+        } else {
+            // Fallback to JWT (backward compat)
+            let mut h = headers.clone();
+            if let Ok(val) = axum::http::HeaderValue::from_str(&format!("Bearer {}", ticket)) {
+                h.insert("authorization", val);
+            }
+            auth_inbox(&state, &h, &subscriber_id).await?
         }
-        h
     } else {
-        headers
+        auth_inbox(&state, &headers, &subscriber_id).await?
     };
-
-    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     let rx = state.broadcaster.subscribe(&project_id, &sub_id).await;
 

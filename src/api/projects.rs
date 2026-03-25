@@ -70,7 +70,7 @@ pub async fn create_project(
     .bind(req.settings.as_ref().unwrap_or(&json!({})))
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({
         "success": true,
@@ -94,7 +94,7 @@ pub async fn list_projects(
     )
     .fetch_all(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let projects: Vec<Value> = rows.iter().map(|(id, name, channels, rate_limit, created_at)| json!({
         "id": id,
@@ -128,7 +128,7 @@ pub async fn rotate_key(
     .bind(&new_hash)
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({
         "success": true,
@@ -148,7 +148,7 @@ pub async fn revoke_secondary(
 
     sqlx::query("UPDATE projects SET secondary_api_key = NULL, secondary_api_key_hash = NULL, updated_at = now() WHERE id = $1")
         .bind(&id).execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({"success": true, "message": "Secondary key revoked"})))
 }
@@ -163,7 +163,7 @@ pub async fn delete_project(
 
     let result = sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(&id).execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Project not found"}))));
@@ -195,7 +195,7 @@ pub async fn audit_log(
     .bind(limit)
     .fetch_all(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let entries: Vec<Value> = rows.iter().map(|(id, project_id, actor, action, resource, metadata, ip, created_at)| json!({
         "id": id,

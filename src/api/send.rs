@@ -40,9 +40,9 @@ pub async fn extract_project(
         ));
     }
 
-    // 1. Check TOML config (fast path, no DB hit)
+    // 1. Check TOML config (fast path, constant-time compare)
     for (id, proj) in &state.config.projects {
-        if proj.api_key == api_key {
+        if constant_time_eq(proj.api_key.as_bytes(), api_key.as_bytes()) {
             return Ok(Project { id: id.clone(), rate_limit: 600 });
         }
     }
@@ -66,6 +66,18 @@ pub async fn extract_project(
     }
 
     Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid API key"}))))
+}
+
+/// Constant-time byte comparison to prevent timing attacks on API key validation
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 // ─── Request types ────────────────────────────────────────────────────────────
@@ -174,7 +186,7 @@ pub async fn send_notification(
         .bind(idem_key.as_deref())
         .fetch_one(&state.pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
         job_ids.push(job_id);
     }
@@ -232,7 +244,7 @@ pub async fn batch_notification(
             .bind(scheduled_at)
             .execute(&state.pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
             total += 1;
         }
     }

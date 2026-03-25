@@ -57,7 +57,7 @@ impl SmsConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("SMS sent via Twilio to {}", req.recipient);
+            info!("SMS sent via Twilio to {}", crate::pii::mask_phone(&req.recipient));
             Ok(())
         } else {
             let status = res.status();
@@ -91,7 +91,7 @@ impl SmsConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("SMS sent via Telnyx to {}", req.recipient);
+            info!("SMS sent via Telnyx to {}", crate::pii::mask_phone(&req.recipient));
             Ok(())
         } else {
             let status = res.status();

@@ -46,7 +46,7 @@ impl Connector for ResendConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("Email sent via Resend to {}", req.recipient);
+            info!("Email sent via Resend to {}", crate::pii::mask_email(&req.recipient));
             Ok(())
         } else {
             let status = res.status();

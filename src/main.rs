@@ -2,6 +2,7 @@ mod config;
 mod connectors;
 mod db;
 mod middleware;
+mod pii;
 mod sse;
 mod templates;
 mod worker;
@@ -75,12 +76,24 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
+    // CORS: restrict origins. Configure via CORS_ORIGINS env var (comma-separated)
+    // Default: allow common localhost ports for dev
+    let cors = {
+        let origins_str = std::env::var("CORS_ORIGINS").unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173".to_string());
+        let origins: Vec<_> = origins_str.split(',')
+            .filter_map(|s| s.trim().parse::<axum::http::HeaderValue>().ok())
+            .collect();
+        if origins.is_empty() {
+            CorsLayer::new().allow_origin(Any)
+        } else {
+            CorsLayer::new().allow_origin(origins)
+        }
+    }
         .allow_methods(Any)
         .allow_headers(Any);
 
     let app = api::router(state)
+        .layer(axum::extract::DefaultBodyLimit::max(1_048_576)) // 1MB max body
         .layer(cors)
         .layer(tower_http::trace::TraceLayer::new_for_http());
 

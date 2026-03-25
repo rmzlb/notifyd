@@ -31,7 +31,7 @@ pub async fn get_preferences(
     .bind(&subscriber_id)
     .fetch_all(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let items: Vec<Value> = prefs.iter().map(|p| json!({
         "channel": p.channel,
@@ -68,7 +68,7 @@ pub async fn set_preferences(
         .bind(pref.enabled)
         .execute(&state.pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
     }
 
     Ok(Json(json!({"success": true, "updated": req.preferences.len()})))

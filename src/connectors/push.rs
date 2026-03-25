@@ -45,7 +45,7 @@ impl Connector for PushConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("Push sent via FCM to token {}...", &req.recipient[..12.min(req.recipient.len())]);
+            info!("Push sent via FCM to {}", crate::pii::mask_recipient("push", &req.recipient));
             Ok(())
         } else {
             let status = res.status();

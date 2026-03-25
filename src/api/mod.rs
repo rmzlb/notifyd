@@ -45,6 +45,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/inbox/{subscriber_id}/unread-count", get(inbox::unread_count))
         .route("/inbox/{subscriber_id}/read-all", post(inbox::read_all))
         .route("/inbox/{subscriber_id}/{msg_id}", patch(inbox::update_notification))
+        .route("/inbox/{subscriber_id}/stream-ticket", post(inbox::stream_ticket))
         .route("/inbox/{subscriber_id}/stream", get(inbox::sse_stream))
         // Workflows
         .route("/workflows", post(workflows::create_workflow))

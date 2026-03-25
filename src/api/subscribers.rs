@@ -46,7 +46,7 @@ pub async fn upsert_subscriber(
     .bind(req.data.as_ref().unwrap_or(&json!({})))
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({"success": true, "id": req.id, "project_id": project.id})))
 }
@@ -65,7 +65,7 @@ pub async fn get_subscriber(
     .bind(&id)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let sub = sub.ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Subscriber not found"}))))?;
 
@@ -94,7 +94,7 @@ pub async fn delete_subscriber(
         .bind(&id)
         .execute(&state.pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Subscriber not found"}))));
