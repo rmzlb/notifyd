@@ -52,8 +52,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/workflows/:id", get(workflows::get_workflow).delete(workflows::delete_workflow))
         // Push tokens
         .route("/push-tokens", post(push_tokens::register_token))
-        .route("/push-tokens/:subscriber_id", get(push_tokens::list_tokens))
-        .route("/push-tokens/:id", delete(push_tokens::delete_token))
+        .route("/push-tokens/:id", get(push_tokens::list_tokens).delete(push_tokens::delete_token))
         // Admin
         .route("/admin/projects", post(projects::create_project).get(projects::list_projects))
         .route("/admin/projects/:id/rotate-key", post(projects::rotate_key))
