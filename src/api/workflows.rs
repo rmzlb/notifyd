@@ -155,12 +155,13 @@ pub async fn trigger_workflow(
     })))
 }
 
-/// GET /v1/workflows/runs?status=running
+/// GET /v1/workflows/runs?status=running&offset=0&limit=50
 #[derive(Deserialize)]
 pub struct RunsQuery {
     pub status: Option<String>,
     pub workflow_id: Option<String>,
     pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub async fn list_runs(
@@ -170,12 +171,21 @@ pub async fn list_runs(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
     let limit = q.limit.unwrap_or(50).min(200);
+    let offset = q.offset.unwrap_or(0).max(0);
+
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM workflow_runs WHERE project_id=$1"
+    )
+    .bind(&project.id)
+    .fetch_one(&state.pool).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let runs: Vec<WorkflowRun> = sqlx::query_as(
-        "SELECT id, project_id, workflow_id, subscriber_id, trigger_payload, current_step, status, step_state, resume_at, created_at, updated_at FROM workflow_runs WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2"
+        "SELECT id, project_id, workflow_id, subscriber_id, trigger_payload, current_step, status, step_state, resume_at, created_at, updated_at FROM workflow_runs WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
     )
     .bind(&project.id)
     .bind(limit)
+    .bind(offset)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
@@ -196,7 +206,7 @@ pub async fn list_runs(
         }))
         .collect();
 
-    Ok(Json(json!({"runs": items, "count": items.len()})))
+    Ok(Json(json!({"items": items, "total": total, "limit": limit, "offset": offset})))
 }
 
 /// DELETE /v1/workflows/runs/:id — cancel a run

@@ -40,6 +40,7 @@ async fn auth_inbox(
 #[derive(Deserialize)]
 pub struct InboxQuery {
     pub limit: Option<i64>,
+    pub offset: Option<i64>,
     pub filter: Option<String>,
     pub q: Option<String>,
     pub token: Option<String>, // SSE auth via query param
@@ -54,6 +55,16 @@ pub async fn list_notifications(
     let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     let limit = query.limit.unwrap_or(20).min(100);
+    let offset = query.offset.unwrap_or(0).max(0);
+
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM inbox_messages WHERE project_id=$1 AND subscriber_id=$2 AND archived_at IS NULL"
+    )
+    .bind(&project_id)
+    .bind(&sub_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let rows: Vec<InboxMessage> = sqlx::query_as(
         r#"
@@ -61,21 +72,21 @@ pub async fn list_notifications(
         FROM inbox_messages
         WHERE project_id=$1 AND subscriber_id=$2 AND archived_at IS NULL
         ORDER BY created_at DESC
-        LIMIT $3
+        LIMIT $3 OFFSET $4
         "#,
     )
     .bind(&project_id)
     .bind(&sub_id)
     .bind(limit)
+    .bind(offset)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    // Apply in-memory filter (simple, avoids dynamic SQL)
     let search = query.q.as_deref().unwrap_or("").to_lowercase();
     let filter = query.filter.as_deref().unwrap_or("all");
 
-    let notifications: Vec<Value> = rows.iter()
+    let items: Vec<Value> = rows.iter()
         .filter(|r| {
             if !search.is_empty() && !r.body.to_lowercase().contains(&search) {
                 return false;
@@ -100,9 +111,10 @@ pub async fn list_notifications(
         .collect();
 
     Ok(Json(json!({
-        "notifications": notifications,
-        "count": notifications.len(),
-        "has_more": rows.len() == limit as usize,
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     })))
 }
 

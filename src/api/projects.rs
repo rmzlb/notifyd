@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::AppState;
 
 /// Admin auth: requires ADMIN_API_KEY env var
-fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
+/// BUG FIX #2: Uses constant-time comparison to prevent timing attacks
+pub fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
     let admin_key = std::env::var("ADMIN_API_KEY").unwrap_or_default();
     if admin_key.is_empty() {
         return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "ADMIN_API_KEY not configured"}))));
@@ -15,11 +16,22 @@ fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if provided != admin_key {
+    if !constant_time_eq(provided.as_bytes(), admin_key.as_bytes()) {
         return Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Admin access required"}))));
     }
 
     Ok(())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[derive(Deserialize)]
@@ -172,12 +184,15 @@ pub async fn delete_project(
     Ok(Json(json!({"success": true})))
 }
 
-/// GET /v1/admin/audit?project_id=xxx&limit=100
+/// GET /v1/admin/audit?project_id=xxx&limit=100&offset=0
 #[derive(Deserialize)]
 pub struct AuditQuery {
+    #[allow(dead_code)]
     pub project_id: Option<String>,
+    #[allow(dead_code)]
     pub action: Option<String>,
     pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub async fn audit_log(
@@ -188,16 +203,22 @@ pub async fn audit_log(
     require_admin(&headers)?;
 
     let limit = q.limit.unwrap_or(100).min(500);
+    let offset = q.offset.unwrap_or(0).max(0);
+
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+        .fetch_one(&state.pool).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, Option<Value>, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT id, project_id, actor, action, resource, metadata, ip, created_at FROM audit_log ORDER BY created_at DESC LIMIT $1"
+        "SELECT id, project_id, actor, action, resource, metadata, ip, created_at FROM audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2"
     )
     .bind(limit)
+    .bind(offset)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let entries: Vec<Value> = rows.iter().map(|(id, project_id, actor, action, resource, metadata, ip, created_at)| json!({
+    let items: Vec<Value> = rows.iter().map(|(id, project_id, actor, action, resource, metadata, ip, created_at)| json!({
         "id": id,
         "project_id": project_id,
         "actor": actor,
@@ -208,11 +229,11 @@ pub async fn audit_log(
         "created_at": created_at,
     })).collect();
 
-    Ok(Json(json!({"entries": entries, "count": entries.len()})))
+    Ok(Json(json!({"items": items, "total": total, "limit": limit, "offset": offset})))
 }
 
 /// Hash an API key for storage (SHA-256, simple but sufficient for API keys)
-fn hash_key(key: &str) -> String {
+pub fn hash_key(key: &str) -> String {
     use sha2::{Sha256, Digest};
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());

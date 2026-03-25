@@ -11,6 +11,7 @@ use crate::{AppState, middleware};
 #[derive(Debug, Clone)]
 pub struct Project {
     pub id: String,
+    #[allow(dead_code)]
     pub rate_limit: u32,
 }
 
@@ -47,11 +48,13 @@ pub async fn extract_project(
         }
     }
 
-    // 2. Check DB (primary + secondary key)
+    // 2. Check DB (hash the incoming key and compare against stored hashes)
+    // BUG FIX #3: Never compare plaintext API keys in SQL
+    let api_key_hash = crate::api::projects::hash_key(api_key);
     let row: Option<(String, Option<i32>)> = sqlx::query_as(
-        "SELECT id, rate_limit_per_min FROM projects WHERE api_key = $1 OR secondary_api_key = $1"
+        "SELECT id, rate_limit_per_min FROM projects WHERE api_key_hash = $1 OR secondary_api_key_hash = $1"
     )
-    .bind(api_key)
+    .bind(&api_key_hash)
     .fetch_optional(&state.pool)
     .await
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "DB error"}))))?;

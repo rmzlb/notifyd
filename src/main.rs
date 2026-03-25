@@ -5,14 +5,23 @@ mod middleware;
 mod pii;
 mod sse;
 mod templates;
+mod webhooks;
 mod worker;
 mod workflow_engine;
 mod api;
 
+use axum::{
+    http::{Request, HeaderValue},
+    middleware::Next,
+    response::Response,
+};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::watch;
 use tower_http::cors::{CorsLayer, Any};
 use tracing::info;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,6 +29,40 @@ pub struct AppState {
     pub config: config::Config,
     pub broadcaster: sse::SseBroadcaster,
     pub rate_limiter: middleware::RateLimiter,
+    pub started_at: Instant,
+}
+
+// Implement manually since Instant doesn't impl Debug
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState").finish()
+    }
+}
+
+/// Feature #12: Request ID middleware
+async fn request_id_middleware(
+    mut req: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let request_id = req.headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    // Make available for tracing
+    let span = tracing::Span::current();
+    span.record("request_id", &request_id.as_str());
+
+    req.extensions_mut().insert(request_id.clone());
+
+    let mut response = next.run(req).await;
+
+    if let Ok(val) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", val);
+    }
+
+    response
 }
 
 #[tokio::main]
@@ -50,11 +93,18 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         broadcaster: broadcaster.clone(),
         rate_limiter: rate_limiter.clone(),
+        started_at: Instant::now(),
     });
+
+    // Feature #13: Graceful shutdown signal
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Worker
     let worker_state = state.clone();
-    tokio::spawn(async move { worker::run(worker_state).await; });
+    let worker_shutdown = shutdown_rx.clone();
+    let worker_handle = tokio::spawn(async move {
+        worker::run(worker_state, worker_shutdown).await;
+    });
 
     // SSE cleanup
     let cleanup_broadcaster = broadcaster.clone();
@@ -76,8 +126,6 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // CORS: restrict origins. Configure via CORS_ORIGINS env var (comma-separated)
-    // Default: allow common localhost ports for dev
     let cors = {
         let origins_str = std::env::var("CORS_ORIGINS").unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173".to_string());
         let origins: Vec<_> = origins_str.split(',')
@@ -93,7 +141,8 @@ async fn main() -> anyhow::Result<()> {
         .allow_headers(Any);
 
     let app = api::router(state)
-        .layer(axum::extract::DefaultBodyLimit::max(1_048_576)) // 1MB max body
+        .layer(axum::middleware::from_fn(request_id_middleware))
+        .layer(axum::extract::DefaultBodyLimit::max(1_048_576))
         .layer(cors)
         .layer(tower_http::trace::TraceLayer::new_for_http());
 
@@ -101,6 +150,37 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     info!("notifyd listening on port {}", port);
 
-    axum::serve(listener, app).await?;
+    // Feature #13: Graceful shutdown
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate()
+            ).expect("failed to install SIGTERM handler");
+
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    info!("SIGINT received, shutting down gracefully...");
+                }
+                _ = sigterm.recv() => {
+                    info!("SIGTERM received, shutting down gracefully...");
+                }
+            }
+
+            // Signal worker to stop
+            let _ = shutdown_tx.send(true);
+
+            // Wait for worker with timeout
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                worker_handle,
+            ).await;
+
+            // Close DB pool
+            pool.close().await;
+
+            info!("Shutdown complete");
+        })
+        .await?;
+
     Ok(())
 }

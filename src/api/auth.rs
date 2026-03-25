@@ -45,7 +45,7 @@ pub async fn subscriber_token(
         &claims,
         &EncodingKey::from_secret(state.config.server.jwt_secret.as_bytes()),
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Token generation failed"}))))?;
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Token generation failed"}))))?;
 
     Ok(Json(json!({
         "token": token,

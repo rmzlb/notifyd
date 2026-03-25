@@ -9,27 +9,47 @@ use anyhow::Result;
 use chrono::{Utc, Duration};
 use serde_json::Value;
 use std::sync::Arc;
+use tokio::sync::watch;
 use tracing::{info, warn, error};
 
-pub async fn run(state: Arc<AppState>) {
+pub async fn run(state: Arc<AppState>, mut shutdown: watch::Receiver<bool>) {
     let interval = std::time::Duration::from_millis(state.config.worker.poll_interval_ms);
     info!("Worker started, polling every {}ms", state.config.worker.poll_interval_ms);
 
+    let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+    cleanup_interval.tick().await; // skip first immediate tick
+
     loop {
-        if let Err(e) = process_batch(&state).await {
-            error!("Worker batch error: {}", e);
+        tokio::select! {
+            _ = shutdown.changed() => {
+                info!("Worker received shutdown signal");
+                break;
+            }
+            _ = tokio::time::sleep(interval) => {
+                if let Err(e) = process_batch(&state).await {
+                    error!("Worker batch error: {}", e);
+                }
+                if let Err(e) = workflow_engine::resume_paused_runs(&state).await {
+                    error!("Workflow resume error: {}", e);
+                }
+            }
+            _ = cleanup_interval.tick() => {
+                if let Err(e) = cleanup_old_jobs(&state).await {
+                    error!("Job cleanup error: {}", e);
+                }
+            }
         }
-        // Resume paused workflow runs
-        if let Err(e) = workflow_engine::resume_paused_runs(&state).await {
-            error!("Workflow resume error: {}", e);
-        }
-        tokio::time::sleep(interval).await;
     }
+
+    info!("Worker stopped");
 }
 
 async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     let now = Utc::now();
     let batch_size = state.config.worker.batch_size;
+
+    // BUG FIX #1: Wrap in transaction for SELECT FOR UPDATE safety
+    let mut tx = state.pool.begin().await?;
 
     let jobs: Vec<Job> = sqlx::query_as(
         r#"
@@ -47,28 +67,37 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     )
     .bind(now)
     .bind(batch_size)
-    .fetch_all(&state.pool)
+    .fetch_all(&mut *tx)
     .await?;
 
-    if !jobs.is_empty() {
-        info!("Processing {} jobs", jobs.len());
+    if jobs.is_empty() {
+        tx.commit().await?;
+        return Ok(());
     }
 
-    for job in jobs {
-        // Mark as processing
+    info!("Processing {} jobs", jobs.len());
+
+    for job in &jobs {
         sqlx::query("UPDATE jobs SET status='processing', attempts=attempts+1 WHERE id=$1")
             .bind(job.id)
-            .execute(&state.pool)
+            .execute(&mut *tx)
             .await?;
+    }
 
+    tx.commit().await?;
+
+    // Now dispatch each job (outside transaction to avoid long-held locks)
+    for job in jobs {
         let result = dispatch_job(state, &job).await;
 
+        let new_status;
         match result {
             Ok(()) => {
                 sqlx::query("UPDATE jobs SET status='sent', sent_at=now(), error=NULL WHERE id=$1")
                     .bind(job.id)
                     .execute(&state.pool)
                     .await?;
+                new_status = "sent";
                 info!("Job {} sent", job.id);
             }
             Err(e) => {
@@ -80,6 +109,7 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
                     sqlx::query("UPDATE jobs SET status='failed', error=$2 WHERE id=$1")
                         .bind(job.id).bind(&err_msg)
                         .execute(&state.pool).await?;
+                    new_status = "failed";
                     error!("Job {} failed permanently after {} attempts: {}", job.id, attempts, err_msg);
                 } else {
                     let delay_secs: i64 = match attempts {
@@ -91,17 +121,58 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
                     sqlx::query("UPDATE jobs SET status='retry', error=$2, next_retry_at=$3 WHERE id=$1")
                         .bind(job.id).bind(&err_msg).bind(next_retry)
                         .execute(&state.pool).await?;
+                    new_status = "retry";
                     warn!("Job {} retry in {}s (attempt {}/{}): {}", job.id, delay_secs, attempts, max, err_msg);
                 }
             }
+        }
+
+        // Feature #10: Fire webhooks on terminal states
+        if new_status == "sent" || new_status == "failed" {
+            let pool = state.pool.clone();
+            let job_id = job.id;
+            let channel = job.channel.clone();
+            let subscriber_id = job.subscriber_id.clone();
+            let project_id = job.project_id.clone();
+            let status = new_status.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = crate::webhooks::fire_webhooks(
+                    &pool, &project_id, &format!("job.{}", status),
+                    job_id, &channel, subscriber_id.as_deref(),
+                ).await {
+                    warn!("Webhook fire error: {}", e);
+                }
+            });
         }
     }
 
     Ok(())
 }
 
+/// Feature #8: Cleanup old jobs periodically
+async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
+    let sent_deleted = sqlx::query(
+        "DELETE FROM jobs WHERE status IN ('sent', 'cancelled') AND created_at < now() - interval '7 days'"
+    )
+    .execute(&state.pool)
+    .await?;
+
+    let failed_deleted = sqlx::query(
+        "DELETE FROM jobs WHERE status = 'failed' AND created_at < now() - interval '30 days'"
+    )
+    .execute(&state.pool)
+    .await?;
+
+    let total = sent_deleted.rows_affected() + failed_deleted.rows_affected();
+    if total > 0 {
+        info!("Job cleanup: removed {} sent/cancelled, {} failed",
+            sent_deleted.rows_affected(), failed_deleted.rows_affected());
+    }
+
+    Ok(())
+}
+
 async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
-    // Check subscriber preference before sending
     if let Some(sub_id) = &job.subscriber_id {
         if !workflow_engine::check_preference(state, &job.project_id, sub_id, &job.channel, job.template_id.as_deref()).await {
             info!("Job {} skipped (subscriber opted out of {} channel)", job.id, job.channel);
@@ -109,7 +180,6 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
         }
     }
 
-    // Resolve template if specified
     let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
         let tmpl: Option<crate::db::Template> = sqlx::query_as(
             "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 AND id=$2 AND channel=$3"
@@ -162,7 +232,6 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
             InAppConnector::new(state.pool.clone(), state.broadcaster.clone()).send(&req).await
         }
         Some(Channel::Push) => {
-            // Send to all registered push tokens for this subscriber
             if let Some(sub_id) = &job.subscriber_id {
                 let tokens: Vec<(String,)> = sqlx::query_as(
                     "SELECT token FROM push_tokens WHERE project_id=$1 AND subscriber_id=$2"
@@ -175,7 +244,6 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
                     return Ok(());
                 }
 
-                // Use FCM config if available
                 let server_key = std::env::var("FCM_SERVER_KEY").unwrap_or_default();
                 if server_key.is_empty() {
                     return Err(anyhow::anyhow!("FCM_SERVER_KEY not configured"));

@@ -25,6 +25,7 @@ impl Channel {
             _ => None,
         }
     }
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Email => "email",
@@ -45,6 +46,7 @@ pub struct SendRequest {
 }
 
 #[async_trait]
+#[allow(dead_code)]
 pub trait Connector: Send + Sync {
     fn channel(&self) -> Channel;
     async fn send(&self, req: &SendRequest) -> Result<()>;

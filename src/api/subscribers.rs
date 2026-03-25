@@ -1,4 +1,4 @@
-use axum::{extract::{State, Path}, Json, http::{StatusCode, HeaderMap}};
+use axum::{extract::{State, Path, Query}, Json, http::{StatusCode, HeaderMap}};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -49,6 +49,77 @@ pub async fn upsert_subscriber(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     Ok(Json(json!({"success": true, "id": req.id, "project_id": project.id})))
+}
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    pub q: Option<String>,
+}
+
+/// GET /v1/subscribers?limit=50&offset=0&q=search
+pub async fn list_subscribers(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let project = extract_project(&state, &headers).await?;
+    let limit = query.limit.unwrap_or(50).min(200);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let search = query.q.unwrap_or_default();
+
+    let total: i64 = if search.is_empty() {
+        sqlx::query_scalar("SELECT COUNT(*) FROM subscribers WHERE project_id=$1")
+            .bind(&project.id)
+            .fetch_one(&state.pool).await
+    } else {
+        let pattern = format!("%{}%", search);
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM subscribers WHERE project_id=$1 AND (id ILIKE $2 OR email ILIKE $2 OR first_name ILIKE $2 OR last_name ILIKE $2)"
+        )
+        .bind(&project.id).bind(&pattern)
+        .fetch_one(&state.pool).await
+    }.map_err(|e| {
+        tracing::error!("DB error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+    })?;
+
+    let subscribers: Vec<Subscriber> = if search.is_empty() {
+        sqlx::query_as(
+            "SELECT id, project_id, email, phone, first_name, last_name, locale, data, created_at, updated_at FROM subscribers WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+        )
+        .bind(&project.id).bind(limit).bind(offset)
+        .fetch_all(&state.pool).await
+    } else {
+        let pattern = format!("%{}%", search);
+        sqlx::query_as(
+            "SELECT id, project_id, email, phone, first_name, last_name, locale, data, created_at, updated_at FROM subscribers WHERE project_id=$1 AND (id ILIKE $2 OR email ILIKE $2 OR first_name ILIKE $2 OR last_name ILIKE $2) ORDER BY created_at DESC LIMIT $3 OFFSET $4"
+        )
+        .bind(&project.id).bind(&pattern).bind(limit).bind(offset)
+        .fetch_all(&state.pool).await
+    }.map_err(|e| {
+        tracing::error!("DB error: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+    })?;
+
+    let items: Vec<Value> = subscribers.iter().map(|s| json!({
+        "id": s.id,
+        "email": s.email,
+        "phone": s.phone,
+        "first_name": s.first_name,
+        "last_name": s.last_name,
+        "locale": s.locale,
+        "data": s.data,
+        "created_at": s.created_at,
+    })).collect();
+
+    Ok(Json(json!({
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })))
 }
 
 pub async fn get_subscriber(

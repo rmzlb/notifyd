@@ -43,7 +43,7 @@ pub async fn register_token(
     Ok(Json(json!({"success": true})))
 }
 
-/// GET /v1/push-tokens/:subscriber_id
+/// GET /v1/push-tokens/subscriber/:subscriber_id
 pub async fn list_tokens(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
