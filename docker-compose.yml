@@ -1,0 +1,33 @@
+services:
+  notifyd:
+    build: .
+    ports:
+      - "3400:3400"
+    environment:
+      DATABASE_URL: postgres://notifyd:notifyd@postgres:5432/notifyd
+      NOTIFYD_CONFIG: /app/notifyd.toml
+      RUST_LOG: notifyd=info
+    volumes:
+      - ./notifyd.toml:/app/notifyd.toml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notifyd
+      POSTGRES_USER: notifyd
+      POSTGRES_PASSWORD: notifyd
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifyd"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

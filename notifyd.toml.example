@@ -1,0 +1,53 @@
+[server]
+port = 3400
+jwt_secret = "change-me-in-production-use-a-long-random-string"
+
+[database]
+url = "postgres://notifyd:password@localhost:5432/notifyd"
+max_connections = 10
+
+[worker]
+poll_interval_ms = 500
+batch_size = 50
+max_attempts = 3
+
+# ─── Email connector ─────────────────────────────────────────────────
+[connectors.email]
+provider = "resend"
+api_key = "re_xxx"
+from = "notifications@yourdomain.com"
+from_name = "Mon App"
+
+# ─── SMS connector ────────────────────────────────────────────────────
+# Provider: "twilio" or "telnyx"
+
+# Twilio example:
+[connectors.sms]
+provider = "twilio"
+account_sid = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+auth_token = "your_auth_token"
+from = "+33600000000"
+
+# Telnyx example (comment out Twilio section and use this instead):
+# [connectors.sms]
+# provider = "telnyx"
+# api_key = "KEY01xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# messaging_profile_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # optional
+# from = "+33600000000"
+
+# ─── Projects ────────────────────────────────────────────────────────
+# One section per project. api_key is what clients send in X-Api-Key header.
+
+[projects.square]
+api_key = "sk_square_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+channels = ["email", "sms", "in_app"]
+
+[projects.clozup]
+api_key = "sk_clozup_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+channels = ["email", "in_app"]
+
+[projects.helmai]
+api_key = "sk_helmai_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+channels = ["email", "sms"]
+
+# Add more projects as needed...
