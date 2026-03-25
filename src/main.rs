@@ -4,6 +4,7 @@ mod db;
 mod sse;
 mod templates;
 mod worker;
+mod workflow_engine;
 mod api;
 
 use sqlx::postgres::PgPoolOptions;

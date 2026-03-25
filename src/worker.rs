@@ -3,6 +3,7 @@ use crate::{
     connectors::{Channel, Connector, SendRequest, email::ResendConnector, sms::SmsConnector, in_app::InAppConnector},
     db::Job,
     templates,
+    workflow_engine,
 };
 use anyhow::Result;
 use chrono::{Utc, Duration};
@@ -17,6 +18,10 @@ pub async fn run(state: Arc<AppState>) {
     loop {
         if let Err(e) = process_batch(&state).await {
             error!("Worker batch error: {}", e);
+        }
+        // Resume paused workflow runs
+        if let Err(e) = workflow_engine::resume_paused_runs(&state).await {
+            error!("Workflow resume error: {}", e);
         }
         tokio::time::sleep(interval).await;
     }
@@ -96,6 +101,14 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
 }
 
 async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
+    // Check subscriber preference before sending
+    if let Some(sub_id) = &job.subscriber_id {
+        if !workflow_engine::check_preference(state, &job.project_id, sub_id, &job.channel, job.template_id.as_deref()).await {
+            info!("Job {} skipped (subscriber opted out of {} channel)", job.id, job.channel);
+            return Ok(());
+        }
+    }
+
     // Resolve template if specified
     let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
         let tmpl: Option<crate::db::Template> = sqlx::query_as(
@@ -147,6 +160,40 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
         }
         Some(Channel::InApp) => {
             InAppConnector::new(state.pool.clone(), state.broadcaster.clone()).send(&req).await
+        }
+        Some(Channel::Push) => {
+            // Send to all registered push tokens for this subscriber
+            if let Some(sub_id) = &job.subscriber_id {
+                let tokens: Vec<(String,)> = sqlx::query_as(
+                    "SELECT token FROM push_tokens WHERE project_id=$1 AND subscriber_id=$2"
+                )
+                .bind(&job.project_id).bind(sub_id)
+                .fetch_all(&state.pool).await?;
+
+                if tokens.is_empty() {
+                    warn!("No push tokens for subscriber {} in project {}", sub_id, job.project_id);
+                    return Ok(());
+                }
+
+                // Use FCM config if available
+                let server_key = std::env::var("FCM_SERVER_KEY").unwrap_or_default();
+                if server_key.is_empty() {
+                    return Err(anyhow::anyhow!("FCM_SERVER_KEY not configured"));
+                }
+
+                let connector = crate::connectors::push::PushConnector::new(
+                    crate::connectors::push::FcmConfig { server_key }
+                );
+
+                for (token,) in tokens {
+                    let mut push_req = req.clone();
+                    push_req.recipient = token;
+                    connector.send(&push_req).await?;
+                }
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Push requires subscriber_id"))
+            }
         }
         None => Err(anyhow::anyhow!("Unknown channel: {}", job.channel)),
     }

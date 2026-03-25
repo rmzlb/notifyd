@@ -1,6 +1,7 @@
 pub mod email;
 pub mod sms;
 pub mod in_app;
+pub mod push;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ pub enum Channel {
     Email,
     Sms,
     InApp,
+    Push,
 }
 
 impl Channel {
@@ -19,6 +21,7 @@ impl Channel {
             "email" => Some(Self::Email),
             "sms" => Some(Self::Sms),
             "in_app" | "inapp" => Some(Self::InApp),
+            "push" | "fcm" => Some(Self::Push),
             _ => None,
         }
     }
@@ -27,13 +30,14 @@ impl Channel {
             Self::Email => "email",
             Self::Sms => "sms",
             Self::InApp => "in_app",
+            Self::Push => "push",
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct SendRequest {
-    pub recipient: String,   // email / phone / subscriber_id
+    pub recipient: String,
     pub subject: Option<String>,
     pub body: String,
     pub body_html: Option<String>,

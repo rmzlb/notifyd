@@ -1,4 +1,3 @@
-// DB helper types used across the codebase
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -60,4 +59,85 @@ pub struct Template {
     pub subject: Option<String>,
     pub body: String,
     pub body_html: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SubscriberPreference {
+    pub project_id: String,
+    pub subscriber_id: String,
+    pub channel: String,
+    pub workflow_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Workflow {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub trigger_event: String,
+    pub steps: serde_json::Value,
+    pub enabled: bool,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct WorkflowRun {
+    pub id: Uuid,
+    pub project_id: String,
+    pub workflow_id: String,
+    pub subscriber_id: String,
+    pub trigger_payload: serde_json::Value,
+    pub current_step: i32,
+    pub status: String,
+    pub step_state: serde_json::Value,
+    pub resume_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PushToken {
+    pub id: Uuid,
+    pub project_id: String,
+    pub subscriber_id: String,
+    pub token: String,
+    pub platform: String,
+    pub device_name: Option<String>,
+}
+
+/// Workflow step types (serialized as JSON in the steps array)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum WorkflowStep {
+    #[serde(rename = "send")]
+    Send {
+        channel: String,
+        template: Option<String>,
+        subject: Option<String>,
+        body: Option<String>,
+        body_html: Option<String>,
+    },
+    #[serde(rename = "delay")]
+    Delay {
+        duration_secs: i64,
+    },
+    #[serde(rename = "condition")]
+    Condition {
+        field: String,       // e.g. "inbox.is_read"
+        operator: String,    // "eq", "neq", "gt", "lt"
+        value: serde_json::Value,
+        on_true: Option<usize>,   // step index to jump to
+        on_false: Option<usize>,
+    },
+    #[serde(rename = "digest")]
+    Digest {
+        duration_secs: i64,  // collect events for this period
+        channel: String,
+        template: Option<String>,
+        subject: Option<String>,
+        body: Option<String>,
+    },
 }

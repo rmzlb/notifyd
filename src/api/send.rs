@@ -1,5 +1,5 @@
 use axum::{extract::State, Json, http::{StatusCode, HeaderMap}};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use chrono::{Utc, DateTime};
