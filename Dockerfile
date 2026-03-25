@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.82-alpine AS chef
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev
+FROM rust:1-alpine AS chef
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -14,7 +14,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin notifyd
 
-FROM alpine:3.20 AS runtime
+FROM alpine:3.21 AS runtime
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/target/release/notifyd /usr/local/bin/notifyd
