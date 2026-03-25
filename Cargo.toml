@@ -16,7 +16,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 tokio = { version = "1", features = ["full"] }
 
 # DB
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "json", "macros"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "uuid", "chrono", "json", "macros"] }
 
 # Serde
 serde = { version = "1", features = ["derive"] }
