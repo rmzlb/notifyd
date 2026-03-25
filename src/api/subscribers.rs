@@ -20,7 +20,7 @@ pub async fn upsert_subscriber(
     headers: HeaderMap,
     Json(req): Json<UpsertSubscriber>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     sqlx::query(
         r#"
@@ -56,7 +56,7 @@ pub async fn get_subscriber(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let sub: Option<Subscriber> = sqlx::query_as(
         "SELECT id, project_id, email, phone, first_name, last_name, locale, data, created_at, updated_at FROM subscribers WHERE project_id=$1 AND id=$2"
@@ -87,7 +87,7 @@ pub async fn delete_subscriber(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let result = sqlx::query("DELETE FROM subscribers WHERE project_id=$1 AND id=$2")
         .bind(&project.id)

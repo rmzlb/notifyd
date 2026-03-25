@@ -4,20 +4,18 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use chrono::{Utc, DateTime};
 use uuid::Uuid;
-use crate::AppState;
+use crate::{AppState, middleware};
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct Project {
     pub id: String,
+    pub rate_limit: u32,
 }
 
-pub fn extract_project(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<Project, (StatusCode, Json<Value>)> {
-    let api_key = headers
+pub fn extract_api_key(headers: &HeaderMap) -> &str {
+    headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .or_else(|| {
@@ -26,7 +24,14 @@ pub fn extract_project(
                 .and_then(|v| v.strip_prefix("Bearer "))
         })
         .unwrap_or("")
-        .trim();
+        .trim()
+}
+
+pub async fn extract_project(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Project, (StatusCode, Json<Value>)> {
+    let api_key = extract_api_key(headers);
 
     if api_key.is_empty() {
         return Err((
@@ -35,11 +40,29 @@ pub fn extract_project(
         ));
     }
 
-    // Check TOML projects (fast path)
+    // 1. Check TOML config (fast path, no DB hit)
     for (id, proj) in &state.config.projects {
         if proj.api_key == api_key {
-            return Ok(Project { id: id.clone() });
+            return Ok(Project { id: id.clone(), rate_limit: 600 });
         }
+    }
+
+    // 2. Check DB (primary + secondary key)
+    let row: Option<(String, Option<i32>)> = sqlx::query_as(
+        "SELECT id, rate_limit_per_min FROM projects WHERE api_key = $1 OR secondary_api_key = $1"
+    )
+    .bind(api_key)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "DB error"}))))?;
+
+    if let Some((id, rate_limit)) = row {
+        // Rate limit check
+        let limit = rate_limit.unwrap_or(600) as u32;
+        if !state.rate_limiter.check(&id, limit).await {
+            return Err((StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "Rate limit exceeded"}))));
+        }
+        return Ok(Project { id, rate_limit: limit });
     }
 
     Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid API key"}))))
@@ -84,7 +107,14 @@ pub async fn send_notification(
     headers: HeaderMap,
     Json(req): Json<SendRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
+
+    // Audit
+    tokio::spawn({
+        let pool = state.pool.clone();
+        let pid = project.id.clone();
+        async move { middleware::audit(&pool, &pid, "api_key", "send", None, None).await; }
+    });
 
     let channels: Vec<String> = req.channels.clone()
         .unwrap_or_else(|| {
@@ -111,7 +141,6 @@ pub async fn send_notification(
         "url": req.url,
     });
 
-    // Merge vars into payload
     if let Some(vars) = &req.vars {
         if let (Some(p), Some(v)) = (payload.as_object_mut(), vars.as_object()) {
             p.insert("vars".to_string(), vars.clone());
@@ -163,7 +192,13 @@ pub async fn batch_notification(
     headers: HeaderMap,
     Json(req): Json<BatchRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
+
+    tokio::spawn({
+        let pool = state.pool.clone();
+        let pid = project.id.clone();
+        async move { middleware::audit(&pool, &pid, "api_key", "batch", None, None).await; }
+    });
 
     let channels: Vec<String> = req.channels.clone()
         .unwrap_or_else(|| {

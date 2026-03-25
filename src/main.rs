@@ -1,6 +1,7 @@
 mod config;
 mod connectors;
 mod db;
+mod middleware;
 mod sse;
 mod templates;
 mod worker;
@@ -17,6 +18,7 @@ pub struct AppState {
     pub pool: sqlx::PgPool,
     pub config: config::Config,
     pub broadcaster: sse::SseBroadcaster,
+    pub rate_limiter: middleware::RateLimiter,
 }
 
 #[tokio::main]
@@ -36,23 +38,22 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database.url)
         .await?;
 
-    // Run migrations
     sqlx::migrate!("./migrations").run(&pool).await?;
     info!("Migrations applied");
 
     let broadcaster = sse::SseBroadcaster::new();
+    let rate_limiter = middleware::RateLimiter::new();
 
     let state = Arc::new(AppState {
         pool: pool.clone(),
         config: config.clone(),
         broadcaster: broadcaster.clone(),
+        rate_limiter: rate_limiter.clone(),
     });
 
     // Worker
     let worker_state = state.clone();
-    tokio::spawn(async move {
-        worker::run(worker_state).await;
-    });
+    tokio::spawn(async move { worker::run(worker_state).await; });
 
     // SSE cleanup
     let cleanup_broadcaster = broadcaster.clone();
@@ -61,6 +62,16 @@ async fn main() -> anyhow::Result<()> {
         loop {
             interval.tick().await;
             cleanup_broadcaster.cleanup().await;
+        }
+    });
+
+    // Rate limiter cleanup
+    let rl = rate_limiter.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(120));
+        loop {
+            interval.tick().await;
+            rl.cleanup().await;
         }
     });
 
@@ -78,6 +89,5 @@ async fn main() -> anyhow::Result<()> {
     info!("notifyd listening on port {}", port);
 
     axum::serve(listener, app).await?;
-
     Ok(())
 }

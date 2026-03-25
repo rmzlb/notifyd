@@ -13,7 +13,7 @@ use crate::{AppState, db::InboxMessage, api::{send::extract_project, auth::valid
 use axum::response::sse::{Event, KeepAlive};
 use uuid::Uuid;
 
-fn auth_inbox(
+async fn auth_inbox(
     state: &AppState,
     headers: &HeaderMap,
     path_subscriber_id: &str,
@@ -33,7 +33,7 @@ fn auth_inbox(
     }
 
     // API key fallback
-    let project = extract_project(state, headers)?;
+    let project = extract_project(state, headers).await?;
     Ok((project.id, path_subscriber_id.to_string()))
 }
 
@@ -51,7 +51,7 @@ pub async fn list_notifications(
     Path(subscriber_id): Path<String>,
     Query(query): Query<InboxQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id)?;
+    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     let limit = query.limit.unwrap_or(20).min(100);
 
@@ -111,7 +111,7 @@ pub async fn unread_count(
     headers: HeaderMap,
     Path(subscriber_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id)?;
+    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM inbox_messages WHERE project_id=$1 AND subscriber_id=$2 AND read_at IS NULL AND archived_at IS NULL"
@@ -138,7 +138,7 @@ pub async fn update_notification(
     Path((subscriber_id, msg_id)): Path<(String, Uuid)>,
     Json(req): Json<UpdateNotification>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id)?;
+    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     if let Some(read) = req.read {
         let sql = if read {
@@ -187,7 +187,7 @@ pub async fn read_all(
     headers: HeaderMap,
     Path(subscriber_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id)?;
+    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     let result = sqlx::query(
         "UPDATE inbox_messages SET read_at=now() WHERE project_id=$1 AND subscriber_id=$2 AND read_at IS NULL AND archived_at IS NULL"
@@ -221,7 +221,7 @@ pub async fn sse_stream(
         headers
     };
 
-    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id)?;
+    let (project_id, sub_id) = auth_inbox(&state, &headers, &subscriber_id).await?;
 
     let rx = state.broadcaster.subscribe(&project_id, &sub_id).await;
 

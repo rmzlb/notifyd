@@ -24,7 +24,7 @@ pub async fn subscriber_token(
     headers: axum::http::HeaderMap,
     Json(req): Json<TokenRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let now = Utc::now();
     let exp = now + Duration::hours(24);

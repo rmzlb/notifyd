@@ -7,6 +7,7 @@ pub mod health;
 pub mod preferences;
 pub mod workflows;
 pub mod push_tokens;
+pub mod projects;
 
 use axum::Router;
 use std::sync::Arc;
@@ -57,5 +58,12 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/push-tokens", post(push_tokens::register_token))
         .route("/push-tokens/{subscriber_id}", get(push_tokens::list_tokens))
         .route("/push-tokens/{id}", delete(push_tokens::delete_token))
+        // Admin (requires ADMIN_API_KEY)
+        .route("/admin/projects", post(projects::create_project))
+        .route("/admin/projects", get(projects::list_projects))
+        .route("/admin/projects/{id}/rotate-key", post(projects::rotate_key))
+        .route("/admin/projects/{id}/revoke-secondary", post(projects::revoke_secondary))
+        .route("/admin/projects/{id}", delete(projects::delete_project))
+        .route("/admin/audit", get(projects::audit_log))
         .with_state(state)
 }

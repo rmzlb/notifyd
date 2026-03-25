@@ -21,7 +21,7 @@ pub async fn create_workflow(
     headers: HeaderMap,
     Json(req): Json<CreateWorkflow>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     sqlx::query(
         r#"
@@ -55,7 +55,7 @@ pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let workflows: Vec<Workflow> = sqlx::query_as(
         "SELECT id, project_id, name, description, trigger_event, steps, enabled, created_at, updated_at FROM workflows WHERE project_id=$1 ORDER BY created_at DESC"
@@ -84,7 +84,7 @@ pub async fn get_workflow(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let wf: Option<Workflow> = sqlx::query_as(
         "SELECT id, project_id, name, description, trigger_event, steps, enabled, created_at, updated_at FROM workflows WHERE project_id=$1 AND id=$2"
@@ -114,7 +114,7 @@ pub async fn delete_workflow(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let result = sqlx::query("DELETE FROM workflows WHERE project_id=$1 AND id=$2")
         .bind(&project.id).bind(&id)
@@ -141,7 +141,7 @@ pub async fn trigger_workflow(
     headers: HeaderMap,
     Json(req): Json<TriggerRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let payload = req.payload.unwrap_or(json!({}));
     let run_ids = workflow_engine::trigger_event(&state, &project.id, &req.event, &req.subscriber_id, &payload)
@@ -168,7 +168,7 @@ pub async fn list_runs(
     headers: HeaderMap,
     Query(q): Query<RunsQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
     let limit = q.limit.unwrap_or(50).min(200);
 
     let runs: Vec<WorkflowRun> = sqlx::query_as(
@@ -205,7 +205,7 @@ pub async fn cancel_run(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let result = sqlx::query(
         "UPDATE workflow_runs SET status='cancelled', updated_at=now() WHERE id=$1 AND project_id=$2 AND status IN ('running', 'paused')"

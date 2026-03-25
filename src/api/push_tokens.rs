@@ -19,7 +19,7 @@ pub async fn register_token(
     headers: HeaderMap,
     Json(req): Json<RegisterToken>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     sqlx::query(
         r#"
@@ -49,7 +49,7 @@ pub async fn list_tokens(
     headers: HeaderMap,
     Path(subscriber_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let tokens: Vec<PushToken> = sqlx::query_as(
         "SELECT id, project_id, subscriber_id, token, platform, device_name FROM push_tokens WHERE project_id=$1 AND subscriber_id=$2"
@@ -76,7 +76,7 @@ pub async fn delete_token(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     sqlx::query("DELETE FROM push_tokens WHERE id=$1 AND project_id=$2")
         .bind(id).bind(&project.id)

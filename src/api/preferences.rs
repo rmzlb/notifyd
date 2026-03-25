@@ -22,7 +22,7 @@ pub async fn get_preferences(
     headers: HeaderMap,
     Path(subscriber_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let prefs: Vec<SubscriberPreference> = sqlx::query_as(
         "SELECT project_id, subscriber_id, channel, workflow_id, enabled FROM subscriber_preferences WHERE project_id=$1 AND subscriber_id=$2 ORDER BY channel, workflow_id"
@@ -49,7 +49,7 @@ pub async fn set_preferences(
     Path(subscriber_id): Path<String>,
     Json(req): Json<BulkPreferences>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     for pref in &req.preferences {
         let workflow_id = pref.workflow_id.as_deref().unwrap_or("*");

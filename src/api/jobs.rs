@@ -9,7 +9,7 @@ pub async fn get_job(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let job: Option<Job> = sqlx::query_as(
         "SELECT id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error FROM jobs WHERE id=$1 AND project_id=$2"
@@ -43,7 +43,7 @@ pub async fn cancel_job(
     headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let project = extract_project(&state, &headers)?;
+    let project = extract_project(&state, &headers).await?;
 
     let result = sqlx::query(
         "UPDATE jobs SET status='cancelled' WHERE id=$1 AND project_id=$2 AND status IN ('pending', 'retry')"
