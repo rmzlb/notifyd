@@ -2,7 +2,7 @@
 name = "notifyd"
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "Agent-first self-hosted notification service. Email, SMS, Push, In-App — one binary, Postgres only."
 repository = "https://github.com/rmzlb/notifyd"
 homepage = "https://github.com/rmzlb/notifyd"

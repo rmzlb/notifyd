@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/rmzlb/notifyd/blob/main/LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/rmzlb/notifyd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <a href="https://hub.docker.com/r/rmzlb/notifyd"><img src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
   <img src="https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/~3700_lines-green?style=flat-square" alt="Lines of code">
@@ -307,12 +307,7 @@ cargo test && cargo run
 
 ## License
 
-Licensed under either of:
-
-- [MIT license](LICENSE-MIT)
-- [Apache License, Version 2.0](LICENSE-APACHE)
-
-at your option.
+[MIT](LICENSE) — use it however you want.
 
 ---
 
