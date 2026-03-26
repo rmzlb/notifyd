@@ -1,0 +1,498 @@
+# notifyd API Reference
+
+**Base URL:** `http://localhost:3400` (dev) or your deployed domain.
+
+All endpoints require `X-Api-Key: sk_<project>_xxx` header unless noted otherwise.
+
+---
+
+## Quick Start
+
+Send your first notification in 30 seconds:
+
+```bash
+curl -X POST http://localhost:3400/v1/send \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channels": ["email"],
+    "subscriber_id": "user-1",
+    "subject": "Hello!",
+    "body": "Welcome to the app."
+  }'
+```
+
+---
+
+## Authentication
+
+### API Key (backend-to-backend)
+
+```
+X-Api-Key: sk_myapp_xxxxxxxxxxxxxxxxxxxxx
+```
+
+Defined per project in `notifyd.toml`. Identifies the project and scopes all data.
+
+### Subscriber JWT (frontend)
+
+For inbox/SSE endpoints, generate a short-lived token:
+
+```bash
+curl -X POST http://localhost:3400/v1/auth/subscriber-token \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -d '{"subscriber_id": "user-1"}'
+# → {"token": "eyJ..."}
+```
+
+Then use it:
+
+```
+Authorization: Bearer eyJ...
+```
+
+### Admin Key
+
+Some endpoints (`/v1/metrics`, `/v1/admin/*`) require the admin API key defined in config.
+
+---
+
+## Response Format
+
+All responses are JSON.
+
+### Success
+
+```json
+{"success": true, "id": "uuid", ...}
+```
+
+### Error
+
+```json
+{"error": "Description of what went wrong"}
+```
+
+| Status | When |
+|--------|------|
+| 200 | Success |
+| 201 | Created |
+| 400 | Invalid request body |
+| 401 | Missing or invalid API key |
+| 403 | Forbidden (wrong subscriber, wrong project) |
+| 404 | Resource not found |
+| 429 | Rate limited |
+| 500 | Internal server error |
+
+---
+
+## Endpoints
+
+### Summary
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| **POST** | `/v1/send` | API Key | Send notification (immediate or scheduled) |
+| **POST** | `/v1/batch` | API Key | Send to multiple subscribers |
+| **GET** | `/v1/jobs/:id` | API Key | Get job status |
+| **DELETE** | `/v1/jobs/:id` | API Key | Cancel pending/scheduled job |
+| **POST** | `/v1/subscribers` | API Key | Create or update subscriber |
+| **GET** | `/v1/subscribers` | API Key | List subscribers |
+| **GET** | `/v1/subscribers/:id` | API Key | Get subscriber |
+| **DELETE** | `/v1/subscribers/:id` | API Key | Delete subscriber |
+| **GET** | `/v1/subscribers/:id/preferences` | API Key | Get notification preferences |
+| **PUT** | `/v1/subscribers/:id/preferences` | API Key | Set notification preferences |
+| **GET** | `/v1/inbox/:sub_id` | JWT or API Key | List in-app notifications |
+| **PATCH** | `/v1/inbox/:sub_id/:msg_id` | JWT or API Key | Update notification (read/archive/todo) |
+| **POST** | `/v1/inbox/:sub_id/read-all` | JWT or API Key | Mark all as read |
+| **GET** | `/v1/inbox/:sub_id/unread-count` | JWT or API Key | Unread badge count |
+| **GET** | `/v1/inbox/:sub_id/stream` | JWT (query) | SSE realtime stream |
+| **POST** | `/v1/inbox/:sub_id/stream-ticket` | JWT or API Key | One-time SSE auth ticket |
+| **POST** | `/v1/auth/subscriber-token` | API Key | Generate subscriber JWT |
+| **POST** | `/v1/workflows` | API Key | Create/update workflow |
+| **GET** | `/v1/workflows` | API Key | List workflows |
+| **GET** | `/v1/workflows/:id` | API Key | Get workflow |
+| **DELETE** | `/v1/workflows/:id` | API Key | Delete workflow |
+| **POST** | `/v1/workflows/trigger` | API Key | Trigger workflow event |
+| **GET** | `/v1/workflows/runs` | API Key | List workflow runs |
+| **DELETE** | `/v1/workflows/runs/:id` | API Key | Cancel workflow run |
+| **POST** | `/v1/templates` | API Key | Create/update template |
+| **GET** | `/v1/templates` | API Key | List templates |
+| **GET** | `/v1/templates/:id` | API Key | Get template |
+| **DELETE** | `/v1/templates/:id` | API Key | Delete template |
+| **POST** | `/v1/push-tokens` | API Key | Register push token |
+| **GET** | `/v1/push-tokens/subscriber/:id` | API Key | List push tokens |
+| **DELETE** | `/v1/push-tokens/:id` | API Key | Delete push token |
+| **GET** | `/v1/health` | None | Health check |
+| **GET** | `/v1/metrics` | Admin | Service metrics |
+| **POST** | `/v1/admin/projects` | Admin | Create project |
+| **GET** | `/v1/admin/projects` | Admin | List projects |
+| **POST** | `/v1/admin/projects/:id/rotate-key` | Admin | Rotate API key |
+| **POST** | `/v1/admin/projects/:id/revoke-secondary` | Admin | Revoke old key |
+| **DELETE** | `/v1/admin/projects/:id` | Admin | Delete project |
+| **GET** | `/v1/admin/audit` | Admin | Audit log |
+| **POST** | `/v1/admin/webhooks` | Admin | Create webhook |
+| **GET** | `/v1/admin/webhooks` | Admin | List webhooks |
+| **DELETE** | `/v1/admin/webhooks/:id` | Admin | Delete webhook |
+
+---
+
+### POST /v1/send
+
+Send a notification via one or more channels. Jobs are queued and processed asynchronously (<1s typical).
+
+**Request:**
+
+```json
+{
+  "channels": ["email", "in_app"],
+  "subscriber_id": "user-uuid",
+  "to": "user@example.com",
+  "subject": "Your order shipped",
+  "body": "Hey {{first_name}}, order #{{order_id}} is on its way!",
+  "vars": {
+    "first_name": "Alice",
+    "order_id": "ORD-42"
+  },
+  "scheduled_at": "2026-03-25T14:00:00Z",
+  "idempotency_key": "order-42-shipped"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channels` | `string[]` | ✅ (or `channel`) | `"email"`, `"sms"`, `"in_app"`, `"push"` |
+| `channel` | `string` | ✅ (or `channels`) | Single channel shorthand |
+| `subscriber_id` | `string` | ❌ | Links to subscriber record for template vars |
+| `to` | `string` | ❌ | Override recipient (email/phone). Falls back to subscriber. |
+| `subject` | `string` | ❌ | Email subject |
+| `body` | `string` | ❌ | Message body (supports `{{var}}` substitution) |
+| `template` | `string` | ❌ | Use a stored template instead of inline body |
+| `vars` | `object` | ❌ | Template variables |
+| `scheduled_at` | `ISO 8601` | ❌ | Schedule for future delivery (default: now) |
+| `idempotency_key` | `string` | ❌ | Prevents duplicate sends |
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "jobs": [
+    {"id": "uuid", "channel": "email", "status": "pending"},
+    {"id": "uuid", "channel": "in_app", "status": "pending"}
+  ]
+}
+```
+
+**curl example:**
+
+```bash
+curl -X POST http://localhost:3400/v1/send \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channel": "email",
+    "subscriber_id": "user-1",
+    "subject": "Password reset",
+    "body": "Click here to reset: {{reset_url}}",
+    "vars": {"reset_url": "https://app.example.com/reset?token=abc"}
+  }'
+```
+
+**TypeScript example:**
+
+```typescript
+const response = await fetch('https://notifyd.example.com/v1/send', {
+  method: 'POST',
+  headers: {
+    'X-Api-Key': process.env.NOTIFYD_API_KEY,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    channels: ['email', 'in_app'],
+    subscriber_id: userId,
+    subject: 'New comment on your post',
+    body: '{{commenter}} commented: "{{comment}}"',
+    vars: { commenter: 'Bob', comment: 'Great post!' },
+  }),
+});
+```
+
+**Rust example:**
+
+```rust
+let client = reqwest::Client::new();
+let res = client
+    .post("http://localhost:3400/v1/send")
+    .header("X-Api-Key", "sk_myapp_xxx")
+    .json(&serde_json::json!({
+        "channel": "email",
+        "subscriber_id": "user-1",
+        "subject": "Welcome!",
+        "body": "Hello {{first_name}}!",
+        "vars": {"first_name": "Alice"}
+    }))
+    .send()
+    .await?;
+```
+
+---
+
+### POST /v1/batch
+
+Send the same notification to multiple subscribers.
+
+```bash
+curl -X POST http://localhost:3400/v1/batch \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channels": ["email", "in_app"],
+    "subscribers": ["user-1", "user-2", "user-3"],
+    "template": "weekly_digest",
+    "vars": {"week": "March 24-30"}
+  }'
+```
+
+---
+
+### GET /v1/inbox/:subscriber_id
+
+List in-app notifications for a subscriber.
+
+**Query Parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | `int` | 20 | Max items to return |
+| `cursor` | `string` | — | Pagination cursor (ISO timestamp) |
+| `unread_only` | `bool` | false | Filter to unread only |
+
+**Response:**
+
+```json
+{
+  "notifications": [
+    {
+      "id": "uuid",
+      "body": "New comment on your post",
+      "icon": "message",
+      "url": "/posts/42#comments",
+      "read_at": null,
+      "is_todo": false,
+      "created_at": "2026-03-25T10:30:00Z"
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "2026-03-25T10:29:00Z"
+}
+```
+
+---
+
+### GET /v1/inbox/:subscriber_id/stream
+
+Realtime SSE stream for in-app notifications.
+
+**Auth:** Pass subscriber JWT as query parameter `?token=eyJ...` or via `Authorization: Bearer` header.
+
+**Events:**
+
+```
+event: message
+data: {"type":"new_notification","notification":{"id":"uuid","body":"...","icon":"bell","created_at":"..."}}
+
+event: message
+data: {"type":"count_update","unread_count":5}
+
+event: message
+data: {"type":"read","notification_id":"uuid"}
+
+event: message
+data: {"type":"archived","notification_id":"uuid"}
+```
+
+**JavaScript example:**
+
+```javascript
+const events = new EventSource(
+  `https://notifyd.example.com/v1/inbox/${userId}/stream?token=${jwt}`
+);
+
+events.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+
+  switch (data.type) {
+    case 'new_notification':
+      showToast(data.notification);
+      break;
+    case 'count_update':
+      updateBadge(data.unread_count);
+      break;
+  }
+};
+```
+
+> **Tip:** Use `POST /v1/inbox/:sub_id/stream-ticket` to get a one-time ticket instead of passing the JWT in the URL.
+
+---
+
+### POST /v1/workflows/trigger
+
+Trigger all workflows matching an event.
+
+```bash
+curl -X POST http://localhost:3400/v1/workflows/trigger \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "order.completed",
+    "subscriber_id": "user-42",
+    "payload": {
+      "order_id": "ORD-42",
+      "total": 99.00
+    }
+  }'
+```
+
+---
+
+### GET /v1/health
+
+No authentication required.
+
+```bash
+curl http://localhost:3400/v1/health
+```
+
+```json
+{
+  "status": "ok",
+  "db": "ok",
+  "version": "0.1.0"
+}
+```
+
+---
+
+### GET /v1/metrics
+
+Requires admin API key.
+
+```json
+{
+  "jobs_pending": 12,
+  "jobs_processing": 3,
+  "jobs_sent_24h": 1547,
+  "jobs_failed_24h": 2,
+  "subscribers_total": 8420,
+  "inbox_messages_total": 34210,
+  "active_workflow_runs": 5,
+  "uptime_seconds": 86400
+}
+```
+
+---
+
+### Subscriber Preferences
+
+Users can opt out of specific channels or workflows.
+
+**Get preferences:**
+
+```bash
+curl http://localhost:3400/v1/subscribers/user-1/preferences \
+  -H "X-Api-Key: sk_myapp_xxx"
+```
+
+**Set preferences:**
+
+```bash
+curl -X PUT http://localhost:3400/v1/subscribers/user-1/preferences \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -d '{
+    "preferences": [
+      {"channel": "email", "workflow_id": "marketing", "enabled": false},
+      {"channel": "sms", "workflow_id": "*", "enabled": false}
+    ]
+  }'
+```
+
+Hierarchy: workflow-specific > channel-wide > global.
+
+---
+
+### Admin: Projects
+
+**Create a project:**
+
+```bash
+curl -X POST http://localhost:3400/v1/admin/projects \
+  -H "X-Api-Key: admin_xxx" \
+  -d '{"id": "newapp", "name": "New App", "channels": ["email", "in_app"]}'
+```
+
+**Rotate API key (zero-downtime):**
+
+```bash
+# 1. Rotate — old key still works for 24h
+curl -X POST http://localhost:3400/v1/admin/projects/newapp/rotate-key \
+  -H "X-Api-Key: admin_xxx"
+# → {"new_key": "sk_newapp_yyy", "old_key_expires_at": "..."}
+
+# 2. Update your app with new key
+
+# 3. Revoke old key
+curl -X POST http://localhost:3400/v1/admin/projects/newapp/revoke-secondary \
+  -H "X-Api-Key: admin_xxx"
+```
+
+---
+
+### Admin: Webhooks
+
+Receive POST callbacks when notifications are delivered, failed, or clicked.
+
+```bash
+curl -X POST http://localhost:3400/v1/admin/webhooks \
+  -H "X-Api-Key: admin_xxx" \
+  -d '{
+    "url": "https://myapp.com/webhooks/notifyd",
+    "events": ["notification.sent", "notification.failed"],
+    "secret": "whsec_xxx"
+  }'
+```
+
+Webhook payloads are signed with HMAC-SHA256. Verify with the `X-Notifyd-Signature` header.
+
+---
+
+## Rate Limits
+
+Default: 100 requests/minute per project. Configurable per project.
+
+When rate limited, you'll receive:
+
+```
+HTTP 429 Too Many Requests
+{"error": "Rate limit exceeded"}
+```
+
+Retry after 60 seconds or contact the admin to increase limits.
+
+---
+
+## SDKs
+
+### Official (planned)
+
+- `@notifyd/node` — Node.js/TypeScript client
+- `@notifyd/react` — React inbox components
+
+### Community
+
+None yet — [be the first!](https://github.com/rmzlb/notifyd/issues)
+
+### Roll Your Own
+
+The API is simple REST + SSE. Any HTTP client works. See the examples above in curl, TypeScript, and Rust.

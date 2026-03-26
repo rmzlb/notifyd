@@ -1,173 +1,321 @@
-# notifyd
+<p align="center">
+  <img src="docs/assets/notifyd-logo.svg" alt="notifyd" width="80" />
+</p>
 
-Self-hosted notification micro-service in Rust. Replaces Novu. Handles email, SMS, and in-app notifications with scheduling, retry, and realtime SSE inbox.
+<h1 align="center">notifyd</h1>
+
+<p align="center">
+  <strong>Agent-first notification service. One Rust binary. Postgres only. No Redis, no Mongo, no nonsense.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/rmzlb/notifyd/blob/main/LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://hub.docker.com/r/rmzlb/notifyd"><img src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
+  <img src="https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/~3700_lines-green?style=flat-square" alt="Lines of code">
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="docs/API.md">API Reference</a> •
+  <a href="docs/SETUP.md">Setup Guide</a> •
+  <a href="docs/ARCHITECTURE.md">Architecture</a> •
+  <a href="docs/llms.txt">LLM Docs</a> •
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+---
+
+## The Problem
+
+Your AI agent needs to send an email. Or a push notification. Or update an in-app inbox.
+
+You look at Novu: MongoDB, Redis, 4 containers, a React SDK, 30 minutes of setup. Your agent doesn't care about any of that. It just wants to `POST /v1/send` and move on.
+
+**notifyd** is what that looks like. A single Rust binary. One `POST` call. Your agent sends notifications and gets back to work.
+
+```
+Agent ──POST /v1/send──→ notifyd ──→ Email (Resend)
+                                 ──→ SMS (Twilio/Telnyx)
+                                 ──→ Push (FCM)
+                                 ──→ In-App (SSE)
+```
+
+---
+
+## Why Agents Love This
+
+Most notification services were designed for humans clicking buttons in a dashboard. notifyd was designed for agents making API calls.
+
+**Flat REST API** — no SDK needed, no WebSocket handshake, no complex auth flows. `curl` works. Your agent's HTTP client works.
+
+**`docs/llms.txt`** — the entire API reference in plain text, optimized for LLM context windows. Point your agent at it and it can call any endpoint. ([View it](docs/llms.txt))
+
+**Idempotency built-in** — agents retry. That's fine. Pass `idempotency_key` and notifyd deduplicates.
+
+**One binary, one config file** — `docker compose up` and you have a notification service. No infra degree required.
+
+```bash
+# Your agent sends a notification. That's it.
+curl -X POST http://localhost:3400/v1/send \
+  -H "X-Api-Key: sk_myapp_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channels": ["email", "in_app"],
+    "subscriber_id": "user-1",
+    "subject": "Your report is ready",
+    "body": "Hey {{first_name}}, the analysis you requested is complete.",
+    "vars": {"first_name": "Alice"},
+    "idempotency_key": "report-42-ready"
+  }'
+```
+
+### Connect Your Agent to the Docs
+
+Feed `docs/llms.txt` to any LLM agent and it can operate the full API:
+
+```
+https://raw.githubusercontent.com/rmzlb/notifyd/main/docs/llms.txt
+```
+
+Or describe notifyd as a tool:
+
+```json
+{
+  "name": "send_notification",
+  "description": "Send email/SMS/push/in-app via notifyd",
+  "endpoint": "POST /v1/send",
+  "auth": "X-Api-Key header"
+}
+```
+
+---
+
+## vs. The Alternatives
+
+| | **Novu** | **Knock** | **notifyd** |
+|---|---|---|---|
+| **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only |
+| **Setup** | 30+ min | Signup + dashboard | `docker compose up` (2 min) |
+| **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
+| **Memory** | ~800MB+ | N/A | ~15MB |
+| **Agent-friendly** | SDK-heavy | Dashboard-first | REST-first, `llms.txt` included |
+| **Realtime** | WebSocket | WebSocket | SSE (simpler, works everywhere) |
+| **Self-hosted** | ✅ (heavy) | ❌ | ✅ (one container) |
+| **Queue** | Redis + BullMQ | Managed | Postgres `SKIP LOCKED` |
+| **Cost** | Free tier / paid | $0.01/notification | Free forever |
+
+---
 
 ## Features
 
-- **Email** via Resend
-- **SMS** via Twilio or Telnyx (switchable in config)
-- **In-app** inbox with realtime SSE — replaces `@novu/react`
-- **Scheduling** — `scheduled_at` on any notification
-- **Queue** — Postgres-backed, `SELECT FOR UPDATE SKIP LOCKED`, no Redis
-- **Retry** — exponential backoff (30s → 2min → 10min), max 3 attempts
-- **Idempotency** — safe to retry from client
-- **Multi-project** — one service, one API key per project
-- **Templates** — `{{variable}}` substitution, stored in DB per project
-- **Subscriber JWT** — frontend auth for inbox without exposing project API key
+- **📧 Email** — via Resend (plug your API key)
+- **📱 SMS** — Twilio or Telnyx (swap in config, zero code change)
+- **🔔 Push** — FCM (Firebase Cloud Messaging)
+- **💬 In-app inbox** — REST + realtime SSE stream
+- **⏰ Scheduling** — `scheduled_at` on any notification
+- **🔄 Retry** — exponential backoff (30s → 2min → 10min)
+- **🔑 Idempotency** — safe agent retries
+- **📋 Templates** — `{{variable}}` substitution, stored per project
+- **🏢 Multi-project** — one instance, many projects, isolated by API key
+- **⚡ Workflows** — event-triggered multi-step sequences
+- **👤 Preferences** — per-subscriber opt-in/opt-out
+- **🔍 Audit log** — every mutation logged
+- **🚦 Rate limiting** — per-project sliding window
+- **📊 Metrics** — `/v1/metrics` for monitoring
+- **🪝 Webhooks** — delivery events to your endpoints
+
+---
 
 ## Quick Start
 
+### Docker (recommended)
+
 ```bash
+git clone https://github.com/rmzlb/notifyd.git && cd notifyd
 cp notifyd.toml.example notifyd.toml
-# Edit notifyd.toml with your keys
+# Edit notifyd.toml — add your Resend API key at minimum
 
 docker compose up -d
+# → notifyd running on http://localhost:3400
 ```
 
-## API Reference
-
-All endpoints require `X-Api-Key: sk_<project>_xxx` header.
-
-### Send
+### From source
 
 ```bash
-# Immediate send (email + in-app)
-curl -X POST http://localhost:3400/v1/send \
-  -H "X-Api-Key: sk_square_xxx" \
-  -H "Content-Type: application/json" \
+# Rust 1.75+, PostgreSQL 16+
+git clone https://github.com/rmzlb/notifyd.git && cd notifyd
+cp notifyd.toml.example notifyd.toml
+cargo run
+```
+
+### Verify
+
+```bash
+curl http://localhost:3400/v1/health
+# → {"status":"ok","db":"ok","version":"0.1.0"}
+```
+
+→ Full setup: [docs/SETUP.md](docs/SETUP.md)
+
+---
+
+## API at a Glance
+
+Every endpoint uses `X-Api-Key: sk_<project>_xxx`. Inbox endpoints also accept subscriber JWT.
+
+| Method | Endpoint | What it does |
+|--------|----------|--------------|
+| `POST` | `/v1/send` | Send notification (email, SMS, push, in-app) |
+| `POST` | `/v1/batch` | Send to multiple subscribers |
+| `GET` | `/v1/inbox/:id` | List in-app notifications |
+| `GET` | `/v1/inbox/:id/stream` | SSE realtime stream |
+| `POST` | `/v1/workflows/trigger` | Trigger event-based workflow |
+| `GET` | `/v1/health` | Health check |
+| `GET` | `/v1/metrics` | Service metrics |
+
+→ Full reference: [docs/API.md](docs/API.md) — or feed [docs/llms.txt](docs/llms.txt) to your agent.
+
+---
+
+## In-App Inbox
+
+Complete notification inbox with realtime SSE. No WebSocket library, no Redis pub/sub — just native `EventSource`.
+
+```typescript
+// Connect to realtime stream
+const events = new EventSource(
+  `https://notifyd.example.com/v1/inbox/${userId}/stream?token=${jwt}`
+);
+
+events.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  if (data.type === 'new_notification') showToast(data.notification);
+  if (data.type === 'count_update') updateBadge(data.unread_count);
+};
+```
+
+Features: read/unread, archive, todo/star, pagination, unread count badge, realtime push.
+
+---
+
+## Workflow Engine
+
+Multi-step notification sequences triggered by events:
+
+```bash
+curl -X POST http://localhost:3400/v1/workflows \
+  -H "X-Api-Key: sk_myapp_xxx" \
   -d '{
-    "channels": ["email", "in_app"],
-    "subscriber_id": "user-uuid",
-    "to": "user@example.com",
-    "subject": "Votre demande a été approuvée",
-    "body": "Bonjour {{name}}, votre demande PR-{{number}} est approuvée.",
-    "vars": {"name": "Jean", "number": "001"}
-  }'
-
-# Scheduled SMS
-curl -X POST http://localhost:3400/v1/schedule \
-  -H "X-Api-Key: sk_square_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channel": "sms",
-    "to": "+33612345678",
-    "body": "Rappel RDV {{date}} à {{hour}}",
-    "vars": {"date": "25 mars", "hour": "14h"},
-    "scheduled_at": "2026-03-25T12:00:00Z",
-    "idempotency_key": "appt-42-reminder"
-  }'
-
-# Batch (multiple subscribers)
-curl -X POST http://localhost:3400/v1/batch \
-  -H "X-Api-Key: sk_square_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channels": ["email", "in_app"],
-    "subscribers": ["user-1", "user-2", "user-3"],
-    "template": "purchase_approved",
-    "vars": {"request_number": "PR-001"}
+    "id": "welcome-series",
+    "trigger_event": "user.signup",
+    "steps": [
+      {"type": "send", "channel": "email", "template": "welcome"},
+      {"type": "delay", "duration": "24h"},
+      {"type": "send", "channel": "email", "template": "getting_started"},
+      {"type": "delay", "duration": "72h"},
+      {"type": "condition", "check": "completed_onboarding", "if_false": [
+        {"type": "send", "channel": "email", "template": "nudge"}
+      ]}
+    ]
   }'
 ```
 
-### In-App Inbox (frontend)
+State persisted in Postgres — survives restarts. No in-memory state to lose.
 
-```bash
-# 1. Backend: get subscriber token
-curl -X POST http://localhost:3400/v1/auth/subscriber-token \
-  -H "X-Api-Key: sk_square_xxx" \
-  -d '{"subscriber_id": "user-uuid"}'
-# → {"token": "eyJ..."}
+---
 
-# 2. Frontend: use token for inbox
-curl http://localhost:3400/v1/inbox/user-uuid \
-  -H "Authorization: Bearer eyJ..."
+## Configuration
 
-# 3. Realtime SSE
-const es = new EventSource('/v1/inbox/user-uuid/stream?token=eyJ...')
-es.onmessage = (e) => {
-  const event = JSON.parse(e.data)
-  // event.type: "new_notification" | "count_update"
-}
-
-# Mark read
-curl -X PATCH http://localhost:3400/v1/inbox/user-uuid/msg-id \
-  -H "Authorization: Bearer eyJ..." \
-  -d '{"read": true}'
-
-# Toggle todo
-curl -X PATCH http://localhost:3400/v1/inbox/user-uuid/msg-id \
-  -H "Authorization: Bearer eyJ..." \
-  -d '{"is_todo": true}'
-
-# Unread badge count
-curl http://localhost:3400/v1/inbox/user-uuid/unread-count \
-  -H "Authorization: Bearer eyJ..."
-```
-
-### Subscribers
-
-```bash
-# Create/update
-curl -X POST http://localhost:3400/v1/subscribers \
-  -H "X-Api-Key: sk_square_xxx" \
-  -d '{"id": "user-uuid", "email": "user@example.com", "first_name": "Jean", "phone": "+33612345678"}'
-
-# Get
-curl http://localhost:3400/v1/subscribers/user-uuid \
-  -H "X-Api-Key: sk_square_xxx"
-```
-
-### Jobs
-
-```bash
-# Check job status
-curl http://localhost:3400/v1/jobs/job-uuid \
-  -H "X-Api-Key: sk_square_xxx"
-
-# Cancel scheduled job
-curl -X DELETE http://localhost:3400/v1/jobs/job-uuid \
-  -H "X-Api-Key: sk_square_xxx"
-```
-
-## SMS Providers
-
-### Twilio
+Single TOML file. Minimal setup:
 
 ```toml
-[connectors.sms]
-provider = "twilio"
-account_sid = "ACxxx"
-auth_token = "xxx"
-from = "+33600000000"
+[server]
+port = 3400
+jwt_secret = "your-secret-here"
+
+[database]
+url = "postgres://notifyd:pass@localhost:5432/notifyd"
+
+[connectors.email]
+provider = "resend"
+api_key = "re_xxx"
+from = "notifications@yourdomain.com"
+
+[projects.myapp]
+api_key = "sk_myapp_xxx"
+channels = ["email", "in_app"]
 ```
 
-### Telnyx
+→ Full config: [notifyd.toml.example](notifyd.toml.example)
 
-```toml
-[connectors.sms]
-provider = "telnyx"
-api_key = "KEY01xxx"
-messaging_profile_id = "optional-uuid"
-from = "+33600000000"
+---
+
+## Project Structure
+
+```
+notifyd/
+├── src/
+│   ├── main.rs              # Server bootstrap, graceful shutdown
+│   ├── config.rs             # TOML config
+│   ├── db.rs                 # sqlx models
+│   ├── worker.rs             # Background job processor
+│   ├── workflow_engine.rs    # Event-driven workflows
+│   ├── sse.rs                # SSE broadcaster (tokio channels)
+│   ├── templates.rs          # {{var}} engine
+│   ├── pii.rs                # PII masking for logs
+│   ├── middleware.rs          # Rate limiter + audit
+│   ├── api/                  # 13 route modules
+│   └── connectors/           # Email, SMS, Push, In-App
+├── migrations/               # 4 SQL migrations (auto-run)
+├── Dockerfile                # Multi-stage + cargo-chef
+├── docker-compose.yml        # notifyd + Postgres
+├── notifyd.toml.example      # Config reference
+└── docs/                     # API ref, setup, architecture, llms.txt
 ```
 
-Switch between providers by changing `provider = "twilio"` to `provider = "telnyx"` — no code change needed.
+~3,700 lines of Rust. Every file < 400 lines.
 
-## Migrating from Novu (Square)
+---
 
-1. Deploy notifyd, create Square project in `notifyd.toml`
-2. Replace subscriber sync: `triggerNovu()` → `fetch('POST /v1/send')`
-3. Backend: call `POST /v1/auth/subscriber-token` to get frontend JWT
-4. Frontend: replace `NovuProvider` + `@novu/react` with `EventSource` + fetch calls
-5. Kill Novu infra (MongoDB, Redis, 4 containers) ✓
+## Documentation
 
-## Environment Variables (alternative to TOML)
+| | |
+|---|---|
+| 📦 **[Setup Guide](docs/SETUP.md)** | Local dev, Docker, production deploy |
+| 🔌 **[API Reference](docs/API.md)** | Every endpoint with curl/TS/Rust examples |
+| 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue design, SSE internals, connectors |
+| 🤖 **[LLM Docs](docs/llms.txt)** | Full API in plain text — feed to your agent |
 
-```env
-DATABASE_URL=postgres://notifyd:xxx@localhost/notifyd
-PORT=3400
-JWT_SECRET=your-secret
-RESEND_API_KEY=re_xxx
-EMAIL_FROM=notifications@example.com
-EMAIL_FROM_NAME=My App
+---
+
+## Contributing
+
+notifyd is built in **Grenoble, in the French Alps** 🏔️ — but open to contributors from everywhere.
+
+1. Read the [Contributing Guide](CONTRIBUTING.md)
+2. Check [open issues](https://github.com/rmzlb/notifyd/issues) — `good first issue` is a great start
+3. Big features → open an issue first
+
+```bash
+git clone https://github.com/YOUR_USERNAME/notifyd.git
+cd notifyd && cp notifyd.toml.example notifyd.toml
+cargo test && cargo run
 ```
+
+---
+
+## License
+
+Licensed under either of:
+
+- [MIT license](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option.
+
+---
+
+<p align="center">
+  Built with 🦀 in Grenoble, France 🏔️
+</p>

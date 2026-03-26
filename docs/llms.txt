@@ -1,0 +1,313 @@
+# notifyd — API Reference for AI Agents
+
+> Self-hosted notification service. Email, SMS, Push, In-App — one REST API.
+> Base URL: http://localhost:3400 (or your deployed domain)
+> Auth: X-Api-Key header on every request
+
+---
+
+## AUTHENTICATION
+
+All requests need: X-Api-Key: sk_<project>_xxx
+Inbox/SSE endpoints also accept: Authorization: Bearer <subscriber_jwt>
+Admin endpoints need the admin API key.
+
+Get a subscriber JWT:
+POST /v1/auth/subscriber-token
+Body: {"subscriber_id": "user-1"}
+Response: {"token": "eyJ..."}
+
+---
+
+## SEND NOTIFICATION
+
+POST /v1/send
+Send via one or more channels. Async queue, processed <1s.
+
+Body:
+{
+  "channels": ["email", "in_app"],   // or "channel": "email" for single
+  "subscriber_id": "user-uuid",      // optional, links to subscriber record
+  "to": "user@example.com",          // optional override (email or phone)
+  "subject": "Email subject",        // email only
+  "body": "Hello {{first_name}}!",   // supports {{var}} substitution
+  "template": "template_id",         // optional, use stored template instead
+  "vars": {"first_name": "Alice"},   // template variables
+  "scheduled_at": "2026-03-25T14:00:00Z",  // optional future delivery
+  "idempotency_key": "unique-key"    // optional dedup key
+}
+
+Channels: "email", "sms", "in_app", "push"
+Response: {"success": true, "jobs": [{"id": "uuid", "channel": "email", "status": "pending"}]}
+
+---
+
+## BATCH SEND
+
+POST /v1/batch
+Send same notification to multiple subscribers.
+
+Body:
+{
+  "channels": ["email", "in_app"],
+  "subscribers": ["user-1", "user-2", "user-3"],
+  "template": "weekly_digest",
+  "vars": {"week": "March 24-30"}
+}
+
+---
+
+## SUBSCRIBERS
+
+POST /v1/subscribers — Create or update subscriber
+Body: {"id": "user-1", "email": "user@example.com", "phone": "+33612345678", "first_name": "Alice", "last_name": "Dupont", "locale": "fr", "data": {}}
+
+GET /v1/subscribers — List subscribers (query: ?limit=20&offset=0)
+GET /v1/subscribers/:id — Get one subscriber
+DELETE /v1/subscribers/:id — Delete subscriber and all their data
+
+---
+
+## IN-APP INBOX
+
+GET /v1/inbox/:subscriber_id — List notifications
+Query: ?limit=20&cursor=<iso_timestamp>&unread_only=true
+Response: {"notifications": [...], "has_more": true, "next_cursor": "..."}
+
+Each notification:
+{
+  "id": "uuid",
+  "body": "You have a new message",
+  "icon": "message",
+  "url": "/messages/42",
+  "data": {},
+  "read_at": null,
+  "is_todo": false,
+  "created_at": "2026-03-25T10:30:00Z"
+}
+
+PATCH /v1/inbox/:subscriber_id/:msg_id — Update notification
+Body: {"read": true} or {"archived": true} or {"is_todo": true}
+
+POST /v1/inbox/:subscriber_id/read-all — Mark all as read
+GET /v1/inbox/:subscriber_id/unread-count — Badge count
+Response: {"count": 5}
+
+---
+
+## SSE REALTIME STREAM
+
+GET /v1/inbox/:subscriber_id/stream?token=<jwt>
+Content-Type: text/event-stream
+
+Events:
+data: {"type":"new_notification","notification":{...}}
+data: {"type":"count_update","unread_count":5}
+data: {"type":"read","notification_id":"uuid"}
+data: {"type":"archived","notification_id":"uuid"}
+
+One-time ticket (avoids JWT in URL):
+POST /v1/inbox/:subscriber_id/stream-ticket
+Response: {"ticket": "abc-123"}
+Then: GET /v1/inbox/:subscriber_id/stream?ticket=abc-123
+
+---
+
+## JOBS
+
+GET /v1/jobs/:id — Get job status
+Response: {"id": "uuid", "status": "sent", "channel": "email", "sent_at": "...", "attempts": 1}
+
+Status values: pending, processing, sent, failed, cancelled, retry
+
+DELETE /v1/jobs/:id — Cancel pending or scheduled job
+
+---
+
+## TEMPLATES
+
+POST /v1/templates — Create or update template
+Body:
+{
+  "id": "welcome_email",
+  "channel": "email",
+  "subject": "Welcome {{first_name}}!",
+  "body": "Hello {{first_name}}, welcome to {{app_name}}.",
+  "body_html": "<h1>Welcome {{first_name}}!</h1>"
+}
+
+GET /v1/templates — List all templates
+GET /v1/templates/:id — Get template
+DELETE /v1/templates/:id — Delete template
+
+Variables use {{var_name}} syntax. Substituted at send time from vars object.
+
+---
+
+## PREFERENCES
+
+GET /v1/subscribers/:id/preferences — Get subscriber preferences
+PUT /v1/subscribers/:id/preferences — Set preferences
+
+Body:
+{
+  "preferences": [
+    {"channel": "email", "workflow_id": "marketing", "enabled": false},
+    {"channel": "sms", "workflow_id": "*", "enabled": false}
+  ]
+}
+
+Hierarchy: workflow-specific > channel-wide > global.
+Default: everything enabled.
+
+---
+
+## WORKFLOWS
+
+POST /v1/workflows — Create or update workflow
+Body:
+{
+  "id": "welcome-series",
+  "name": "Welcome Series",
+  "trigger_event": "user.signup",
+  "steps": [
+    {"type": "send", "channel": "email", "template": "welcome"},
+    {"type": "delay", "duration": "24h"},
+    {"type": "send", "channel": "email", "template": "getting_started"},
+    {"type": "condition", "check": "completed_onboarding", "if_false": [
+      {"type": "send", "channel": "email", "template": "nudge"}
+    ]}
+  ]
+}
+
+Step types: "send", "delay", "condition"
+
+POST /v1/workflows/trigger — Trigger workflow
+Body: {"event": "user.signup", "subscriber_id": "user-42", "payload": {"plan": "pro"}}
+
+GET /v1/workflows — List workflows
+GET /v1/workflows/:id — Get workflow
+DELETE /v1/workflows/:id — Delete workflow
+GET /v1/workflows/runs — List active runs
+DELETE /v1/workflows/runs/:id — Cancel a run
+
+---
+
+## PUSH TOKENS
+
+POST /v1/push-tokens — Register push token
+Body: {"subscriber_id": "user-1", "token": "fcm-token-xxx", "platform": "android"}
+
+GET /v1/push-tokens/subscriber/:subscriber_id — List tokens
+DELETE /v1/push-tokens/:id — Delete token
+
+---
+
+## ADMIN
+
+POST /v1/admin/projects — Create project
+Body: {"id": "myapp", "name": "My App", "channels": ["email", "in_app"]}
+
+GET /v1/admin/projects — List projects
+DELETE /v1/admin/projects/:id — Delete project
+
+POST /v1/admin/projects/:id/rotate-key — Rotate API key (zero-downtime, old key valid 24h)
+POST /v1/admin/projects/:id/revoke-secondary — Revoke old key after rotation
+
+GET /v1/admin/audit — Audit log (query: ?project_id=xxx&limit=50)
+
+---
+
+## WEBHOOKS
+
+POST /v1/admin/webhooks — Create webhook
+Body: {"url": "https://myapp.com/hooks", "events": ["notification.sent", "notification.failed"], "secret": "whsec_xxx"}
+
+GET /v1/admin/webhooks — List webhooks
+DELETE /v1/admin/webhooks/:id — Delete webhook
+
+Payloads signed with HMAC-SHA256 in X-Notifyd-Signature header.
+
+---
+
+## HEALTH & METRICS
+
+GET /v1/health (no auth)
+Response: {"status": "ok", "db": "ok", "version": "0.1.0"}
+
+GET /v1/metrics (admin auth)
+Response:
+{
+  "jobs_pending": 12,
+  "jobs_processing": 3,
+  "jobs_sent_24h": 1547,
+  "jobs_failed_24h": 2,
+  "subscribers_total": 8420,
+  "inbox_messages_total": 34210,
+  "active_workflow_runs": 5,
+  "uptime_seconds": 86400
+}
+
+---
+
+## RATE LIMITS
+
+100 requests/minute per project (configurable).
+429 Too Many Requests when exceeded. Retry after 60s.
+
+---
+
+## ERROR FORMAT
+
+All errors: {"error": "description"}
+Status codes: 400 (bad request), 401 (no auth), 403 (forbidden), 404 (not found), 429 (rate limit), 500 (server error)
+
+---
+
+## CONFIGURATION
+
+notifyd.toml:
+
+[server]
+port = 3400
+jwt_secret = "secret"
+
+[database]
+url = "postgres://user:pass@host:5432/notifyd"
+max_connections = 10
+
+[worker]
+poll_interval_ms = 500
+batch_size = 50
+max_attempts = 3
+
+[connectors.email]
+provider = "resend"
+api_key = "re_xxx"
+from = "notifications@domain.com"
+from_name = "My App"
+
+[connectors.sms]
+provider = "twilio"          # or "telnyx"
+account_sid = "ACxxx"
+auth_token = "xxx"
+from = "+33600000000"
+
+[projects.myapp]
+api_key = "sk_myapp_xxx"
+channels = ["email", "sms", "in_app"]
+
+---
+
+## DOCKER
+
+docker compose up -d
+# Starts notifyd on :3400 + Postgres 16
+
+Or standalone:
+docker run -p 3400:3400 -e DATABASE_URL=postgres://... -v ./notifyd.toml:/app/notifyd.toml:ro notifyd
+
+---
+
+Built in Grenoble, France. MIT/Apache-2.0 licensed.
+Source: https://github.com/rmzlb/notifyd
