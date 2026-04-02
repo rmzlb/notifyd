@@ -12,11 +12,21 @@ batch_size = 50
 max_attempts = 3
 
 # ─── Email connector ─────────────────────────────────────────────────
+# Provider: "resend" or "agentmail"
+
+# Resend example:
 [connectors.email]
 provider = "resend"
 api_key = "re_xxx"
 from = "notifications@yourdomain.com"
 from_name = "Mon App"
+
+# AgentMail example (comment out Resend section and use this instead):
+# [connectors.email]
+# provider = "agentmail"
+# api_key = "am_xxx"  # AgentMail API Bearer token
+# from = "myapp@agentmail.to"  # AgentMail inbox address
+# from_name = "Mon App"
 
 # ─── SMS connector ────────────────────────────────────────────────────
 # Provider: "twilio" or "telnyx"
@@ -49,5 +59,13 @@ channels = ["email", "in_app"]
 [projects.helmai]
 api_key = "sk_helmai_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 channels = ["email", "sms"]
+
+[projects.craie]
+api_key = "sk_craie_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+channels = ["email", "in_app"]
+
+[projects.craie]
+api_key = "sk_craie_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+channels = ["email", "in_app"]
 
 # Add more projects as needed...

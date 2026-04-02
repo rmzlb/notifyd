@@ -1,6 +1,6 @@
 use crate::{
     AppState,
-    connectors::{Channel, Connector, SendRequest, email::ResendConnector, sms::SmsConnector, in_app::InAppConnector},
+    connectors::{Channel, Connector, SendRequest, email::create_email_connector, sms::SmsConnector, in_app::InAppConnector},
     db::Job,
     templates,
     workflow_engine,
@@ -221,7 +221,7 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
         Some(Channel::Email) => {
             let config = state.config.connectors.email.as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Email connector not configured"))?;
-            ResendConnector::new(config.clone()).send(&req).await
+            create_email_connector(config.clone()).send(&req).await
         }
         Some(Channel::Sms) => {
             let config = state.config.connectors.sms.as_ref()
