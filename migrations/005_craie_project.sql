@@ -1,8 +1,14 @@
 -- Craie project setup for notifyd
 -- 10 email templates + project config
 
-INSERT INTO projects (id, name, created_at) 
-VALUES ('craie', 'Craie — Textiles sur mesure', now())
+INSERT INTO projects (id, api_key, name, channels, created_at) 
+VALUES (
+    'craie', 
+    encode(gen_random_bytes(32), 'hex'),
+    'Craie — Textiles sur mesure', 
+    '{email}',
+    now()
+)
 ON CONFLICT (id) DO NOTHING;
 
 -- ── Templates ──────────────────────────────────────────────────────
