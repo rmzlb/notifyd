@@ -1,9 +1,17 @@
-use axum::{extract::{State, Path, Query}, Json, http::{StatusCode, HeaderMap}};
+use crate::{
+    api::send::extract_project,
+    db::{Workflow, WorkflowRun},
+    workflow_engine, AppState,
+};
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::{AppState, db::{Workflow, WorkflowRun}, api::send::extract_project, workflow_engine};
 
 #[derive(Deserialize)]
 pub struct CreateWorkflow {
@@ -34,7 +42,7 @@ pub async fn create_workflow(
             steps = EXCLUDED.steps,
             enabled = EXCLUDED.enabled,
             updated_at = now()
-        "#
+        "#,
     )
     .bind(&req.id)
     .bind(&project.id)
@@ -45,9 +53,16 @@ pub async fn create_workflow(
     .bind(req.enabled.unwrap_or(true))
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    .map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
-    Ok(Json(json!({"success": true, "id": req.id, "project_id": project.id})))
+    Ok(Json(
+        json!({"success": true, "id": req.id, "project_id": project.id}),
+    ))
 }
 
 /// GET /v1/workflows
@@ -65,15 +80,20 @@ pub async fn list_workflows(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let items: Vec<Value> = workflows.iter().map(|w| json!({
-        "id": w.id,
-        "name": w.name,
-        "description": w.description,
-        "trigger_event": w.trigger_event,
-        "steps": w.steps,
-        "enabled": w.enabled,
-        "created_at": w.created_at,
-    })).collect();
+    let items: Vec<Value> = workflows
+        .iter()
+        .map(|w| {
+            json!({
+                "id": w.id,
+                "name": w.name,
+                "description": w.description,
+                "trigger_event": w.trigger_event,
+                "steps": w.steps,
+                "enabled": w.enabled,
+                "created_at": w.created_at,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({"workflows": items, "count": items.len()})))
 }
@@ -95,7 +115,12 @@ pub async fn get_workflow(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let wf = wf.ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Workflow not found"}))))?;
+    let wf = wf.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Workflow not found"})),
+        )
+    })?;
 
     Ok(Json(json!({
         "id": wf.id,
@@ -117,12 +142,22 @@ pub async fn delete_workflow(
     let project = extract_project(&state, &headers).await?;
 
     let result = sqlx::query("DELETE FROM workflows WHERE project_id=$1 AND id=$2")
-        .bind(&project.id).bind(&id)
-        .execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+        .bind(&project.id)
+        .bind(&id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Workflow not found"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Workflow not found"})),
+        ));
     }
 
     Ok(Json(json!({"success": true})))
@@ -144,9 +179,20 @@ pub async fn trigger_workflow(
     let project = extract_project(&state, &headers).await?;
 
     let payload = req.payload.unwrap_or(json!({}));
-    let run_ids = workflow_engine::trigger_event(&state, &project.id, &req.event, &req.subscriber_id, &payload)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    let run_ids = workflow_engine::trigger_event(
+        &state,
+        &project.id,
+        &req.event,
+        &req.subscriber_id,
+        &payload,
+    )
+    .await
+    .map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
     Ok(Json(json!({
         "success": true,
@@ -173,12 +219,16 @@ pub async fn list_runs(
     let limit = q.limit.unwrap_or(50).min(200);
     let offset = q.offset.unwrap_or(0).max(0);
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM workflow_runs WHERE project_id=$1"
-    )
-    .bind(&project.id)
-    .fetch_one(&state.pool).await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflow_runs WHERE project_id=$1")
+        .bind(&project.id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     let runs: Vec<WorkflowRun> = sqlx::query_as(
         "SELECT id, project_id, workflow_id, subscriber_id, trigger_payload, current_step, status, step_state, resume_at, created_at, updated_at FROM workflow_runs WHERE project_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"
@@ -190,23 +240,28 @@ pub async fn list_runs(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let items: Vec<Value> = runs.iter()
+    let items: Vec<Value> = runs
+        .iter()
         .filter(|r| {
             q.status.as_ref().map_or(true, |s| r.status == *s)
                 && q.workflow_id.as_ref().map_or(true, |w| r.workflow_id == *w)
         })
-        .map(|r| json!({
-            "id": r.id,
-            "workflow_id": r.workflow_id,
-            "subscriber_id": r.subscriber_id,
-            "current_step": r.current_step,
-            "status": r.status,
-            "resume_at": r.resume_at,
-            "created_at": r.created_at,
-        }))
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "workflow_id": r.workflow_id,
+                "subscriber_id": r.subscriber_id,
+                "current_step": r.current_step,
+                "status": r.status,
+                "resume_at": r.resume_at,
+                "created_at": r.created_at,
+            })
+        })
         .collect();
 
-    Ok(Json(json!({"items": items, "total": total, "limit": limit, "offset": offset})))
+    Ok(Json(
+        json!({"items": items, "total": total, "limit": limit, "offset": offset}),
+    ))
 }
 
 /// DELETE /v1/workflows/runs/:id — cancel a run
@@ -225,7 +280,10 @@ pub async fn cancel_run(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Run not found or not active"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Run not found or not active"})),
+        ));
     }
 
     Ok(Json(json!({"success": true, "id": id})))

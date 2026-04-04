@@ -250,9 +250,13 @@ curl -X POST http://localhost:3400/v1/batch \
     "channels": ["email", "in_app"],
     "subscribers": ["user-1", "user-2", "user-3"],
     "template": "weekly_digest",
-    "vars": {"week": "March 24-30"}
+    "vars": {"week": "March 24-30"},
+    "icon": "calendar",
+    "url": "/digest/2026-w13"
   }'
 ```
+
+`icon` and `url` are optional and are forwarded to in-app notifications for batch sends too.
 
 ---
 

@@ -1,16 +1,20 @@
+use crate::{
+    api::{auth::validate_subscriber_token, send::extract_project},
+    db::InboxMessage,
+    AppState,
+};
+use axum::response::sse::{Event, KeepAlive};
 use axum::{
-    extract::{State, Path, Query},
-    Json,
-    http::{StatusCode, HeaderMap},
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
     response::Sse,
+    Json,
 };
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{sync::Arc, convert::Infallible, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio_stream::wrappers::BroadcastStream;
-use crate::{AppState, db::InboxMessage, api::{send::extract_project, auth::validate_subscriber_token}};
-use axum::response::sse::{Event, KeepAlive};
 use uuid::Uuid;
 
 async fn auth_inbox(
@@ -19,7 +23,8 @@ async fn auth_inbox(
     path_subscriber_id: &str,
 ) -> Result<(String, String), (StatusCode, Json<Value>)> {
     // Subscriber JWT (frontend)
-    let bearer = headers.get("authorization")
+    let bearer = headers
+        .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
 
@@ -28,7 +33,10 @@ async fn auth_inbox(
             if claims.sub == path_subscriber_id {
                 return Ok((claims.project, claims.sub));
             }
-            return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Token subscriber mismatch"}))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({"error": "Token subscriber mismatch"})),
+            ));
         }
     }
 
@@ -86,7 +94,8 @@ pub async fn list_notifications(
     let search = query.q.as_deref().unwrap_or("").to_lowercase();
     let filter = query.filter.as_deref().unwrap_or("all");
 
-    let items: Vec<Value> = rows.iter()
+    let items: Vec<Value> = rows
+        .iter()
         .filter(|r| {
             if !search.is_empty() && !r.body.to_lowercase().contains(&search) {
                 return false;
@@ -97,17 +106,19 @@ pub async fn list_notifications(
                 _ => true,
             }
         })
-        .map(|r| json!({
-            "id": r.id,
-            "body": r.body,
-            "icon": r.icon,
-            "url": r.url,
-            "data": r.data,
-            "is_read": r.read_at.is_some(),
-            "read_at": r.read_at,
-            "is_todo": r.is_todo,
-            "created_at": r.created_at,
-        }))
+        .map(|r| {
+            json!({
+                "id": r.id,
+                "body": r.body,
+                "icon": r.icon,
+                "url": r.url,
+                "data": r.data,
+                "is_read": r.read_at.is_some(),
+                "read_at": r.read_at,
+                "is_todo": r.is_todo,
+                "created_at": r.created_at,
+            })
+        })
         .collect();
 
     Ok(Json(json!({
@@ -158,8 +169,13 @@ pub async fn update_notification(
         } else {
             "UPDATE inbox_messages SET read_at=NULL WHERE id=$1 AND project_id=$2 AND subscriber_id=$3"
         };
-        sqlx::query(sql).bind(msg_id).bind(&project_id).bind(&sub_id)
-            .execute(&state.pool).await.ok();
+        sqlx::query(sql)
+            .bind(msg_id)
+            .bind(&project_id)
+            .bind(&sub_id)
+            .execute(&state.pool)
+            .await
+            .ok();
     }
 
     if let Some(archived) = req.archived {
@@ -168,8 +184,13 @@ pub async fn update_notification(
         } else {
             "UPDATE inbox_messages SET archived_at=NULL WHERE id=$1 AND project_id=$2 AND subscriber_id=$3"
         };
-        sqlx::query(sql).bind(msg_id).bind(&project_id).bind(&sub_id)
-            .execute(&state.pool).await.ok();
+        sqlx::query(sql)
+            .bind(msg_id)
+            .bind(&project_id)
+            .bind(&sub_id)
+            .execute(&state.pool)
+            .await
+            .ok();
     }
 
     if let Some(todo) = req.is_todo {
@@ -189,7 +210,10 @@ pub async fn update_notification(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let ev = json!({"type": "count_update", "unread_count": count});
-    state.broadcaster.send(&project_id, &sub_id, ev.to_string()).await;
+    state
+        .broadcaster
+        .send(&project_id, &sub_id, ev.to_string())
+        .await;
 
     Ok(Json(json!({"success": true})))
 }
@@ -211,9 +235,14 @@ pub async fn read_all(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     let ev = json!({"type": "count_update", "unread_count": 0});
-    state.broadcaster.send(&project_id, &sub_id, ev.to_string()).await;
+    state
+        .broadcaster
+        .send(&project_id, &sub_id, ev.to_string())
+        .await;
 
-    Ok(Json(json!({"success": true, "updated": result.rows_affected()})))
+    Ok(Json(
+        json!({"success": true, "updated": result.rows_affected()}),
+    ))
 }
 
 /// POST /v1/inbox/:subscriber_id/stream-ticket
@@ -234,7 +263,8 @@ pub async fn sse_stream(
     Path(subscriber_id): Path<String>,
     Query(query): Query<InboxQuery>,
     headers: HeaderMap,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<Value>)> {
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<Value>)>
+{
     // Prefer one-time ticket (no JWT in URL/logs)
     let (project_id, sub_id) = if let Some(ticket) = &query.token {
         // Try ticket first
@@ -242,7 +272,10 @@ pub async fn sse_stream(
             if sid == subscriber_id {
                 (pid, sid)
             } else {
-                return Err((StatusCode::FORBIDDEN, Json(json!({"error": "Ticket subscriber mismatch"}))));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": "Ticket subscriber mismatch"})),
+                ));
             }
         } else {
             // Fallback to JWT (backward compat)
@@ -258,13 +291,12 @@ pub async fn sse_stream(
 
     let rx = state.broadcaster.subscribe(&project_id, &sub_id).await;
 
-    let stream = BroadcastStream::new(rx)
-        .filter_map(|msg| async move {
-            match msg {
-                Ok(m) => Some(Ok(Event::default().data(m.0))),
-                Err(_) => None,
-            }
-        });
+    let stream = BroadcastStream::new(rx).filter_map(|msg| async move {
+        match msg {
+            Ok(m) => Some(Ok(Event::default().data(m.0))),
+            Err(_) => None,
+        }
+    });
 
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()

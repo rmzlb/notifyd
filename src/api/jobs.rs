@@ -1,8 +1,12 @@
-use axum::{extract::{State, Path}, Json, http::{StatusCode, HeaderMap}};
+use crate::{api::send::extract_project, db::Job, AppState};
+use axum::{
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::{AppState, db::Job, api::send::extract_project};
 
 pub async fn get_job(
     State(state): State<Arc<AppState>>,
@@ -20,7 +24,12 @@ pub async fn get_job(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let job = job.ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Job not found"}))))?;
+    let job = job.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Job not found"})),
+        )
+    })?;
 
     Ok(Json(json!({
         "id": job.id,
@@ -55,7 +64,10 @@ pub async fn cancel_job(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Job not found or not cancellable"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Job not found or not cancellable"})),
+        ));
     }
 
     Ok(Json(json!({"success": true, "id": id})))

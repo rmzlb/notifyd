@@ -1,8 +1,12 @@
-use axum::{extract::{State, Path, Query}, Json, http::{StatusCode, HeaderMap}};
+use crate::{api::send::extract_project, db::Subscriber, AppState};
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use crate::{AppState, db::Subscriber, api::send::extract_project};
 
 #[derive(Debug, Deserialize)]
 pub struct UpsertSubscriber {
@@ -46,9 +50,16 @@ pub async fn upsert_subscriber(
     .bind(req.data.as_ref().unwrap_or(&json!({})))
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    .map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
-    Ok(Json(json!({"success": true, "id": req.id, "project_id": project.id})))
+    Ok(Json(
+        json!({"success": true, "id": req.id, "project_id": project.id}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -103,16 +114,21 @@ pub async fn list_subscribers(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
     })?;
 
-    let items: Vec<Value> = subscribers.iter().map(|s| json!({
-        "id": s.id,
-        "email": s.email,
-        "phone": s.phone,
-        "first_name": s.first_name,
-        "last_name": s.last_name,
-        "locale": s.locale,
-        "data": s.data,
-        "created_at": s.created_at,
-    })).collect();
+    let items: Vec<Value> = subscribers
+        .iter()
+        .map(|s| {
+            json!({
+                "id": s.id,
+                "email": s.email,
+                "phone": s.phone,
+                "first_name": s.first_name,
+                "last_name": s.last_name,
+                "locale": s.locale,
+                "data": s.data,
+                "created_at": s.created_at,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({
         "items": items,
@@ -138,7 +154,12 @@ pub async fn get_subscriber(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let sub = sub.ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({"error": "Subscriber not found"}))))?;
+    let sub = sub.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Subscriber not found"})),
+        )
+    })?;
 
     Ok(Json(json!({
         "id": sub.id,
@@ -165,10 +186,18 @@ pub async fn delete_subscriber(
         .bind(&id)
         .execute(&state.pool)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Subscriber not found"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Subscriber not found"})),
+        ));
     }
 
     Ok(Json(json!({"success": true})))

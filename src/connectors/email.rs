@@ -1,9 +1,9 @@
 use super::{Channel, Connector, SendRequest};
 use crate::config::EmailConfig;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::json;
-use tracing::{info, error};
+use tracing::{error, info};
 
 /// Create the right email connector based on provider config
 pub fn create_email_connector(config: EmailConfig) -> Box<dyn Connector> {
@@ -31,7 +31,9 @@ impl ResendConnector {
 
 #[async_trait]
 impl Connector for ResendConnector {
-    fn channel(&self) -> Channel { Channel::Email }
+    fn channel(&self) -> Channel {
+        Channel::Email
+    }
 
     async fn send(&self, req: &SendRequest) -> Result<()> {
         let from = if let Some(name) = &self.config.from_name {
@@ -48,7 +50,8 @@ impl Connector for ResendConnector {
             "text": req.body,
         });
 
-        let res = self.client
+        let res = self
+            .client
             .post("https://api.resend.com/emails")
             .bearer_auth(&self.config.api_key)
             .json(&body)
@@ -56,7 +59,10 @@ impl Connector for ResendConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("Email sent via Resend to {}", crate::pii::mask_email(&req.recipient));
+            info!(
+                "Email sent via Resend to {}",
+                crate::pii::mask_email(&req.recipient)
+            );
             Ok(())
         } else {
             let status = res.status();
@@ -88,7 +94,9 @@ impl AgentMailConnector {
 
 #[async_trait]
 impl Connector for AgentMailConnector {
-    fn channel(&self) -> Channel { Channel::Email }
+    fn channel(&self) -> Channel {
+        Channel::Email
+    }
 
     async fn send(&self, req: &SendRequest) -> Result<()> {
         // config.from = inbox address (e.g., "craie@agentmail.to")
@@ -106,7 +114,8 @@ impl Connector for AgentMailConnector {
             "html": req.body_html.as_deref().unwrap_or(&req.body),
         });
 
-        let res = self.client
+        let res = self
+            .client
             .post(&url)
             .bearer_auth(&self.config.api_key)
             .json(&body)
@@ -114,7 +123,10 @@ impl Connector for AgentMailConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("Email sent via AgentMail to {}", crate::pii::mask_email(&req.recipient));
+            info!(
+                "Email sent via AgentMail to {}",
+                crate::pii::mask_email(&req.recipient)
+            );
             Ok(())
         } else {
             let status = res.status();

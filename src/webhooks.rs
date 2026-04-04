@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use serde_json::json;
+use sha2::Sha256;
 use sqlx::PgPool;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -70,8 +70,8 @@ pub async fn fire_webhooks(
 }
 
 fn sign_payload(secret: &str, body: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(body.as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }

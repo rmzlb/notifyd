@@ -1,10 +1,14 @@
-use axum::{extract::State, Json, http::{StatusCode, HeaderMap}};
+use crate::{middleware, AppState};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    Json,
+};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use chrono::{Utc, DateTime};
 use uuid::Uuid;
-use crate::{AppState, middleware};
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
@@ -20,7 +24,8 @@ pub fn extract_api_key(headers: &HeaderMap) -> &str {
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .or_else(|| {
-            headers.get("authorization")
+            headers
+                .get("authorization")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.strip_prefix("Bearer "))
         })
@@ -44,7 +49,10 @@ pub async fn extract_project(
     // 1. Check TOML config (fast path, constant-time compare)
     for (id, proj) in &state.config.projects {
         if constant_time_eq(proj.api_key.as_bytes(), api_key.as_bytes()) {
-            return Ok(Project { id: id.clone(), rate_limit: 600 });
+            return Ok(Project {
+                id: id.clone(),
+                rate_limit: 600,
+            });
         }
     }
 
@@ -63,12 +71,21 @@ pub async fn extract_project(
         // Rate limit check
         let limit = rate_limit.unwrap_or(600) as u32;
         if !state.rate_limiter.check(&id, limit).await {
-            return Err((StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "Rate limit exceeded"}))));
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({"error": "Rate limit exceeded"})),
+            ));
         }
-        return Ok(Project { id, rate_limit: limit });
+        return Ok(Project {
+            id,
+            rate_limit: limit,
+        });
     }
 
-    Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid API key"}))))
+    Err((
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": "Invalid API key"})),
+    ))
 }
 
 /// Constant-time byte comparison to prevent timing attacks on API key validation
@@ -113,6 +130,8 @@ pub struct BatchRequest {
     pub body_html: Option<String>,
     pub vars: Option<Value>,
     pub scheduled_at: Option<DateTime<Utc>>,
+    pub icon: Option<String>,
+    pub url: Option<String>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -128,23 +147,30 @@ pub async fn send_notification(
     tokio::spawn({
         let pool = state.pool.clone();
         let pid = project.id.clone();
-        async move { middleware::audit(&pool, &pid, "api_key", "send", None, None).await; }
+        async move {
+            middleware::audit(&pool, &pid, "api_key", "send", None, None).await;
+        }
     });
 
-    let channels: Vec<String> = req.channels.clone()
-        .unwrap_or_else(|| {
-            req.channel.as_deref().unwrap_or("in_app")
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect()
-        });
+    let channels: Vec<String> = req.channels.clone().unwrap_or_else(|| {
+        req.channel
+            .as_deref()
+            .unwrap_or("in_app")
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    });
 
-    let recipient = req.to.clone()
+    let recipient = req
+        .to
+        .clone()
         .or_else(|| req.subscriber_id.clone())
-        .ok_or_else(|| (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"error": "Missing 'to' or 'subscriber_id'"})),
-        ))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "Missing 'to' or 'subscriber_id'"})),
+            )
+        })?;
 
     let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
 
@@ -168,7 +194,9 @@ pub async fn send_notification(
     let mut job_ids: Vec<Uuid> = Vec::new();
 
     for channel in &channels {
-        let idem_key = req.idempotency_key.as_ref()
+        let idem_key = req
+            .idempotency_key
+            .as_ref()
             .map(|k| format!("{}-{}", k, channel));
 
         let job_id: Uuid = sqlx::query_scalar(
@@ -212,16 +240,19 @@ pub async fn batch_notification(
     tokio::spawn({
         let pool = state.pool.clone();
         let pid = project.id.clone();
-        async move { middleware::audit(&pool, &pid, "api_key", "batch", None, None).await; }
+        async move {
+            middleware::audit(&pool, &pid, "api_key", "batch", None, None).await;
+        }
     });
 
-    let channels: Vec<String> = req.channels.clone()
-        .unwrap_or_else(|| {
-            req.channel.as_deref().unwrap_or("in_app")
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect()
-        });
+    let channels: Vec<String> = req.channels.clone().unwrap_or_else(|| {
+        req.channel
+            .as_deref()
+            .unwrap_or("in_app")
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
+    });
 
     let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
 
@@ -230,6 +261,8 @@ pub async fn batch_notification(
         "body": req.body,
         "body_html": req.body_html,
         "vars": req.vars,
+        "icon": req.icon.as_deref().unwrap_or("bell"),
+        "url": req.url,
     });
 
     let mut total = 0usize;

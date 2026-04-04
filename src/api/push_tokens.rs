@@ -1,9 +1,13 @@
-use axum::{extract::{State, Path}, Json, http::{StatusCode, HeaderMap}};
+use crate::{api::send::extract_project, db::PushToken, AppState};
+use axum::{
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::{AppState, db::PushToken, api::send::extract_project};
 
 #[derive(Deserialize)]
 pub struct RegisterToken {
@@ -29,7 +33,7 @@ pub async fn register_token(
             platform = EXCLUDED.platform,
             device_name = EXCLUDED.device_name,
             last_used_at = now()
-        "#
+        "#,
     )
     .bind(&project.id)
     .bind(&req.subscriber_id)
@@ -38,7 +42,12 @@ pub async fn register_token(
     .bind(req.device_name.as_deref())
     .execute(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    .map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
     Ok(Json(json!({"success": true})))
 }
@@ -60,12 +69,17 @@ pub async fn list_tokens(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let items: Vec<Value> = tokens.iter().map(|t| json!({
-        "id": t.id,
-        "token": t.token,
-        "platform": t.platform,
-        "device_name": t.device_name,
-    })).collect();
+    let items: Vec<Value> = tokens
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "token": t.token,
+                "platform": t.platform,
+                "device_name": t.device_name,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({"tokens": items})))
 }
@@ -79,9 +93,16 @@ pub async fn delete_token(
     let project = extract_project(&state, &headers).await?;
 
     sqlx::query("DELETE FROM push_tokens WHERE id=$1 AND project_id=$2")
-        .bind(id).bind(&project.id)
-        .execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+        .bind(id)
+        .bind(&project.id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     Ok(Json(json!({"success": true})))
 }

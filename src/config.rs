@@ -24,7 +24,9 @@ pub struct DatabaseConfig {
     pub max_connections: u32,
 }
 
-fn default_max_connections() -> u32 { 10 }
+fn default_max_connections() -> u32 {
+    10
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerConfig {
@@ -36,9 +38,15 @@ pub struct WorkerConfig {
     pub max_attempts: i32,
 }
 
-fn default_poll_interval() -> u64 { 500 }
-fn default_batch_size() -> i64 { 50 }
-fn default_max_attempts() -> i32 { 3 }
+fn default_poll_interval() -> u64 {
+    500
+}
+fn default_batch_size() -> i64 {
+    50
+}
+fn default_max_attempts() -> i32 {
+    3
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectorsConfig {
@@ -48,7 +56,7 @@ pub struct ConnectorsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EmailConfig {
-    pub provider: String,  // "resend"
+    pub provider: String, // "resend"
     pub api_key: String,
     pub from: String,
     pub from_name: Option<String>,
@@ -56,7 +64,7 @@ pub struct EmailConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SmsConfig {
-    pub provider: String,  // "twilio" | "telnyx"
+    pub provider: String, // "twilio" | "telnyx"
     // Twilio
     pub account_sid: Option<String>,
     pub auth_token: Option<String>,
@@ -89,8 +97,12 @@ impl Config {
         // Minimal env-based config
         let config = Config {
             server: ServerConfig {
-                port: std::env::var("PORT").unwrap_or_else(|_| "3400".to_string()).parse().unwrap_or(3400),
-                jwt_secret: std::env::var("JWT_SECRET").unwrap_or_else(|_| "change-me-in-production".to_string()),
+                port: std::env::var("PORT")
+                    .unwrap_or_else(|_| "3400".to_string())
+                    .parse()
+                    .unwrap_or(3400),
+                jwt_secret: std::env::var("JWT_SECRET")
+                    .unwrap_or_else(|_| "change-me-in-production".to_string()),
             },
             database: DatabaseConfig {
                 url: std::env::var("DATABASE_URL").expect("DATABASE_URL required"),
@@ -102,12 +114,15 @@ impl Config {
                 max_attempts: 3,
             },
             connectors: ConnectorsConfig {
-                email: std::env::var("RESEND_API_KEY").ok().map(|api_key| EmailConfig {
-                    provider: "resend".to_string(),
-                    api_key,
-                    from: std::env::var("EMAIL_FROM").unwrap_or_else(|_| "notifications@example.com".to_string()),
-                    from_name: std::env::var("EMAIL_FROM_NAME").ok(),
-                }),
+                email: std::env::var("RESEND_API_KEY")
+                    .ok()
+                    .map(|api_key| EmailConfig {
+                        provider: "resend".to_string(),
+                        api_key,
+                        from: std::env::var("EMAIL_FROM")
+                            .unwrap_or_else(|_| "notifications@example.com".to_string()),
+                        from_name: std::env::var("EMAIL_FROM_NAME").ok(),
+                    }),
                 sms: None,
             },
             projects: HashMap::new(),

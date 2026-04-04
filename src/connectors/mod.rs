@@ -1,7 +1,7 @@
 pub mod email;
-pub mod sms;
 pub mod in_app;
 pub mod push;
+pub mod sms;
 
 use anyhow::Result;
 use async_trait::async_trait;

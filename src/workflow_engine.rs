@@ -1,9 +1,12 @@
-use crate::{AppState, db::{Workflow, WorkflowRun, WorkflowStep}};
+use crate::{
+    db::{Workflow, WorkflowRun, WorkflowStep},
+    AppState,
+};
 use anyhow::Result;
-use chrono::{Utc, Duration};
+use chrono::{Duration, Utc};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Check if a subscriber has opted out of a channel/workflow
@@ -93,7 +96,10 @@ async fn start_workflow_run(
     .fetch_one(&state.pool)
     .await?;
 
-    info!("Workflow run {} started for {}:{} event={}", run_id, workflow.project_id, subscriber_id, workflow.trigger_event);
+    info!(
+        "Workflow run {} started for {}:{} event={}",
+        run_id, workflow.project_id, subscriber_id, workflow.trigger_event
+    );
 
     // Execute first step immediately
     advance_workflow(state, run_id).await?;
@@ -124,13 +130,15 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
         Some(w) => w,
         None => {
             sqlx::query("UPDATE workflow_runs SET status='failed', updated_at=now() WHERE id=$1")
-                .bind(run_id).execute(&state.pool).await?;
+                .bind(run_id)
+                .execute(&state.pool)
+                .await?;
             return Ok(());
         }
     };
 
-    let steps: Vec<WorkflowStep> = serde_json::from_value(workflow.steps.clone())
-        .unwrap_or_default();
+    let steps: Vec<WorkflowStep> =
+        serde_json::from_value(workflow.steps.clone()).unwrap_or_default();
 
     let mut current = run.current_step as usize;
 
@@ -138,10 +146,27 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
         let step = &steps[current];
 
         match step {
-            WorkflowStep::Send { channel, template, subject, body, body_html } => {
+            WorkflowStep::Send {
+                channel,
+                template,
+                subject,
+                body,
+                body_html,
+            } => {
                 // Check preference before sending
-                if !check_preference(state, &run.project_id, &run.subscriber_id, channel, Some(&run.workflow_id)).await {
-                    info!("Workflow {} step {} skipped (preference opt-out)", run_id, current);
+                if !check_preference(
+                    state,
+                    &run.project_id,
+                    &run.subscriber_id,
+                    channel,
+                    Some(&run.workflow_id),
+                )
+                .await
+                {
+                    info!(
+                        "Workflow {} step {} skipped (preference opt-out)",
+                        run_id, current
+                    );
                     current += 1;
                     continue;
                 }
@@ -161,14 +186,20 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                         _ => sub.id.clone(),
                     },
                     None => {
-                        warn!("Subscriber {} not found for workflow {}", run.subscriber_id, run_id);
+                        warn!(
+                            "Subscriber {} not found for workflow {}",
+                            run.subscriber_id, run_id
+                        );
                         current += 1;
                         continue;
                     }
                 };
 
                 if recipient.is_empty() {
-                    warn!("No {} recipient for subscriber {} in workflow {}", channel, run.subscriber_id, run_id);
+                    warn!(
+                        "No {} recipient for subscriber {} in workflow {}",
+                        channel, run.subscriber_id, run_id
+                    );
                     current += 1;
                     continue;
                 }
@@ -176,9 +207,15 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                 // Merge trigger payload with step data
                 let mut payload = run.trigger_payload.clone();
                 if let Some(obj) = payload.as_object_mut() {
-                    if let Some(s) = subject { obj.insert("subject".into(), json!(s)); }
-                    if let Some(b) = body { obj.insert("body".into(), json!(b)); }
-                    if let Some(bh) = body_html { obj.insert("body_html".into(), json!(bh)); }
+                    if let Some(s) = subject {
+                        obj.insert("subject".into(), json!(s));
+                    }
+                    if let Some(b) = body {
+                        obj.insert("body".into(), json!(b));
+                    }
+                    if let Some(bh) = body_html {
+                        obj.insert("body_html".into(), json!(bh));
+                    }
                 }
 
                 // Enqueue job
@@ -193,7 +230,10 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                 .bind(&payload)
                 .execute(&state.pool).await?;
 
-                info!("Workflow {} step {}: {} job enqueued for {}", run_id, current, channel, recipient);
+                info!(
+                    "Workflow {} step {}: {} job enqueued for {}",
+                    run_id, current, channel, recipient
+                );
                 current += 1;
             }
 
@@ -204,30 +244,49 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                     .bind((current + 1) as i32)
                     .bind(resume_at)
                     .execute(&state.pool).await?;
-                info!("Workflow {} paused at step {}, resume at {}", run_id, current, resume_at);
+                info!(
+                    "Workflow {} paused at step {}, resume at {}",
+                    run_id, current, resume_at
+                );
                 return Ok(());
             }
 
-            WorkflowStep::Condition { field, operator, value, on_true, on_false } => {
+            WorkflowStep::Condition {
+                field,
+                operator,
+                value,
+                on_true,
+                on_false,
+            } => {
                 let condition_met = evaluate_condition(state, &run, field, operator, value).await;
                 let next = if condition_met {
                     on_true.unwrap_or(current + 1)
                 } else {
                     on_false.unwrap_or(current + 1)
                 };
-                info!("Workflow {} step {} condition: {} {} {} = {} → step {}", 
-                    run_id, current, field, operator, value, condition_met, next);
+                info!(
+                    "Workflow {} step {} condition: {} {} {} = {} → step {}",
+                    run_id, current, field, operator, value, condition_met, next
+                );
                 current = next;
             }
 
-            WorkflowStep::Digest { duration_secs, channel, template, subject, body } => {
+            WorkflowStep::Digest {
+                duration_secs,
+                channel,
+                template,
+                subject,
+                body,
+            } => {
                 // First time: start collecting. Subsequent: buffer event, wait.
                 let resume_at = Utc::now() + Duration::seconds(*duration_secs);
 
                 // Buffer the current trigger payload
                 sqlx::query("INSERT INTO digest_buffer (run_id, payload) VALUES ($1, $2)")
-                    .bind(run_id).bind(&run.trigger_payload)
-                    .execute(&state.pool).await?;
+                    .bind(run_id)
+                    .bind(&run.trigger_payload)
+                    .execute(&state.pool)
+                    .await?;
 
                 // Pause and wait for digest window
                 let mut state_json = run.step_state.clone();
@@ -245,7 +304,10 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                     .bind(&state_json)
                     .execute(&state.pool).await?;
 
-                info!("Workflow {} digest step {}: collecting for {}s", run_id, current, duration_secs);
+                info!(
+                    "Workflow {} digest step {}: collecting for {}s",
+                    run_id, current, duration_secs
+                );
                 return Ok(());
             }
         }
@@ -329,7 +391,9 @@ pub async fn resume_paused_runs(state: &Arc<AppState>) -> Result<()> {
         if let Err(e) = advance_workflow(state, run.id).await {
             error!("Failed to advance workflow {}: {}", run.id, e);
             sqlx::query("UPDATE workflow_runs SET status='failed', updated_at=now() WHERE id=$1")
-                .bind(run.id).execute(&state.pool).await?;
+                .bind(run.id)
+                .execute(&state.pool)
+                .await?;
         }
     }
 
@@ -338,11 +402,11 @@ pub async fn resume_paused_runs(state: &Arc<AppState>) -> Result<()> {
 
 /// Flush digest buffer and send aggregated notification
 async fn flush_digest(state: &Arc<AppState>, run: &WorkflowRun) -> Result<()> {
-    let items: Vec<(serde_json::Value,)> = sqlx::query_as(
-        "SELECT payload FROM digest_buffer WHERE run_id=$1 ORDER BY created_at"
-    )
-    .bind(run.id)
-    .fetch_all(&state.pool).await?;
+    let items: Vec<(serde_json::Value,)> =
+        sqlx::query_as("SELECT payload FROM digest_buffer WHERE run_id=$1 ORDER BY created_at")
+            .bind(run.id)
+            .fetch_all(&state.pool)
+            .await?;
 
     if items.is_empty() {
         return Ok(());
@@ -395,8 +459,14 @@ async fn flush_digest(state: &Arc<AppState>, run: &WorkflowRun) -> Result<()> {
     // Clear buffer
     sqlx::query("DELETE FROM digest_buffer WHERE run_id=$1")
         .bind(run.id)
-        .execute(&state.pool).await?;
+        .execute(&state.pool)
+        .await?;
 
-    info!("Digest flushed for workflow run {}: {} items via {}", run.id, digest_items.len(), channel);
+    info!(
+        "Digest flushed for workflow run {}: {} items via {}",
+        run.id,
+        digest_items.len(),
+        channel
+    );
     Ok(())
 }

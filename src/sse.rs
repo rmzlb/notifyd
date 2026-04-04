@@ -37,7 +37,11 @@ impl SseBroadcaster {
     }
 
     /// Subscribe to events for a subscriber. Returns a receiver.
-    pub async fn subscribe(&self, project_id: &str, subscriber_id: &str) -> broadcast::Receiver<SseMessage> {
+    pub async fn subscribe(
+        &self,
+        project_id: &str,
+        subscriber_id: &str,
+    ) -> broadcast::Receiver<SseMessage> {
         let key = Self::key(project_id, subscriber_id);
         let mut channels = self.channels.write().await;
 

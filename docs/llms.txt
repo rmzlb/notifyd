@@ -52,7 +52,9 @@ Body:
   "channels": ["email", "in_app"],
   "subscribers": ["user-1", "user-2", "user-3"],
   "template": "weekly_digest",
-  "vars": {"week": "March 24-30"}
+  "vars": {"week": "March 24-30"},
+  "icon": "calendar",            // optional for in-app batch notifications
+  "url": "/digest/2026-w13"      // optional deep link for in-app batch notifications
 }
 
 ---

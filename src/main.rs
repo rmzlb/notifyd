@@ -1,3 +1,4 @@
+mod api;
 mod config;
 mod connectors;
 mod db;
@@ -8,10 +9,9 @@ mod templates;
 mod webhooks;
 mod worker;
 mod workflow_engine;
-mod api;
 
 use axum::{
-    http::{Request, HeaderValue},
+    http::{HeaderValue, Request},
     middleware::Next,
     response::Response,
 };
@@ -19,7 +19,7 @@ use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::watch;
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use uuid::Uuid;
 
@@ -40,11 +40,9 @@ impl std::fmt::Debug for AppState {
 }
 
 /// Feature #12: Request ID middleware
-async fn request_id_middleware(
-    mut req: Request<axum::body::Body>,
-    next: Next,
-) -> Response {
-    let request_id = req.headers()
+async fn request_id_middleware(mut req: Request<axum::body::Body>, next: Next) -> Response {
+    let request_id = req
+        .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
         .map(String::from)
@@ -127,8 +125,10 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let cors = {
-        let origins_str = std::env::var("CORS_ORIGINS").unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173".to_string());
-        let origins: Vec<_> = origins_str.split(',')
+        let origins_str = std::env::var("CORS_ORIGINS")
+            .unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173".to_string());
+        let origins: Vec<_> = origins_str
+            .split(',')
             .filter_map(|s| s.trim().parse::<axum::http::HeaderValue>().ok())
             .collect();
         if origins.is_empty() {
@@ -137,8 +137,8 @@ async fn main() -> anyhow::Result<()> {
             CorsLayer::new().allow_origin(origins)
         }
     }
-        .allow_methods(Any)
-        .allow_headers(Any);
+    .allow_methods(Any)
+    .allow_headers(Any);
 
     let app = api::router(state)
         .layer(axum::middleware::from_fn(request_id_middleware))
@@ -153,9 +153,9 @@ async fn main() -> anyhow::Result<()> {
     // Feature #13: Graceful shutdown
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate()
-            ).expect("failed to install SIGTERM handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
 
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {
@@ -170,10 +170,7 @@ async fn main() -> anyhow::Result<()> {
             let _ = shutdown_tx.send(true);
 
             // Wait for worker with timeout
-            let _ = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                worker_handle,
-            ).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), worker_handle).await;
 
             // Close DB pool
             pool.close().await;

@@ -1,10 +1,14 @@
-use axum::{extract::{State, Path}, Json, http::{StatusCode, HeaderMap}};
+use crate::api::projects::require_admin;
+use crate::AppState;
+use axum::{
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::AppState;
-use crate::api::projects::require_admin;
 
 #[derive(Deserialize)]
 pub struct CreateWebhook {
@@ -23,7 +27,9 @@ pub async fn create_webhook(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&headers)?;
 
-    let secret = req.secret.unwrap_or_else(|| hex::encode(Uuid::new_v4().as_bytes()));
+    let secret = req
+        .secret
+        .unwrap_or_else(|| hex::encode(Uuid::new_v4().as_bytes()));
     let events: Vec<&str> = req.events.iter().map(|s| s.as_str()).collect();
 
     let id: Uuid = sqlx::query_scalar(
@@ -66,14 +72,19 @@ pub async fn list_webhooks(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
     })?;
 
-    let items: Vec<Value> = rows.iter().map(|(id, project_id, url, events, enabled, created_at)| json!({
-        "id": id,
-        "project_id": project_id,
-        "url": url,
-        "events": events,
-        "enabled": enabled,
-        "created_at": created_at,
-    })).collect();
+    let items: Vec<Value> = rows
+        .iter()
+        .map(|(id, project_id, url, events, enabled, created_at)| {
+            json!({
+                "id": id,
+                "project_id": project_id,
+                "url": url,
+                "events": events,
+                "enabled": enabled,
+                "created_at": created_at,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({"webhooks": items, "count": items.len()})))
 }
@@ -92,11 +103,17 @@ pub async fn delete_webhook(
         .await
         .map_err(|e| {
             tracing::error!("DB error: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Internal server error"})),
+            )
         })?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Webhook not found"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Webhook not found"})),
+        ));
     }
 
     Ok(Json(json!({"success": true})))

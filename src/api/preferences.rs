@@ -1,8 +1,12 @@
-use axum::{extract::{State, Path}, Json, http::{StatusCode, HeaderMap}};
+use crate::{api::send::extract_project, db::SubscriberPreference, AppState};
+use axum::{
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use crate::{AppState, db::SubscriberPreference, api::send::extract_project};
 
 #[derive(Deserialize)]
 pub struct SetPreference {
@@ -33,11 +37,16 @@ pub async fn get_preferences(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let items: Vec<Value> = prefs.iter().map(|p| json!({
-        "channel": p.channel,
-        "workflow_id": p.workflow_id,
-        "enabled": p.enabled,
-    })).collect();
+    let items: Vec<Value> = prefs
+        .iter()
+        .map(|p| {
+            json!({
+                "channel": p.channel,
+                "workflow_id": p.workflow_id,
+                "enabled": p.enabled,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({"preferences": items})))
 }
@@ -71,5 +80,7 @@ pub async fn set_preferences(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
     }
 
-    Ok(Json(json!({"success": true, "updated": req.preferences.len()})))
+    Ok(Json(
+        json!({"success": true, "updated": req.preferences.len()}),
+    ))
 }

@@ -1,12 +1,12 @@
 use super::{Channel, Connector, SendRequest};
+use crate::sse::SseBroadcaster;
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde_json::json;
 use sqlx::PgPool;
 use tracing::info;
-use crate::sse::SseBroadcaster;
-use serde_json::json;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 pub struct InAppConnector {
     pub pool: PgPool,
@@ -27,11 +27,14 @@ struct InsertedMessage {
 
 #[async_trait]
 impl Connector for InAppConnector {
-    fn channel(&self) -> Channel { Channel::InApp }
+    fn channel(&self) -> Channel {
+        Channel::InApp
+    }
 
     async fn send(&self, req: &SendRequest) -> Result<()> {
         let project_id = req.metadata["project_id"].as_str().unwrap_or("");
-        let subscriber_id = req.metadata["subscriber_id"].as_str()
+        let subscriber_id = req.metadata["subscriber_id"]
+            .as_str()
             .unwrap_or(req.recipient.as_str());
         let icon = req.metadata["icon"].as_str().unwrap_or("bell");
         let url = req.metadata["url"].as_str();
@@ -61,7 +64,9 @@ impl Connector for InAppConnector {
             }
         });
 
-        self.broadcaster.send(project_id, subscriber_id, event.to_string()).await;
+        self.broadcaster
+            .send(project_id, subscriber_id, event.to_string())
+            .await;
 
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM inbox_messages WHERE project_id=$1 AND subscriber_id=$2 AND read_at IS NULL AND archived_at IS NULL"
@@ -72,7 +77,9 @@ impl Connector for InAppConnector {
         .await?;
 
         let count_event = json!({"type": "count_update", "unread_count": count});
-        self.broadcaster.send(project_id, subscriber_id, count_event.to_string()).await;
+        self.broadcaster
+            .send(project_id, subscriber_id, count_event.to_string())
+            .await;
 
         info!("In-app sent to {}:{}", project_id, subscriber_id);
         Ok(())

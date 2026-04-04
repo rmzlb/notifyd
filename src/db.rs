@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -121,20 +121,18 @@ pub enum WorkflowStep {
         body_html: Option<String>,
     },
     #[serde(rename = "delay")]
-    Delay {
-        duration_secs: i64,
-    },
+    Delay { duration_secs: i64 },
     #[serde(rename = "condition")]
     Condition {
-        field: String,       // e.g. "inbox.is_read"
-        operator: String,    // "eq", "neq", "gt", "lt"
+        field: String,    // e.g. "inbox.is_read"
+        operator: String, // "eq", "neq", "gt", "lt"
         value: serde_json::Value,
-        on_true: Option<usize>,   // step index to jump to
+        on_true: Option<usize>, // step index to jump to
         on_false: Option<usize>,
     },
     #[serde(rename = "digest")]
     Digest {
-        duration_secs: i64,  // collect events for this period
+        duration_secs: i64, // collect events for this period
         channel: String,
         template: Option<String>,
         subject: Option<String>,

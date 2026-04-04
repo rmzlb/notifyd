@@ -1,16 +1,16 @@
-use axum::{extract::State, Json, http::StatusCode};
-use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
+use crate::{api::send::extract_project, AppState};
+use axum::{extract::State, http::StatusCode, Json};
+use chrono::{Duration, Utc};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use chrono::{Utc, Duration};
-use crate::{AppState, api::send::extract_project};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SubscriberClaims {
-    pub sub: String,       // subscriber_id
-    pub project: String,   // project_id
-    pub aud: String,       // "notifyd:inbox"
+    pub sub: String,     // subscriber_id
+    pub project: String, // project_id
+    pub aud: String,     // "notifyd:inbox"
     pub exp: usize,
     pub iat: usize,
 }
@@ -18,7 +18,7 @@ pub struct SubscriberClaims {
 #[derive(Deserialize)]
 pub struct TokenRequest {
     pub subscriber_id: String,
-    pub ttl_hours: Option<i64>,  // default 2, max 24
+    pub ttl_hours: Option<i64>, // default 2, max 24
 }
 
 pub async fn subscriber_token(
@@ -45,7 +45,12 @@ pub async fn subscriber_token(
         &claims,
         &EncodingKey::from_secret(state.config.server.jwt_secret.as_bytes()),
     )
-    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Token generation failed"}))))?;
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Token generation failed"})),
+        )
+    })?;
 
     Ok(Json(json!({
         "token": token,

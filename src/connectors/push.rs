@@ -1,8 +1,8 @@
 use super::{Channel, Connector, SendRequest};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::json;
-use tracing::{info, error};
+use tracing::{error, info};
 
 pub struct FcmConfig {
     pub server_key: String,
@@ -24,7 +24,9 @@ impl PushConnector {
 
 #[async_trait]
 impl Connector for PushConnector {
-    fn channel(&self) -> Channel { Channel::Push }
+    fn channel(&self) -> Channel {
+        Channel::Push
+    }
 
     async fn send(&self, req: &SendRequest) -> Result<()> {
         // req.recipient is the FCM device token
@@ -37,7 +39,8 @@ impl Connector for PushConnector {
             "data": req.metadata,
         });
 
-        let res = self.client
+        let res = self
+            .client
             .post("https://fcm.googleapis.com/fcm/send")
             .header("Authorization", format!("key={}", self.config.server_key))
             .json(&body)
@@ -45,7 +48,10 @@ impl Connector for PushConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("Push sent via FCM to {}", crate::pii::mask_recipient("push", &req.recipient));
+            info!(
+                "Push sent via FCM to {}",
+                crate::pii::mask_recipient("push", &req.recipient)
+            );
             Ok(())
         } else {
             let status = res.status();

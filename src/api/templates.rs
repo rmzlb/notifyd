@@ -1,8 +1,12 @@
-use axum::{extract::{State, Path, Query}, Json, http::{StatusCode, HeaderMap}};
+use crate::{api::send::extract_project, db::Template, AppState};
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use crate::{AppState, db::Template, api::send::extract_project};
 
 #[derive(Deserialize)]
 pub struct UpsertTemplate {
@@ -42,10 +46,15 @@ pub async fn upsert_template(
     .await
     .map_err(|e| {
         tracing::error!("DB error: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Internal server error"})),
+        )
     })?;
 
-    Ok(Json(json!({"success": true, "id": req.id, "channel": req.channel})))
+    Ok(Json(
+        json!({"success": true, "id": req.id, "channel": req.channel}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -66,16 +75,17 @@ pub async fn list_templates(
     let limit = q.limit.unwrap_or(50).min(200);
     let offset = q.offset.unwrap_or(0).max(0);
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM templates WHERE project_id=$1"
-    )
-    .bind(&project.id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("DB error: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
-    })?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM templates WHERE project_id=$1")
+        .bind(&project.id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("DB error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Internal server error"})),
+            )
+        })?;
 
     let templates: Vec<Template> = sqlx::query_as(
         "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 ORDER BY id, channel LIMIT $2 OFFSET $3"
@@ -90,13 +100,18 @@ pub async fn list_templates(
         (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
     })?;
 
-    let items: Vec<Value> = templates.iter().map(|t| json!({
-        "id": t.id,
-        "channel": t.channel,
-        "subject": t.subject,
-        "body": t.body,
-        "body_html": t.body_html,
-    })).collect();
+    let items: Vec<Value> = templates
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "channel": t.channel,
+                "subject": t.subject,
+                "body": t.body,
+                "body_html": t.body_html,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({
         "items": items,
@@ -127,16 +142,24 @@ pub async fn get_template(
     })?;
 
     if templates.is_empty() {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Template not found"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Template not found"})),
+        ));
     }
 
-    let items: Vec<Value> = templates.iter().map(|t| json!({
-        "id": t.id,
-        "channel": t.channel,
-        "subject": t.subject,
-        "body": t.body,
-        "body_html": t.body_html,
-    })).collect();
+    let items: Vec<Value> = templates
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id,
+                "channel": t.channel,
+                "subject": t.subject,
+                "body": t.body,
+                "body_html": t.body_html,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({"template_id": id, "variants": items})))
 }
@@ -156,12 +179,20 @@ pub async fn delete_template(
         .await
         .map_err(|e| {
             tracing::error!("DB error: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Internal server error"})),
+            )
         })?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Template not found"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Template not found"})),
+        ));
     }
 
-    Ok(Json(json!({"success": true, "deleted": result.rows_affected()})))
+    Ok(Json(
+        json!({"success": true, "deleted": result.rows_affected()}),
+    ))
 }

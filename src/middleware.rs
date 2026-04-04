@@ -24,10 +24,12 @@ impl RateLimiter {
         let mut windows = self.windows.write().await;
         let now = Instant::now();
 
-        let entry = windows.entry(project_id.to_string()).or_insert(WindowCounter {
-            count: 0,
-            window_start: now,
-        });
+        let entry = windows
+            .entry(project_id.to_string())
+            .or_insert(WindowCounter {
+                count: 0,
+                window_start: now,
+            });
 
         // Reset window if expired (1 minute)
         if now.duration_since(entry.window_start).as_secs() >= 60 {

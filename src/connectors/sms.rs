@@ -1,8 +1,8 @@
 use super::{Channel, Connector, SendRequest};
 use crate::config::SmsConfig;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use tracing::{info, error};
+use tracing::{error, info};
 
 pub struct SmsConnector {
     config: SmsConfig,
@@ -20,7 +20,9 @@ impl SmsConnector {
 
 #[async_trait]
 impl Connector for SmsConnector {
-    fn channel(&self) -> Channel { Channel::Sms }
+    fn channel(&self) -> Channel {
+        Channel::Sms
+    }
 
     async fn send(&self, req: &SendRequest) -> Result<()> {
         match self.config.provider.as_str() {
@@ -33,9 +35,15 @@ impl Connector for SmsConnector {
 
 impl SmsConnector {
     async fn send_twilio(&self, req: &SendRequest) -> Result<()> {
-        let account_sid = self.config.account_sid.as_deref()
+        let account_sid = self
+            .config
+            .account_sid
+            .as_deref()
             .ok_or_else(|| anyhow!("Twilio account_sid required"))?;
-        let auth_token = self.config.auth_token.as_deref()
+        let auth_token = self
+            .config
+            .auth_token
+            .as_deref()
             .ok_or_else(|| anyhow!("Twilio auth_token required"))?;
 
         let url = format!(
@@ -49,7 +57,8 @@ impl SmsConnector {
             ("Body", req.body.as_str()),
         ];
 
-        let res = self.client
+        let res = self
+            .client
             .post(&url)
             .basic_auth(account_sid, Some(auth_token))
             .form(&params)
@@ -57,7 +66,10 @@ impl SmsConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("SMS sent via Twilio to {}", crate::pii::mask_phone(&req.recipient));
+            info!(
+                "SMS sent via Twilio to {}",
+                crate::pii::mask_phone(&req.recipient)
+            );
             Ok(())
         } else {
             let status = res.status();
@@ -68,7 +80,10 @@ impl SmsConnector {
     }
 
     async fn send_telnyx(&self, req: &SendRequest) -> Result<()> {
-        let api_key = self.config.api_key.as_deref()
+        let api_key = self
+            .config
+            .api_key
+            .as_deref()
             .ok_or_else(|| anyhow!("Telnyx api_key required"))?;
 
         let mut body = serde_json::json!({
@@ -83,7 +98,8 @@ impl SmsConnector {
             body["messaging_profile_id"] = serde_json::Value::String(profile_id.clone());
         }
 
-        let res = self.client
+        let res = self
+            .client
             .post("https://api.telnyx.com/v2/messages")
             .bearer_auth(api_key)
             .json(&body)
@@ -91,7 +107,10 @@ impl SmsConnector {
             .await?;
 
         if res.status().is_success() {
-            info!("SMS sent via Telnyx to {}", crate::pii::mask_phone(&req.recipient));
+            info!(
+                "SMS sent via Telnyx to {}",
+                crate::pii::mask_phone(&req.recipient)
+            );
             Ok(())
         } else {
             let status = res.status();

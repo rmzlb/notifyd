@@ -1,23 +1,34 @@
-use axum::{extract::State, Json, http::{StatusCode, HeaderMap}};
+use crate::AppState;
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use crate::AppState;
 
 /// Admin auth: requires ADMIN_API_KEY env var
 /// BUG FIX #2: Uses constant-time comparison to prevent timing attacks
 pub fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
     let admin_key = std::env::var("ADMIN_API_KEY").unwrap_or_default();
     if admin_key.is_empty() {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "ADMIN_API_KEY not configured"}))));
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "ADMIN_API_KEY not configured"})),
+        ));
     }
 
-    let provided = headers.get("x-api-key")
+    let provided = headers
+        .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
     if !constant_time_eq(provided.as_bytes(), admin_key.as_bytes()) {
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({"error": "Admin access required"}))));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Admin access required"})),
+        ));
     }
 
     Ok(())
@@ -52,13 +63,16 @@ pub async fn create_project(
     require_admin(&headers)?;
 
     // Generate API key
-    let api_key = format!("sk_{}_{}",
+    let api_key = format!(
+        "sk_{}_{}",
         req.id,
         hex::encode(&uuid::Uuid::new_v4().as_bytes()[..16])
     );
     let api_key_hash = hash_key(&api_key);
 
-    let channels: Vec<String> = req.channels.unwrap_or_else(|| vec!["email".into(), "in_app".into()]);
+    let channels: Vec<String> = req
+        .channels
+        .unwrap_or_else(|| vec!["email".into(), "in_app".into()]);
     let channels_arr: Vec<&str> = channels.iter().map(|s| s.as_str()).collect();
 
     sqlx::query(
@@ -108,13 +122,18 @@ pub async fn list_projects(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let projects: Vec<Value> = rows.iter().map(|(id, name, channels, rate_limit, created_at)| json!({
-        "id": id,
-        "name": name,
-        "channels": channels,
-        "rate_limit_per_min": rate_limit,
-        "created_at": created_at,
-    })).collect();
+    let projects: Vec<Value> = rows
+        .iter()
+        .map(|(id, name, channels, rate_limit, created_at)| {
+            json!({
+                "id": id,
+                "name": name,
+                "channels": channels,
+                "rate_limit_per_min": rate_limit,
+                "created_at": created_at,
+            })
+        })
+        .collect();
 
     Ok(Json(json!({"projects": projects})))
 }
@@ -128,7 +147,11 @@ pub async fn rotate_key(
     require_admin(&headers)?;
 
     // Generate new key, move current to secondary
-    let new_key = format!("sk_{}_{}", id, hex::encode(&uuid::Uuid::new_v4().as_bytes()[..16]));
+    let new_key = format!(
+        "sk_{}_{}",
+        id,
+        hex::encode(&uuid::Uuid::new_v4().as_bytes()[..16])
+    );
     let new_hash = hash_key(&new_key);
 
     // Move current key to secondary (grace period for migration)
@@ -162,7 +185,9 @@ pub async fn revoke_secondary(
         .bind(&id).execute(&state.pool).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    Ok(Json(json!({"success": true, "message": "Secondary key revoked"})))
+    Ok(Json(
+        json!({"success": true, "message": "Secondary key revoked"}),
+    ))
 }
 
 /// DELETE /v1/admin/projects/:id
@@ -174,11 +199,21 @@ pub async fn delete_project(
     require_admin(&headers)?;
 
     let result = sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(&id).execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+        .bind(&id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     if result.rows_affected() == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Project not found"}))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Project not found"})),
+        ));
     }
 
     Ok(Json(json!({"success": true})))
@@ -206,8 +241,14 @@ pub async fn audit_log(
     let offset = q.offset.unwrap_or(0).max(0);
 
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
-        .fetch_one(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     let rows: Vec<(uuid::Uuid, String, String, String, Option<String>, Option<Value>, Option<String>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
         "SELECT id, project_id, actor, action, resource, metadata, ip, created_at FROM audit_log ORDER BY created_at DESC LIMIT $1 OFFSET $2"
@@ -218,23 +259,32 @@ pub async fn audit_log(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
 
-    let items: Vec<Value> = rows.iter().map(|(id, project_id, actor, action, resource, metadata, ip, created_at)| json!({
-        "id": id,
-        "project_id": project_id,
-        "actor": actor,
-        "action": action,
-        "resource": resource,
-        "metadata": metadata,
-        "ip": ip,
-        "created_at": created_at,
-    })).collect();
+    let items: Vec<Value> = rows
+        .iter()
+        .map(
+            |(id, project_id, actor, action, resource, metadata, ip, created_at)| {
+                json!({
+                    "id": id,
+                    "project_id": project_id,
+                    "actor": actor,
+                    "action": action,
+                    "resource": resource,
+                    "metadata": metadata,
+                    "ip": ip,
+                    "created_at": created_at,
+                })
+            },
+        )
+        .collect();
 
-    Ok(Json(json!({"items": items, "total": total, "limit": limit, "offset": offset})))
+    Ok(Json(
+        json!({"items": items, "total": total, "limit": limit, "offset": offset}),
+    ))
 }
 
 /// Hash an API key for storage (SHA-256, simple but sufficient for API keys)
 pub fn hash_key(key: &str) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
     hex::encode(hasher.finalize())
