@@ -1,0 +1,36 @@
+{
+  "name": "notifyd-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript client for notifyd",
+  "type": "module",
+  "main": "./sdk/dist/index.cjs",
+  "module": "./sdk/dist/index.js",
+  "types": "./sdk/dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./sdk/dist/index.d.ts",
+      "import": "./sdk/dist/index.js",
+      "require": "./sdk/dist/index.cjs",
+      "default": "./sdk/dist/index.js"
+    }
+  },
+  "files": [
+    "sdk/dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:sdk": "tsup sdk/index.ts --format esm,cjs --dts --out-dir sdk/dist"
+  },
+  "keywords": [
+    "notifyd",
+    "notifications",
+    "typescript",
+    "sdk"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -484,15 +484,44 @@ Retry after 60 seconds or contact the admin to increase limits.
 
 ## SDKs
 
-### Official (planned)
+### Official
 
-- `@notifyd/node` — Node.js/TypeScript client
-- `@notifyd/react` — React inbox components
+- `notifyd-sdk` — TypeScript client shipped from this repo
 
-### Community
+Install from GitHub:
 
-None yet — [be the first!](https://github.com/rmzlb/notifyd/issues)
+```bash
+pnpm add notifyd-sdk@github:rmzlb/notifyd
+```
+
+Usage:
+
+```typescript
+import { createNotifydClient } from 'notifyd-sdk';
+
+const notifyd = createNotifydClient({
+  url: process.env.NOTIFYD_URL!,
+  apiKey: process.env.NOTIFYD_API_KEY!,
+});
+
+await notifyd.send({
+  channel: 'email',
+  subscriberId: 'user-1',
+  subject: 'Welcome!',
+  body: 'Hello {{first_name}}!',
+  vars: { first_name: 'Alice' },
+});
+
+const inbox = createNotifydClient({
+  url: process.env.NEXT_PUBLIC_NOTIFYD_URL!,
+  subscriberToken: token,
+});
+
+const messages = await inbox.getInbox('user-1', { limit: 20 });
+```
+
+The SDK wraps send, subscribers, subscriber JWT creation, inbox reads, unread count, mark read, mark all read, and SSE stream setup.
 
 ### Roll Your Own
 
-The API is simple REST + SSE. Any HTTP client works. See the examples above in curl, TypeScript, and Rust.
+The API is still simple REST + SSE. Any HTTP client works. See the examples above in curl, TypeScript, and Rust.

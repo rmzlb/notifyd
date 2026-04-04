@@ -178,6 +178,40 @@ Every endpoint uses `X-Api-Key: sk_<project>_xxx`. Inbox endpoints also accept s
 
 ---
 
+## TypeScript SDK
+
+A small official SDK now ships in this repo for backend + frontend apps.
+
+```bash
+pnpm add notifyd-sdk@github:rmzlb/notifyd
+```
+
+```typescript
+import { createNotifydClient } from 'notifyd-sdk';
+
+const notifyd = createNotifydClient({
+  url: process.env.NOTIFYD_URL!,
+  apiKey: process.env.NOTIFYD_API_KEY!,
+});
+
+await notifyd.send({
+  channels: ['email', 'in_app'],
+  subscriberId: 'user-123',
+  subject: 'Your report is ready',
+  body: 'Hey {{first_name}}, the analysis is complete.',
+  vars: { first_name: 'Alice' },
+});
+
+const token = await notifyd.createSubscriberToken({
+  subscriberId: 'user-123',
+  ttlHours: 8,
+});
+```
+
+It wraps the REST API with typed helpers for send, subscribers, inbox, unread count, mark read, and SSE stream setup.
+
+---
+
 ## In-App Inbox
 
 Complete notification inbox with realtime SSE. No WebSocket library, no Redis pub/sub — just native `EventSource`.
