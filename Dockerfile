@@ -15,10 +15,11 @@ COPY . .
 RUN cargo build --release --bin notifyd
 
 FROM alpine:3.21 AS runtime
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
 COPY --from=builder /app/target/release/notifyd /usr/local/bin/notifyd
 COPY --from=builder /app/migrations ./migrations
+USER nobody
 EXPOSE 3400
 ENV RUST_LOG=notifyd=info
 ENTRYPOINT ["/usr/local/bin/notifyd"]

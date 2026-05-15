@@ -1,33 +1,80 @@
+# notifyd — production docker-compose (Dokploy-ready)
+#
+# This compose is dual-purpose:
+#   - LOCAL DEV: just `docker compose up`, defaults below cover everything.
+#     Override DATABASE_URL etc. via a sibling .env file if needed.
+#   - DOKPLOY: provide POSTGRES_PASSWORD, ADMIN_API_KEY, JWT_SECRET,
+#     RESEND_API_KEY, EMAIL_FROM via the platform UI/API.
+#
+# notifyd reads config from env vars when /app/notifyd.toml is absent
+# (see src/config.rs `from_env`). We deliberately don't mount a TOML so
+# the same image works across environments without a config file.
+#
+# IMPORTANT: notifyd's SSE inbox uses an in-memory broadcast channel
+# (tokio::sync::broadcast). DO NOT scale horizontally — pin replicas: 1.
+
 services:
   notifyd:
-    build: .
-    ports:
-      - "3400:3400"
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgres://notifyd:notifyd@postgres:5432/notifyd
-      NOTIFYD_CONFIG: /app/notifyd.toml
-      RUST_LOG: notifyd=info
-    volumes:
-      - ./notifyd.toml:/app/notifyd.toml:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
+      # Required ------------------------------------------------------------
+      DATABASE_URL: postgres://notifyd:${POSTGRES_PASSWORD:-notifyd}@notifyd-db:5432/notifyd
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (random 32+ chars, used to sign subscriber JWTs)}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (random 32+ chars, gates /v1/admin/*)}
 
-  postgres:
+      # Email connector (Resend) -------------------------------------------
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-bonjour@craie.ctrlnz.com}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Craie}
+
+      # CORS for browsers calling /v1/inbox/*/stream ------------------------
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://maisoncraie.com,https://www.maisoncraie.com,https://craie.ctrlnz.com}
+
+      # Optional -----------------------------------------------------------
+      PORT: "3400"
+      RUST_LOG: ${RUST_LOG:-notifyd=info}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3400/v1/health | grep -q '\"status\":\"ok\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      notifyd-db:
+        condition: service_healthy
+    networks:
+      default: {}
+      dokploy-network:
+        aliases: [notifyd]
+    restart: unless-stopped
+    deploy:
+      replicas: 1   # SSE in-memory; do NOT scale horizontally without LISTEN/NOTIFY rework
+
+  notifyd-db:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: notifyd
       POSTGRES_USER: notifyd
-      POSTGRES_PASSWORD: notifyd
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notifyd}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - notifyd_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U notifyd"]
+      test: ["CMD-SHELL", "pg_isready -U notifyd -d notifyd"]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
 
+networks:
+  # `default` is the per-stack bridge auto-created by compose; notifyd and
+  # its DB use it to talk privately. `dokploy-network` is the shared
+  # Traefik/swarm overlay — joining it lets neighbouring stacks (e.g.
+  # craie-api) reach notifyd at http://notifyd:3400 via the alias above.
+  dokploy-network:
+    external: true
+
 volumes:
-  postgres_data:
+  notifyd_pgdata:
