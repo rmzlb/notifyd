@@ -117,6 +117,11 @@ pub struct SendRequest {
     pub idempotency_key: Option<String>,
     pub icon: Option<String>,
     pub url: Option<String>,
+    /// Optional MIME headers to attach to the outgoing email. Forwarded
+    /// to the email connector via `metadata.email_headers`. Used for
+    /// List-Unsubscribe / List-Unsubscribe-Post (RFC 8058) and similar.
+    /// Format: `{ "Header-Name": "value", ... }`.
+    pub email_headers: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,6 +186,14 @@ pub async fn send_notification(
         "icon": req.icon.as_deref().unwrap_or("bell"),
         "url": req.url,
     });
+
+    // Forward optional MIME headers (List-Unsubscribe etc.) into the job
+    // payload so the email connector picks them up via `metadata.email_headers`.
+    if let Some(headers) = &req.email_headers {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("email_headers".to_string(), headers.clone());
+        }
+    }
 
     if let Some(vars) = &req.vars {
         if let (Some(p), Some(v)) = (payload.as_object_mut(), vars.as_object()) {
