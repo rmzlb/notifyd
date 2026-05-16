@@ -42,13 +42,27 @@ impl Connector for ResendConnector {
             self.config.from.clone()
         };
 
-        let body = json!({
+        let mut body = json!({
             "from": from,
             "to": [req.recipient],
             "subject": req.subject.as_deref().unwrap_or("Notification"),
             "html": req.body_html.as_deref().unwrap_or(&req.body),
             "text": req.body,
         });
+
+        // Forward custom email headers (e.g. List-Unsubscribe, List-Unsubscribe-Post)
+        // when the caller has set `metadata.email_headers = { "Header-Name": "value", ... }`.
+        // Required for Gmail/Yahoo bulk sender compliance (effective Feb 2024,
+        // refined 2025-2026: one-click List-Unsubscribe per RFC 8058).
+        // Resend API: https://resend.com/docs/api-reference/emails/send-email#body-parameters
+        // Format expected: `headers: { "Header": "Value", ... }`.
+        if let Some(headers) = req.metadata.get("email_headers") {
+            if headers.is_object() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("headers".to_string(), headers.clone());
+                }
+            }
+        }
 
         let res = self
             .client
@@ -107,12 +121,23 @@ impl Connector for AgentMailConnector {
             inbox
         );
 
-        let body = json!({
+        let mut body = json!({
             "to": [req.recipient],
             "subject": req.subject.as_deref().unwrap_or("Notification"),
             "text": req.body,
             "html": req.body_html.as_deref().unwrap_or(&req.body),
         });
+
+        // Forward custom headers (List-Unsubscribe, etc.) — same convention
+        // as the Resend path. AgentMail doc:
+        // https://docs.agentmail.to/api-reference/inboxes/send-message
+        if let Some(headers) = req.metadata.get("email_headers") {
+            if headers.is_object() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("headers".to_string(), headers.clone());
+                }
+            }
+        }
 
         let res = self
             .client
