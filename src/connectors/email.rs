@@ -64,6 +64,18 @@ impl Connector for ResendConnector {
             }
         }
 
+        // Forward Resend tags from `metadata.tags` (categorize emails for
+        // dashboard filtering: transactional / campaign / test / etc.).
+        // Format: `[ {"name":"category","value":"campaign"}, ... ]`.
+        // See https://resend.com/docs/api-reference/emails/send-email#body-parameters
+        if let Some(tags) = req.metadata.get("tags") {
+            if tags.is_array() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("tags".to_string(), tags.clone());
+                }
+            }
+        }
+
         let res = self
             .client
             .post("https://api.resend.com/emails")

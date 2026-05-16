@@ -122,6 +122,10 @@ pub struct SendRequest {
     /// List-Unsubscribe / List-Unsubscribe-Post (RFC 8058) and similar.
     /// Format: `{ "Header-Name": "value", ... }`.
     pub email_headers: Option<Value>,
+    /// Optional Resend tags for dashboard categorization & filtering.
+    /// Format: `[ {"name":"category","value":"campaign"}, ... ]`.
+    /// See https://resend.com/docs/api-reference/emails/send-email#body-parameters
+    pub tags: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +196,13 @@ pub async fn send_notification(
     if let Some(headers) = &req.email_headers {
         if let Some(p) = payload.as_object_mut() {
             p.insert("email_headers".to_string(), headers.clone());
+        }
+    }
+
+    // Forward Resend tags (categorize emails: transactional / campaign / test).
+    if let Some(tags) = &req.tags {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("tags".to_string(), tags.clone());
         }
     }
 
