@@ -1,5 +1,17 @@
 export type NotifydChannel = 'email' | 'sms' | 'push' | 'in_app' | (string & {});
 
+/**
+ * Email attachment. `content` is the file bytes encoded as a base64 string
+ * (no data-URL prefix). `contentType` is optional — Resend infers it from
+ * the filename when omitted. Attachments are only honoured on the `email`
+ * channel and force the message onto the single-send path server-side.
+ */
+export interface NotifydAttachment {
+  filename: string;
+  content: string;
+  contentType?: string;
+}
+
 export interface NotifydClientConfig {
   url: string;
   apiKey?: string;
@@ -22,6 +34,8 @@ export interface SendNotificationInput {
   idempotencyKey?: string;
   icon?: string;
   url?: string;
+  /** Email attachments (email channel only). */
+  attachments?: NotifydAttachment[];
 }
 
 export interface SendNotificationResponse {
@@ -345,6 +359,11 @@ export function createNotifydClient(config: NotifydClientConfig) {
           idempotency_key: input.idempotencyKey,
           icon: input.icon,
           url: input.url,
+          attachments: input.attachments?.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+            content_type: a.contentType,
+          })),
         },
       });
 

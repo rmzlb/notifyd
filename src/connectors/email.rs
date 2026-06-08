@@ -77,6 +77,38 @@ impl ResendConnector {
             }
         }
 
+        // Forward email attachments to Resend's `/emails` endpoint.
+        // Resend expects: [{ "filename": "...", "content": "<base64>" }]
+        // (content_type is optional and inferred from the filename).
+        // We accept the inbound `content_type`/`mime` alias and normalise.
+        // NOTE: only valid on single-send; the batch endpoint rejects
+        // attachments, so the worker must never batch these (see worker.rs).
+        if let Some(atts) = req.metadata.get("attachments").and_then(|v| v.as_array()) {
+            let mapped: Vec<Value> = atts
+                .iter()
+                .filter_map(|a| {
+                    let filename = a.get("filename").or_else(|| a.get("name"))?.as_str()?;
+                    let content = a.get("content").or_else(|| a.get("file"))?.as_str()?;
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("filename".into(), json!(filename));
+                    obj.insert("content".into(), json!(content));
+                    if let Some(ct) = a
+                        .get("content_type")
+                        .or_else(|| a.get("mime"))
+                        .and_then(|v| v.as_str())
+                    {
+                        obj.insert("content_type".into(), json!(ct));
+                    }
+                    Some(Value::Object(obj))
+                })
+                .collect();
+            if !mapped.is_empty() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("attachments".to_string(), Value::Array(mapped));
+                }
+            }
+        }
+
         body
     }
 }

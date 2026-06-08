@@ -120,6 +120,7 @@ function createNotifydClient(config) {
   }
   return {
     async send(input) {
+      var _a;
       const response = await request("/v1/send", {
         method: "POST",
         auth: "apiKey",
@@ -136,7 +137,12 @@ function createNotifydClient(config) {
           scheduled_at: input.scheduledAt,
           idempotency_key: input.idempotencyKey,
           icon: input.icon,
-          url: input.url
+          url: input.url,
+          attachments: (_a = input.attachments) == null ? void 0 : _a.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+            content_type: a.contentType
+          }))
         }
       });
       return {

@@ -95,6 +95,12 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     // individual API calls. Other channels (SMS, in-app, push) still
     // dispatch one-by-one but in parallel via for_each_concurrent.
     //
+    // EXCEPTION: emails carrying attachments cannot use `/emails/batch`
+    // (Resend's batch endpoint rejects `attachments`). Those are peeled
+    // off and dispatched through the single-send path alongside the other
+    // channels, so they still get attachments while plain emails keep the
+    // batch fast-path.
+    //
     // Why this matters at scale:
     // - Resend default rate limit is 5 req/s per team. With 50 jobs
     //   sequential @ ~50ms each, we burn ~5s wall clock and get throttled.
@@ -103,18 +109,24 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     // - The email connector trait has a default `send_batch` that just
     //   loops `send()`, so non-Resend connectors (AgentMail) still work
     //   correctly without being aware of batching.
-    let (email_jobs, other_jobs): (Vec<_>, Vec<_>) =
+    let (email_jobs, mut other_jobs): (Vec<_>, Vec<_>) =
         jobs.into_iter().partition(|j| j.channel == "email");
 
-    // 1. Email batch path
-    if !email_jobs.is_empty() {
-        process_email_batch(state, email_jobs).await;
+    // Peel attachment-bearing emails out of the batch path.
+    let (email_batch_jobs, email_attachment_jobs): (Vec<_>, Vec<_>) =
+        email_jobs.into_iter().partition(|j| !job_has_attachments(j));
+    other_jobs.extend(email_attachment_jobs);
+
+    // 1. Email batch path (plain emails only — no attachments)
+    if !email_batch_jobs.is_empty() {
+        process_email_batch(state, email_batch_jobs).await;
     }
 
-    // 2. Other channels: parallel dispatch (up to 4 concurrent in-flight).
-    //    SMS / in-app / push connectors typically have their own rate limits
-    //    much higher than Resend's, but we cap at 4 to avoid overwhelming
-    //    the DB pool when updating statuses.
+    // 2. Other channels + attachment emails: parallel single-send dispatch
+    //    (up to 4 concurrent in-flight). SMS / in-app / push connectors
+    //    typically have their own rate limits much higher than Resend's,
+    //    but we cap at 4 to avoid overwhelming the DB pool when updating
+    //    statuses.
     if !other_jobs.is_empty() {
         use futures::stream::{self, StreamExt};
         const PARALLEL_DISPATCH: usize = 4;
@@ -496,8 +508,18 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
     }
 }
 
-fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<String>) {
-    (
+/// True when an email job carries a non-empty `attachments` array in its
+/// payload. Such jobs must NOT go through Resend's `/emails/batch`
+/// (which rejects attachments) — the worker routes them to single-send.
+fn job_has_attachments(job: &Job) -> bool {
+    job.payload
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+}
+
+fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<String>) {    (
         payload
             .get("subject")
             .and_then(|v| v.as_str())

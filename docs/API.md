@@ -171,6 +171,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `vars` | `object` | ❌ | Template variables |
 | `scheduled_at` | `ISO 8601` | ❌ | Schedule for future delivery (default: now) |
 | `idempotency_key` | `string` | ❌ | Prevents duplicate sends |
+| `attachments` | `object[]` | ❌ | Email only. `[{ "filename", "content" (base64), "content_type"? }]`. Forces single-send (Resend batch rejects attachments). |
 
 **Response:**
 

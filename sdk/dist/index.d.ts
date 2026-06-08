@@ -1,4 +1,15 @@
 type NotifydChannel = 'email' | 'sms' | 'push' | 'in_app' | (string & {});
+/**
+ * Email attachment. `content` is the file bytes encoded as a base64 string
+ * (no data-URL prefix). `contentType` is optional — Resend infers it from
+ * the filename when omitted. Attachments are only honoured on the `email`
+ * channel and force the message onto the single-send path server-side.
+ */
+interface NotifydAttachment {
+    filename: string;
+    content: string;
+    contentType?: string;
+}
 interface NotifydClientConfig {
     url: string;
     apiKey?: string;
@@ -20,6 +31,8 @@ interface SendNotificationInput {
     idempotencyKey?: string;
     icon?: string;
     url?: string;
+    /** Email attachments (email channel only). */
+    attachments?: NotifydAttachment[];
 }
 interface SendNotificationResponse {
     success: boolean;
@@ -168,4 +181,4 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     openInboxStream(subscriberId: string, options?: OpenInboxStreamOptions): Promise<OpenInboxStreamResult>;
 };
 
-export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type ListResponse, type MarkAllReadResponse, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type OpenInboxStreamOptions, type OpenInboxStreamResult, type SendNotificationInput, type SendNotificationResponse, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, createNotifydClient };
+export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type OpenInboxStreamOptions, type OpenInboxStreamResult, type SendNotificationInput, type SendNotificationResponse, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, createNotifydClient };

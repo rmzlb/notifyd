@@ -126,6 +126,13 @@ pub struct SendRequest {
     /// Format: `[ {"name":"category","value":"campaign"}, ... ]`.
     /// See https://resend.com/docs/api-reference/emails/send-email#body-parameters
     pub tags: Option<Value>,
+    /// Optional email attachments. Forwarded to the email connector via
+    /// `metadata.attachments`. Resend's single-send `/emails` endpoint
+    /// supports these natively; the `/emails/batch` endpoint does NOT, so
+    /// the worker routes any email carrying attachments through the
+    /// single-send path. Format:
+    /// `[ {"filename": "facture.pdf", "content": "<base64>", "content_type": "application/pdf"} ]`.
+    pub attachments: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +210,15 @@ pub async fn send_notification(
     if let Some(tags) = &req.tags {
         if let Some(p) = payload.as_object_mut() {
             p.insert("tags".to_string(), tags.clone());
+        }
+    }
+
+    // Forward email attachments (base64). The connector adds them to the
+    // Resend single-send body; the worker keeps attachment-bearing emails
+    // out of the batch path (Resend batch doesn't support attachments).
+    if let Some(attachments) = &req.attachments {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("attachments".to_string(), attachments.clone());
         }
     }
 
