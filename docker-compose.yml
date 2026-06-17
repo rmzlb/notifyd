@@ -29,8 +29,15 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-bonjour@craie.ctrlnz.com}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Craie}
 
+      # Web Push / PWA connector ------------------------------------------
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_PRIVATE_KEY_PEM: ${VAPID_PRIVATE_KEY_PEM:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:ops@yourdomain.com}
+
       # CORS for browsers calling /v1/inbox/*/stream ------------------------
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://maisoncraie.com,https://www.maisoncraie.com,https://craie.ctrlnz.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://maisoncraie.com,https://www.maisoncraie.com,https://craie.ctrlnz.com,https://helmai.ai,https://www.helmai.ai}
 
       # Optional -----------------------------------------------------------
       PORT: "3400"

@@ -144,6 +144,37 @@ export interface StreamTicketResponse {
   expiresInSeconds: number;
 }
 
+export interface VapidPublicKeyResponse {
+  publicKey: string;
+}
+
+export interface WebPushSubscriptionInput {
+  subscriberId: string;
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  expirationTime?: string | null;
+  platform?: string;
+  deviceName?: string;
+  userAgent?: string;
+}
+
+export interface PushToken {
+  id: string;
+  token: string;
+  platform: string;
+  deviceName?: string;
+  endpoint?: string;
+  expirationTime?: string;
+  userAgent?: string;
+}
+
+export interface PushTokensResponse {
+  tokens: PushToken[];
+}
+
 export interface NotifydErrorDetails {
   error?: string;
   [key: string]: unknown;
@@ -313,13 +344,15 @@ export function createNotifydClient(config: NotifydClientConfig) {
     path: string,
     options: {
       method?: string;
-      auth?: 'apiKey' | 'inbox';
+      auth?: 'apiKey' | 'inbox' | 'none';
       body?: unknown;
       query?: object;
     } = {},
   ): Promise<T> {
     const authHeaders =
-      options.auth === 'apiKey'
+      options.auth === 'none'
+        ? {}
+        : options.auth === 'apiKey'
         ? { 'X-Api-Key': assertApiKey(config.apiKey) }
         : assertInboxAuth(config.apiKey, config.subscriberToken);
 
@@ -478,6 +511,66 @@ export function createNotifydClient(config: NotifydClientConfig) {
         expiresAt: response.expires_at,
         ttlHours: response.ttl_hours,
       };
+    },
+
+    async getVapidPublicKey(project?: string): Promise<string> {
+      const response = await request<{ public_key: string }>('/v1/push/vapid-public-key', {
+        auth: 'none',
+        query: { project },
+      });
+
+      return response.public_key;
+    },
+
+    async registerPushSubscription(input: WebPushSubscriptionInput): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>('/v1/push-tokens', {
+        method: 'POST',
+        auth: 'apiKey',
+        body: {
+          subscriber_id: input.subscriberId,
+          endpoint: input.endpoint,
+          keys: input.keys,
+          expiration_time: input.expirationTime,
+          platform: input.platform ?? 'web',
+          device_name: input.deviceName,
+          user_agent: input.userAgent,
+        },
+      });
+    },
+
+    async listPushTokens(subscriberId: string): Promise<PushTokensResponse> {
+      const response = await request<{
+        tokens: Array<{
+          id: string;
+          token: string;
+          platform: string;
+          device_name?: string;
+          endpoint?: string;
+          expiration_time?: string;
+          user_agent?: string;
+        }>;
+      }>(`/v1/push-tokens/subscriber/${encodeURIComponent(subscriberId)}`, {
+        auth: 'apiKey',
+      });
+
+      return {
+        tokens: response.tokens.map((token) => ({
+          id: token.id,
+          token: token.token,
+          platform: token.platform,
+          deviceName: token.device_name,
+          endpoint: token.endpoint,
+          expirationTime: token.expiration_time,
+          userAgent: token.user_agent,
+        })),
+      };
+    },
+
+    async deletePushToken(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/push-tokens/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        auth: 'apiKey',
+      });
     },
 
     async getInbox(subscriberId: string, query?: InboxQuery): Promise<InboxResponse> {

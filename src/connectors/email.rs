@@ -176,7 +176,13 @@ impl Connector for ResendConnector {
             );
             return reqs
                 .iter()
-                .map(|_| Err(anyhow!("Batch size {} exceeds Resend max {}", reqs.len(), RESEND_BATCH_MAX)))
+                .map(|_| {
+                    Err(anyhow!(
+                        "Batch size {} exceeds Resend max {}",
+                        reqs.len(),
+                        RESEND_BATCH_MAX
+                    ))
+                })
                 .collect();
         }
 
@@ -196,7 +202,10 @@ impl Connector for ResendConnector {
             Err(e) => {
                 error!("Resend batch transport error: {}", e);
                 // All items fail the same network error — workers will retry.
-                return reqs.iter().map(|_| Err(anyhow!("transport error: {}", e))).collect();
+                return reqs
+                    .iter()
+                    .map(|_| Err(anyhow!("transport error: {}", e)))
+                    .collect();
             }
         };
 
@@ -211,10 +220,7 @@ impl Connector for ResendConnector {
                 .collect();
         }
 
-        info!(
-            "Email batch sent via Resend ({} recipients)",
-            reqs.len()
-        );
+        info!("Email batch sent via Resend ({} recipients)", reqs.len());
 
         // Per-item success: Resend returns one row per accepted email,
         // keyed by index. We treat all as Ok(()) — partial failures inside

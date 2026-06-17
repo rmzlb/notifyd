@@ -77,6 +77,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
             get(workflows::get_workflow).delete(workflows::delete_workflow),
         )
         // Push tokens — BUG FIX #4: split list-by-subscriber and delete-by-uuid
+        .route("/push/vapid-public-key", get(push_tokens::vapid_public_key))
         .route("/push-tokens", post(push_tokens::register_token))
         .route(
             "/push-tokens/subscriber/:subscriber_id",

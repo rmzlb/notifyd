@@ -45,6 +45,23 @@ from = "+33600000000"
 # messaging_profile_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # optional
 # from = "+33600000000"
 
+# ─── Push connector ───────────────────────────────────────────────────
+# Web Push is the standards-based path for browser/PWA push, including
+# iPhone/iPad home-screen web apps. Generate VAPID keys once and keep the
+# private key secret.
+#
+# openssl ecparam -name prime256v1 -genkey -noout -out private.pem
+# openssl ec -in private.pem -pubout -outform DER | tail -c 65 | base64 | tr '/+' '_-' | tr -d '\n'
+[connectors.push]
+vapid_private_key_pem = """
+-----BEGIN EC PRIVATE KEY-----
+...
+-----END EC PRIVATE KEY-----
+"""
+vapid_subject = "mailto:ops@yourdomain.com"
+# Optional legacy Android/native push path:
+# fcm_server_key = "AAAA..."
+
 # ─── Projects ────────────────────────────────────────────────────────
 # One section per project. api_key is what clients send in X-Api-Key header.
 
@@ -58,11 +75,7 @@ channels = ["email", "in_app"]
 
 [projects.helmai]
 api_key = "sk_helmai_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-channels = ["email", "sms"]
-
-[projects.craie]
-api_key = "sk_craie_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-channels = ["email", "in_app"]
+channels = ["email", "sms", "in_app", "push"]
 
 [projects.craie]
 api_key = "sk_craie_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

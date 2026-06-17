@@ -113,8 +113,9 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
         jobs.into_iter().partition(|j| j.channel == "email");
 
     // Peel attachment-bearing emails out of the batch path.
-    let (email_batch_jobs, email_attachment_jobs): (Vec<_>, Vec<_>) =
-        email_jobs.into_iter().partition(|j| !job_has_attachments(j));
+    let (email_batch_jobs, email_attachment_jobs): (Vec<_>, Vec<_>) = email_jobs
+        .into_iter()
+        .partition(|j| !job_has_attachments(j));
     other_jobs.extend(email_attachment_jobs);
 
     // 1. Email batch path (plain emails only — no attachments)
@@ -158,9 +159,17 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
     let config = match &state.config.connectors.email {
         Some(c) => c.clone(),
         None => {
-            error!("Email connector not configured — failing {} jobs", jobs.len());
+            error!(
+                "Email connector not configured — failing {} jobs",
+                jobs.len()
+            );
             for job in &jobs {
-                finalize_job_result(state, job, Err(anyhow::anyhow!("Email connector not configured"))).await;
+                finalize_job_result(
+                    state,
+                    job,
+                    Err(anyhow::anyhow!("Email connector not configured")),
+                )
+                .await;
             }
             return;
         }
@@ -225,12 +234,11 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
 async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: Result<()>) {
     let new_status = match result {
         Ok(()) => {
-            if let Err(e) = sqlx::query(
-                "UPDATE jobs SET status='sent', sent_at=now(), error=NULL WHERE id=$1",
-            )
-            .bind(job.id)
-            .execute(&state.pool)
-            .await
+            if let Err(e) =
+                sqlx::query("UPDATE jobs SET status='sent', sent_at=now(), error=NULL WHERE id=$1")
+                    .bind(job.id)
+                    .execute(&state.pool)
+                    .await
             {
                 error!("Failed to mark job {} as sent: {}", job.id, e);
                 return;
@@ -244,11 +252,12 @@ async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: Result<()
             let err_msg = e.to_string();
 
             if attempts >= max {
-                if let Err(db_e) = sqlx::query("UPDATE jobs SET status='failed', error=$2 WHERE id=$1")
-                    .bind(job.id)
-                    .bind(&err_msg)
-                    .execute(&state.pool)
-                    .await
+                if let Err(db_e) =
+                    sqlx::query("UPDATE jobs SET status='failed', error=$2 WHERE id=$1")
+                        .bind(job.id)
+                        .bind(&err_msg)
+                        .execute(&state.pool)
+                        .await
                 {
                     error!("Failed to mark job {} as failed: {}", job.id, db_e);
                     return;
@@ -469,8 +478,13 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
         }
         Some(Channel::Push) => {
             if let Some(sub_id) = &job.subscriber_id {
-                let tokens: Vec<(String,)> = sqlx::query_as(
-                    "SELECT token FROM push_tokens WHERE project_id=$1 AND subscriber_id=$2",
+                let tokens: Vec<PushTokenRow> = sqlx::query_as(
+                    r#"
+                    SELECT id, token, platform, endpoint, p256dh, auth
+                    FROM push_tokens
+                    WHERE project_id=$1 AND subscriber_id=$2
+                    ORDER BY last_used_at DESC NULLS LAST, created_at DESC
+                    "#,
                 )
                 .bind(&job.project_id)
                 .bind(sub_id)
@@ -485,18 +499,36 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
                     return Ok(());
                 }
 
-                let server_key = std::env::var("FCM_SERVER_KEY").unwrap_or_default();
-                if server_key.is_empty() {
-                    return Err(anyhow::anyhow!("FCM_SERVER_KEY not configured"));
-                }
+                let config = state
+                    .config
+                    .connectors
+                    .push
+                    .clone()
+                    .or_else(crate::config::PushConfig::from_env)
+                    .ok_or_else(|| anyhow::anyhow!("Push connector not configured"))?;
+                let connector = crate::connectors::push::PushConnector::new(config);
 
-                let connector = crate::connectors::push::PushConnector::new(
-                    crate::connectors::push::FcmConfig { server_key },
-                );
-
-                for (token,) in tokens {
+                for token in tokens {
                     let mut push_req = req.clone();
-                    push_req.recipient = token;
+                    if let (Some(endpoint), Some(p256dh), Some(auth)) =
+                        (&token.endpoint, &token.p256dh, &token.auth)
+                    {
+                        push_req.recipient = endpoint.clone();
+                        if let Some(obj) = push_req.metadata.as_object_mut() {
+                            obj.insert(
+                                "web_push".into(),
+                                serde_json::json!({
+                                    "endpoint": endpoint,
+                                    "p256dh": p256dh,
+                                    "auth": auth,
+                                    "platform": token.platform,
+                                    "token_id": token.id,
+                                }),
+                            );
+                        }
+                    } else {
+                        push_req.recipient = token.token.clone();
+                    }
                     connector.send(&push_req).await?;
                 }
                 Ok(())
@@ -506,6 +538,16 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
         }
         None => Err(anyhow::anyhow!("Unknown channel: {}", job.channel)),
     }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct PushTokenRow {
+    id: uuid::Uuid,
+    token: String,
+    platform: String,
+    endpoint: Option<String>,
+    p256dh: Option<String>,
+    auth: Option<String>,
 }
 
 /// True when an email job carries a non-empty `attachments` array in its
@@ -519,7 +561,8 @@ fn job_has_attachments(job: &Job) -> bool {
         .unwrap_or(false)
 }
 
-fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<String>) {    (
+fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<String>) {
+    (
         payload
             .get("subject")
             .and_then(|v| v.as_str())

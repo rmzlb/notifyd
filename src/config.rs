@@ -52,6 +52,7 @@ fn default_max_attempts() -> i32 {
 pub struct ConnectorsConfig {
     pub email: Option<EmailConfig>,
     pub sms: Option<SmsConfig>,
+    pub push: Option<PushConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -76,6 +77,60 @@ pub struct SmsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PushConfig {
+    pub fcm_server_key: Option<String>,
+    /// URL-safe base64-encoded raw VAPID private key, without padding.
+    pub vapid_private_key: Option<String>,
+    /// PEM-encoded VAPID private key. Env values may use literal "\n".
+    pub vapid_private_key_pem: Option<String>,
+    /// Optional precomputed URL-safe base64 public key. If omitted, notifyd
+    /// derives it from the private key when the public-key endpoint is called.
+    pub vapid_public_key: Option<String>,
+    /// VAPID subject, usually "mailto:ops@example.com" or an HTTPS contact URL.
+    pub vapid_subject: Option<String>,
+}
+
+impl PushConfig {
+    pub fn from_env() -> Option<Self> {
+        let fcm_server_key = std::env::var("FCM_SERVER_KEY").ok();
+        let vapid_private_key = std::env::var("VAPID_PRIVATE_KEY").ok();
+        let vapid_private_key_pem = std::env::var("VAPID_PRIVATE_KEY_PEM")
+            .ok()
+            .map(|v| v.replace("\\n", "\n"));
+        let vapid_public_key = std::env::var("VAPID_PUBLIC_KEY").ok();
+        let vapid_subject = std::env::var("VAPID_SUBJECT").ok();
+
+        if fcm_server_key.is_none()
+            && vapid_private_key.is_none()
+            && vapid_private_key_pem.is_none()
+            && vapid_public_key.is_none()
+        {
+            return None;
+        }
+
+        Some(Self {
+            fcm_server_key,
+            vapid_private_key,
+            vapid_private_key_pem,
+            vapid_public_key,
+            vapid_subject,
+        })
+    }
+
+    pub fn has_web_push_private_key(&self) -> bool {
+        self.vapid_private_key
+            .as_deref()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+            || self
+                .vapid_private_key_pem
+                .as_deref()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProjectConfig {
     pub api_key: String,
     pub channels: Vec<String>,
@@ -84,7 +139,10 @@ pub struct ProjectConfig {
 impl Config {
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        let mut config: Config = toml::from_str(&content)?;
+        if config.connectors.push.is_none() {
+            config.connectors.push = PushConfig::from_env();
+        }
         Ok(config)
     }
 
@@ -124,6 +182,7 @@ impl Config {
                         from_name: std::env::var("EMAIL_FROM_NAME").ok(),
                     }),
                 sms: None,
+                push: PushConfig::from_env(),
             },
             projects: HashMap::new(),
         };

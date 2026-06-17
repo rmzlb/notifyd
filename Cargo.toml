@@ -30,6 +30,7 @@ serde_json = "1"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+web-push = "0.11"
 
 # JWT
 jsonwebtoken = "9"

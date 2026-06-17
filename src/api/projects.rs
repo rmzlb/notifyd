@@ -198,9 +198,27 @@ pub async fn delete_project(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&headers)?;
 
+    let mut tx = state.pool.begin().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
+
+    sqlx::query("DELETE FROM jobs WHERE project_id = $1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
+
     let result = sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(&id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, {
@@ -215,6 +233,13 @@ pub async fn delete_project(
             Json(json!({"error": "Project not found"})),
         ));
     }
+
+    tx.commit().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
     Ok(Json(json!({"success": true})))
 }

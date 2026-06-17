@@ -106,6 +106,11 @@ pub struct PushToken {
     pub token: String,
     pub platform: String,
     pub device_name: Option<String>,
+    pub endpoint: Option<String>,
+    pub p256dh: Option<String>,
+    pub auth: Option<String>,
+    pub expiration_time: Option<DateTime<Utc>>,
+    pub user_agent: Option<String>,
 }
 
 /// Workflow step types (serialized as JSON in the steps array)
