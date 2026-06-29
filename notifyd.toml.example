@@ -45,6 +45,17 @@ from = "+33600000000"
 # messaging_profile_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # optional
 # from = "+33600000000"
 
+# ─── WhatsApp connector (Telnyx) ──────────────────────────────────────
+# Uses POST /v2/messages/whatsapp. Free-form text only works inside the
+# 24h conversation window; outside it, pass a Meta-approved template via
+# the job metadata: { "whatsapp": { "template": { "name": "...", "language": {"code": "en_US"} } } }
+# Can also be set via env: TELNYX_WHATSAPP_API_KEY (or TELNYX_API_KEY) + WHATSAPP_FROM.
+# [connectors.whatsapp]
+# provider = "telnyx"
+# api_key = "KEY01xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# messaging_profile_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # optional
+# from = "+33600000000"  # WhatsApp-enabled number
+
 # ─── Push connector ───────────────────────────────────────────────────
 # Web Push is the standards-based path for browser/PWA push, including
 # iPhone/iPad home-screen web apps. Generate VAPID keys once and keep the

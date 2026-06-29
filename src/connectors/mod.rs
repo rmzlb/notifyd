@@ -2,6 +2,7 @@ pub mod email;
 pub mod in_app;
 pub mod push;
 pub mod sms;
+pub mod whatsapp;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use serde_json::Value;
 pub enum Channel {
     Email,
     Sms,
+    Whatsapp,
     InApp,
     Push,
 }
@@ -20,6 +22,7 @@ impl Channel {
         match s {
             "email" => Some(Self::Email),
             "sms" => Some(Self::Sms),
+            "whatsapp" => Some(Self::Whatsapp),
             "in_app" | "inapp" => Some(Self::InApp),
             "push" | "fcm" => Some(Self::Push),
             _ => None,
@@ -30,6 +33,7 @@ impl Channel {
         match self {
             Self::Email => "email",
             Self::Sms => "sms",
+            Self::Whatsapp => "whatsapp",
             Self::InApp => "in_app",
             Self::Push => "push",
         }

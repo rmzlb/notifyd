@@ -52,6 +52,8 @@ fn default_max_attempts() -> i32 {
 pub struct ConnectorsConfig {
     pub email: Option<EmailConfig>,
     pub sms: Option<SmsConfig>,
+    #[serde(default)]
+    pub whatsapp: Option<WhatsappConfig>,
     pub push: Option<PushConfig>,
 }
 
@@ -74,6 +76,32 @@ pub struct SmsConfig {
     pub messaging_profile_id: Option<String>,
     // Common
     pub from: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WhatsappConfig {
+    pub provider: String, // "telnyx"
+    pub api_key: Option<String>,
+    pub messaging_profile_id: Option<String>,
+    pub from: String, // WhatsApp-enabled E.164 number
+}
+
+impl WhatsappConfig {
+    pub fn from_env() -> Option<Self> {
+        let api_key = std::env::var("TELNYX_WHATSAPP_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("TELNYX_API_KEY").ok())?;
+        let from = std::env::var("WHATSAPP_FROM").ok()?;
+        if api_key.trim().is_empty() || from.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            provider: "telnyx".to_string(),
+            api_key: Some(api_key),
+            messaging_profile_id: std::env::var("TELNYX_MESSAGING_PROFILE_ID").ok(),
+            from,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -143,6 +171,9 @@ impl Config {
         if config.connectors.push.is_none() {
             config.connectors.push = PushConfig::from_env();
         }
+        if config.connectors.whatsapp.is_none() {
+            config.connectors.whatsapp = WhatsappConfig::from_env();
+        }
         Ok(config)
     }
 
@@ -182,6 +213,7 @@ impl Config {
                         from_name: std::env::var("EMAIL_FROM_NAME").ok(),
                     }),
                 sms: None,
+                whatsapp: WhatsappConfig::from_env(),
                 push: PushConfig::from_env(),
             },
             projects: HashMap::new(),

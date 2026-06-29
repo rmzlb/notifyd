@@ -471,6 +471,17 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("SMS connector not configured"))?;
             SmsConnector::new(config.clone()).send(&req).await
         }
+        Some(Channel::Whatsapp) => {
+            let config = state
+                .config
+                .connectors
+                .whatsapp
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("WhatsApp connector not configured"))?;
+            crate::connectors::whatsapp::WhatsappConnector::new(config.clone())
+                .send(&req)
+                .await
+        }
         Some(Channel::InApp) => {
             InAppConnector::new(state.pool.clone(), state.broadcaster.clone())
                 .send(&req)

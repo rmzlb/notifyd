@@ -27,7 +27,7 @@ pub fn mask_phone(phone: &str) -> String {
 pub fn mask_recipient(channel: &str, recipient: &str) -> String {
     match channel {
         "email" => mask_email(recipient),
-        "sms" => mask_phone(recipient),
+        "sms" | "whatsapp" => mask_phone(recipient),
         "push" => {
             if recipient.len() > 8 {
                 format!("{}...", &recipient[..8])
