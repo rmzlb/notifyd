@@ -52,6 +52,9 @@ pub struct CreateProject {
     pub channels: Option<Vec<String>>,
     pub rate_limit_per_min: Option<i32>,
     pub settings: Option<Value>,
+    // Per-project sender identity (email). None = instance default.
+    pub from_email: Option<String>,
+    pub from_name: Option<String>,
 }
 
 /// POST /v1/admin/projects
@@ -77,13 +80,15 @@ pub async fn create_project(
 
     sqlx::query(
         r#"
-        INSERT INTO projects (id, api_key, api_key_hash, name, channels, rate_limit_per_min, settings)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO projects (id, api_key, api_key_hash, name, channels, rate_limit_per_min, settings, from_email, from_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             channels = EXCLUDED.channels,
             rate_limit_per_min = EXCLUDED.rate_limit_per_min,
             settings = EXCLUDED.settings,
+            from_email = EXCLUDED.from_email,
+            from_name = EXCLUDED.from_name,
             updated_at = now()
         "#
     )
@@ -94,6 +99,8 @@ pub async fn create_project(
     .bind(&channels_arr)
     .bind(req.rate_limit_per_min.unwrap_or(600))
     .bind(req.settings.as_ref().unwrap_or(&json!({})))
+    .bind(&req.from_email)
+    .bind(&req.from_name)
     .execute(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
@@ -115,8 +122,8 @@ pub async fn list_projects(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&headers)?;
 
-    let rows: Vec<(String, String, Option<Vec<String>>, Option<i32>, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
-        "SELECT id, name, channels, rate_limit_per_min, created_at FROM projects ORDER BY created_at"
+    let rows: Vec<(String, String, Option<Vec<String>>, Option<i32>, Option<chrono::DateTime<chrono::Utc>>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, channels, rate_limit_per_min, created_at, from_email, from_name FROM projects ORDER BY created_at"
     )
     .fetch_all(&state.pool)
     .await
@@ -124,13 +131,15 @@ pub async fn list_projects(
 
     let projects: Vec<Value> = rows
         .iter()
-        .map(|(id, name, channels, rate_limit, created_at)| {
+        .map(|(id, name, channels, rate_limit, created_at, from_email, from_name)| {
             json!({
                 "id": id,
                 "name": name,
                 "channels": channels,
                 "rate_limit_per_min": rate_limit,
                 "created_at": created_at,
+                "from_email": from_email,
+                "from_name": from_name,
             })
         })
         .collect();

@@ -162,6 +162,11 @@ impl PushConfig {
 pub struct ProjectConfig {
     pub api_key: String,
     pub channels: Vec<String>,
+    // Per-project sender identity (email channel). None = instance default.
+    #[serde(default)]
+    pub from_email: Option<String>,
+    #[serde(default)]
+    pub from_name: Option<String>,
 }
 
 impl Config {

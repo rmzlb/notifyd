@@ -33,12 +33,18 @@ impl ResendConnector {
         }
     }
 
-    /// Resolve the canonical "from" string used on every send/batch call.
-    fn from_address(&self) -> String {
-        if let Some(name) = &self.config.from_name {
-            format!("{} <{}>", name, self.config.from)
-        } else {
-            self.config.from.clone()
+    /// Resolve the "from" string for one request: per-project override
+    /// (req.from_email/from_name) wins, otherwise the instance-wide config.
+    /// The two never mix — a project from_email without from_name sends
+    /// bare, not with the instance's from_name.
+    fn from_address(&self, req: &SendRequest) -> String {
+        let (email, name) = match &req.from_email {
+            Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
+            None => (self.config.from.as_str(), self.config.from_name.as_deref()),
+        };
+        match name {
+            Some(n) => format!("{} <{}>", n, email),
+            None => email.to_string(),
         }
     }
 
@@ -47,7 +53,7 @@ impl ResendConnector {
     /// always included so it works in both contexts.
     fn build_email_body(&self, req: &SendRequest) -> Value {
         let mut body = json!({
-            "from": self.from_address(),
+            "from": self.from_address(req),
             "to": [req.recipient],
             "subject": req.subject.as_deref().unwrap_or("Notification"),
             "html": req.body_html.as_deref().unwrap_or(&req.body),

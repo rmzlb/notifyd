@@ -84,6 +84,11 @@ channels = ["email", "sms", "in_app"]
 api_key = "sk_clozup_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 channels = ["email", "in_app"]
 
+# Optional per-project sender identity (email channel):
+#   from_email = "noreply@yourdomain.com"
+#   from_name  = "Your Brand"
+# Falls back to [connectors.email] from/from_name when unset.
+
 [projects.helmai]
 api_key = "sk_helmai_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 channels = ["email", "sms", "in_app", "push"]

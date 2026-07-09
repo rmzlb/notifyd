@@ -320,6 +320,38 @@ async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: Result<()
     }
 }
 
+/// Resolve the per-project sender override for the email channel.
+/// TOML-configured projects win (static config), then the projects table.
+/// Any lookup failure falls back to the instance default — a bad from
+/// must never block a send.
+async fn resolve_project_from(
+    state: &Arc<AppState>,
+    project_id: &str,
+) -> (Option<String>, Option<String>) {
+    if let Some(p) = state.config.projects.get(project_id) {
+        if p.from_email.is_some() {
+            return (p.from_email.clone(), p.from_name.clone());
+        }
+    }
+    match sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT from_email, from_name FROM projects WHERE id = $1",
+    )
+    .bind(project_id)
+    .fetch_optional(&state.pool)
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => (None, None),
+        Err(e) => {
+            warn!(
+                "from_email lookup failed for project {} ({}) — using instance default",
+                project_id, e
+            );
+            (None, None)
+        }
+    }
+}
+
 /// Build the `SendRequest` for a job (template render + metadata). Extracted
 /// from the original `dispatch_job` so both the email batch path and the
 /// per-job dispatch can share the prep work.
@@ -357,11 +389,20 @@ async fn build_send_request(state: &Arc<AppState>, job: &Job) -> Result<SendRequ
         }
     }
 
+    // Sender override only matters for email; skip the lookup elsewhere.
+    let (from_email, from_name) = if job.channel == "email" {
+        resolve_project_from(state, &job.project_id).await
+    } else {
+        (None, None)
+    };
+
     Ok(SendRequest {
         recipient: job.recipient.clone(),
         subject,
         body,
         body_html,
+        from_email,
+        from_name,
         metadata,
     })
 }
@@ -411,46 +452,7 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
         }
     }
 
-    let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
-        let tmpl: Option<crate::db::Template> = sqlx::query_as(
-            "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 AND id=$2 AND channel=$3"
-        )
-        .bind(&job.project_id).bind(tmpl_id).bind(&job.channel)
-        .fetch_optional(&state.pool).await?;
-
-        if let Some(t) = tmpl {
-            let vars = job
-                .payload
-                .get("vars")
-                .cloned()
-                .unwrap_or(job.payload.clone());
-            (
-                t.subject.map(|s| templates::render(&s, &vars)),
-                templates::render(&t.body, &vars),
-                t.body_html.map(|h| templates::render(&h, &vars)),
-            )
-        } else {
-            inline_from_payload(&job.payload)
-        }
-    } else {
-        inline_from_payload(&job.payload)
-    };
-
-    let mut metadata = job.payload.clone();
-    if let Some(obj) = metadata.as_object_mut() {
-        obj.insert("project_id".into(), Value::String(job.project_id.clone()));
-        if let Some(sid) = &job.subscriber_id {
-            obj.insert("subscriber_id".into(), Value::String(sid.clone()));
-        }
-    }
-
-    let req = SendRequest {
-        recipient: job.recipient.clone(),
-        subject,
-        body,
-        body_html,
-        metadata,
-    };
+    let req = build_send_request(state, job).await?;
 
     match Channel::from_str(&job.channel) {
         Some(Channel::Email) => {

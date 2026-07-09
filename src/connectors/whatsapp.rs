@@ -58,6 +58,8 @@ mod tests {
             subject: None,
             body: "hello".to_string(),
             body_html: None,
+            from_email: None,
+            from_name: None,
             metadata,
         }
     }

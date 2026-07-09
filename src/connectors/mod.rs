@@ -46,6 +46,9 @@ pub struct SendRequest {
     pub subject: Option<String>,
     pub body: String,
     pub body_html: Option<String>,
+    // Per-project sender override (email channel only). None = connector default.
+    pub from_email: Option<String>,
+    pub from_name: Option<String>,
     pub metadata: Value,
 }
 
