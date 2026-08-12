@@ -28,6 +28,9 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-bonjour@craie.ctrlnz.com}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Craie}
+      # Svix signing secret of the Resend webhook endpoint. Empty = the
+      # /webhooks/resend route answers 503 and nothing is ingested.
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
 
       # Web Push / PWA connector ------------------------------------------
       FCM_SERVER_KEY: ${FCM_SERVER_KEY:-}
