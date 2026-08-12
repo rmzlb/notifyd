@@ -530,3 +530,61 @@ The SDK wraps send, subscribers, subscriber JWT creation, inbox reads, unread co
 ### Roll Your Own
 
 The API is still simple REST + SSE. Any HTTP client works. See the examples above in curl, TypeScript, and Rust.
+
+## Email Deliverability
+
+"Sent" only means the provider accepted the API call. Resend webhooks close the
+loop: notifyd records what actually happened (delivered, bounced, complained)
+and stops writing to addresses that bounced or complained.
+
+### Webhook ingestion
+
+`POST /webhooks/resend` (note: **not** under `/v1`) receives Resend events,
+authenticated by their svix signature — no API key. Configure it once:
+
+1. Create a webhook in Resend pointing at
+   `https://<your-notifyd>/webhooks/resend` with the events
+   `email.delivered`, `email.bounced`, `email.complained`.
+2. Put its signing secret in the `RESEND_WEBHOOK_SECRET` env var and restart.
+   Without it the endpoint answers `503` and nothing is ingested (fail closed).
+
+Every accepted event is stored in `provider_events` (idempotent on the svix
+message id). Effects per event:
+
+| Event | Effect |
+|---|---|
+| `email.delivered` | stamps `jobs.delivered_at` |
+| `email.bounced` (Permanent) | job status → `bounced`, error = bounce message, **suppression created** |
+| `email.bounced` (Transient) | recorded only — soft bounces resolve on their own |
+| `email.complained` | job stays `sent` (it WAS delivered), **suppression created** |
+
+Events map back to jobs through the `notifyd_job_id` tag that the worker adds
+to every outgoing email. Projects subscribed to outbound webhooks also receive
+`job.bounced` / `job.complained`.
+
+### Suppression list
+
+An **active suppression** (project + address) makes the worker fail every email
+job to that address immediately — `status: failed`, error
+`recipient suppressed: …` — without calling the provider. Releasing it is an
+audited decision, never a deletion.
+
+**List suppressions**
+
+```bash
+curl https://notifyd.example.com/v1/suppressions \
+  -H "X-Api-Key: sk_your_project_key"
+# → { "data": [ { "id", "email", "reason", "detail", "created_at", "released_at" } ] }
+# ?include_released=true also returns historical (released) rows
+```
+
+**Release a suppression** (allow sending to the address again)
+
+```bash
+curl -X DELETE https://notifyd.example.com/v1/suppressions/<id> \
+  -H "X-Api-Key: sk_your_project_key"
+# → { "success": true, "id": "..." }
+```
+
+If the address bounces again after a release, a fresh suppression is created
+next to the released one — the history tells the whole story.

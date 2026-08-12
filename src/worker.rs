@@ -250,8 +250,11 @@ async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: Result<()
             let attempts = job.attempts + 1;
             let max = job.max_attempts;
             let err_msg = e.to_string();
+            let suppressed = e
+                .downcast_ref::<crate::deliverability::RecipientSuppressed>()
+                .is_some();
 
-            if attempts >= max {
+            if suppressed || attempts >= max {
                 if let Err(db_e) =
                     sqlx::query("UPDATE jobs SET status='failed', error=$2 WHERE id=$1")
                         .bind(job.id)
@@ -262,10 +265,14 @@ async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: Result<()
                     error!("Failed to mark job {} as failed: {}", job.id, db_e);
                     return;
                 }
-                error!(
-                    "Job {} failed permanently after {} attempts: {}",
-                    job.id, attempts, err_msg
-                );
+                if suppressed {
+                    warn!("Job {} failed without dispatch: {}", job.id, err_msg);
+                } else {
+                    error!(
+                        "Job {} failed permanently after {} attempts: {}",
+                        job.id, attempts, err_msg
+                    );
+                }
                 "failed"
             } else {
                 let delay_secs: i64 = match attempts {
@@ -386,6 +393,33 @@ async fn build_send_request(state: &Arc<AppState>, job: &Job) -> Result<SendRequ
         obj.insert("project_id".into(), Value::String(job.project_id.clone()));
         if let Some(sid) = &job.subscriber_id {
             obj.insert("subscriber_id".into(), Value::String(sid.clone()));
+        }
+    }
+
+    if job.channel == "email" {
+        // Suppressed address (bounce/complaint): fail before the provider —
+        // finalize_job_result treats RecipientSuppressed as terminal.
+        if let Some(reason) =
+            crate::deliverability::active_suppression(&state.pool, &job.project_id, &job.recipient)
+                .await?
+        {
+            return Err(anyhow::Error::new(
+                crate::deliverability::RecipientSuppressed(reason),
+            ));
+        }
+
+        // Tag the outgoing email with its job id: Resend echoes tags back in
+        // webhook events, which is how a bounce finds its way to this job.
+        if let Some(obj) = metadata.as_object_mut() {
+            let tags = obj
+                .entry("tags")
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(arr) = tags.as_array_mut() {
+                arr.push(serde_json::json!({
+                    "name": crate::deliverability::JOB_ID_TAG,
+                    "value": job.id.to_string(),
+                }));
+            }
         }
     }
 

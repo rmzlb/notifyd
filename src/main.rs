@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod connectors;
 mod db;
+mod deliverability;
 mod middleware;
 mod pii;
 mod sse;
@@ -29,6 +30,9 @@ pub struct AppState {
     pub config: config::Config,
     pub broadcaster: sse::SseBroadcaster,
     pub rate_limiter: middleware::RateLimiter,
+    /// Svix signing secret of the Resend webhook endpoint. None = ingestion
+    /// disabled: /webhooks/resend answers 503 instead of trusting anyone.
+    pub resend_webhook_secret: Option<String>,
     pub started_at: Instant,
 }
 
@@ -86,11 +90,19 @@ async fn main() -> anyhow::Result<()> {
     let broadcaster = sse::SseBroadcaster::new();
     let rate_limiter = middleware::RateLimiter::new();
 
+    let resend_webhook_secret = std::env::var("RESEND_WEBHOOK_SECRET")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    if resend_webhook_secret.is_none() {
+        info!("RESEND_WEBHOOK_SECRET not set — deliverability ingestion disabled");
+    }
+
     let state = Arc::new(AppState {
         pool: pool.clone(),
         config: config.clone(),
         broadcaster: broadcaster.clone(),
         rate_limiter: rate_limiter.clone(),
+        resend_webhook_secret,
         started_at: Instant::now(),
     });
 

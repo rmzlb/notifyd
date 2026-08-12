@@ -16,7 +16,16 @@ use axum::Router;
 use std::sync::Arc;
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new().nest("/v1", api_routes(state))
+    // Provider callbacks live outside /v1: they are not part of the client
+    // API and authenticate with a svix signature, not an API key.
+    let provider = Router::new()
+        .route(
+            "/webhooks/resend",
+            axum::routing::post(crate::deliverability::resend_webhook),
+        )
+        .with_state(state.clone());
+
+    Router::new().nest("/v1", api_routes(state)).merge(provider)
 }
 
 fn api_routes(state: Arc<AppState>) -> Router {
@@ -92,6 +101,15 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route(
             "/templates/:id",
             get(templates::get_template).delete(templates::delete_template),
+        )
+        // Deliverability (suppression list)
+        .route(
+            "/suppressions",
+            get(crate::deliverability::list_suppressions),
+        )
+        .route(
+            "/suppressions/:id",
+            delete(crate::deliverability::release_suppression),
         )
         // Admin
         .route(
