@@ -239,11 +239,20 @@ pub async fn send_notification(
             .as_ref()
             .map(|k| format!("{}-{}", k, channel));
 
-        let job_id: Uuid = sqlx::query_scalar(
+        // Stripe-like idempotency: a key held by a live or succeeded job
+        // returns THAT job untouched — re-POSTing must never re-arm a sent
+        // notification (the old DO UPDATE reset it to 'pending' and the
+        // email went out twice). A failed/cancelled job releases its key
+        // (partial unique index, migration 014), so the retry inserts a
+        // fresh row and the history keeps both.
+        let inserted: Option<Uuid> = sqlx::query_scalar(
             r#"
             INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, idempotency_key)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (project_id, idempotency_key) DO UPDATE SET status=EXCLUDED.status
+            ON CONFLICT (project_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                  AND status NOT IN ('failed', 'cancelled')
+                DO NOTHING
             RETURNING id
             "#,
         )
@@ -255,9 +264,33 @@ pub async fn send_notification(
         .bind(&payload)
         .bind(scheduled_at)
         .bind(idem_key.as_deref())
-        .fetch_one(&state.pool)
+        .fetch_optional(&state.pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+
+        let job_id: Uuid = match inserted {
+            Some(id) => id,
+            None => sqlx::query_scalar(
+                "SELECT id FROM jobs
+                 WHERE project_id = $1 AND idempotency_key = $2
+                   AND status NOT IN ('failed', 'cancelled')
+                 ORDER BY created_at DESC
+                 LIMIT 1",
+            )
+            .bind(&project.id)
+            .bind(idem_key.as_deref())
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?
+            .ok_or_else(|| {
+                // Only reachable if the holder flipped to failed between the
+                // two statements — the caller can simply retry.
+                (
+                    StatusCode::CONFLICT,
+                    Json(json!({"error": "Idempotency key contention, retry the request"})),
+                )
+            })?,
+        };
 
         job_ids.push(job_id);
     }

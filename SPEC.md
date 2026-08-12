@@ -183,9 +183,15 @@ CREATE TABLE jobs (
     idempotency_key TEXT,
     created_at      TIMESTAMPTZ DEFAULT now(),
     sent_at         TIMESTAMPTZ,
-    error           TEXT,
-    UNIQUE (project_id, idempotency_key)
+    error           TEXT
 );
+
+-- The idempotency key only reserves its slot while the job is live or
+-- succeeded — a failed/cancelled job releases it (retry = new row):
+CREATE UNIQUE INDEX jobs_active_idempotency_key
+    ON jobs (project_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL
+      AND status NOT IN ('failed', 'cancelled');
 
 CREATE INDEX idx_jobs_queue ON jobs (scheduled_at)
     WHERE status IN ('pending', 'retry');

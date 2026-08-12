@@ -170,7 +170,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `template` | `string` | ❌ | Use a stored template instead of inline body |
 | `vars` | `object` | ❌ | Template variables |
 | `scheduled_at` | `ISO 8601` | ❌ | Schedule for future delivery (default: now) |
-| `idempotency_key` | `string` | ❌ | Prevents duplicate sends |
+| `idempotency_key` | `string` | ❌ | Dedupes sends: reusing a key held by a live or succeeded job returns that job untouched (no re-send); a `failed`/`cancelled` job releases its key, so retrying after a failure creates a fresh job |
 | `attachments` | `object[]` | ❌ | Email only. `[{ "filename", "content" (base64), "content_type"? }]`. Forces single-send (Resend batch rejects attachments). |
 
 **Response:**
