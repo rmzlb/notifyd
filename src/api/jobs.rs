@@ -9,6 +9,36 @@ use sqlx::Row;
 use std::sync::Arc;
 use uuid::Uuid;
 
+fn email_envelope(channel: &str, recipient: &str, payload: &Value) -> Option<Value> {
+    if channel != "email" {
+        return None;
+    }
+
+    let cc = payload
+        .get("cc")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let reply_to = payload
+        .get("reply_to")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    Some(json!({
+        "to": [recipient],
+        "cc": cc,
+        "reply_to": reply_to,
+    }))
+}
+
 pub async fn get_job(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -83,6 +113,8 @@ pub async fn get_job(
         })
         .collect();
 
+    let envelope = email_envelope(&job.channel, &job.recipient, &job.payload);
+
     Ok(Json(json!({
         "id": job.id,
         "channel": job.channel,
@@ -98,6 +130,7 @@ pub async fn get_job(
         "delivered_at": delivery.0,
         "bounced_at": delivery.1,
         "provider_events": provider_events,
+        "email_envelope": envelope,
         "error": job.error,
     })))
 }
@@ -126,4 +159,45 @@ pub async fn cancel_job(
     }
 
     Ok(Json(json!({"success": true, "id": id})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::email_envelope;
+    use serde_json::json;
+
+    #[test]
+    fn exposes_the_exact_persisted_email_envelope() {
+        let envelope = email_envelope(
+            "email",
+            "supplier@example.com",
+            &json!({
+                "cc": ["buyer@example.com", "orders@example.com"],
+                "reply_to": "orders@example.com"
+            }),
+        )
+        .expect("email envelope");
+
+        assert_eq!(envelope["to"], json!(["supplier@example.com"]));
+        assert_eq!(
+            envelope["cc"],
+            json!(["buyer@example.com", "orders@example.com"])
+        );
+        assert_eq!(envelope["reply_to"], json!("orders@example.com"));
+    }
+
+    #[test]
+    fn legacy_jobs_prove_that_no_copy_was_sent() {
+        let envelope = email_envelope(
+            "email",
+            "supplier@example.com",
+            &json!({"subject": "Legacy order"}),
+        )
+        .expect("email envelope");
+
+        assert_eq!(envelope["to"], json!(["supplier@example.com"]));
+        assert_eq!(envelope["cc"], json!([]));
+        assert!(envelope["reply_to"].is_null());
+        assert!(email_envelope("in_app", "subscriber-1", &json!({})).is_none());
+    }
 }

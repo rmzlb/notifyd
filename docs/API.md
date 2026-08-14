@@ -202,6 +202,11 @@ means the provider accepted the API call; `delivered_at` and the per-recipient
   "sent_at": "2026-08-14T08:16:10Z",
   "delivered_at": "2026-08-14T08:16:14Z",
   "bounced_at": null,
+  "email_envelope": {
+    "to": ["supplier@example.com"],
+    "cc": ["orders@example.com"],
+    "reply_to": "orders@example.com"
+  },
   "provider_events": [
     {
       "provider": "resend",
@@ -214,6 +219,11 @@ means the provider accepted the API call; `delivered_at` and the per-recipient
   ]
 }
 ```
+
+`email_envelope` is the exact recipient envelope persisted before provider
+handoff. It lets clients distinguish a recipient still awaiting an event from
+an address that was never included in the accepted send. It is `null` for
+non-email jobs.
 
 **curl example:**
 
