@@ -153,8 +153,7 @@ pub async fn resend_webhook(
         .unwrap_or_default()
         .to_string();
 
-    let payload: Value =
-        serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let payload: Value = serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
     let event_type = payload
         .get("type")
         .and_then(|v| v.as_str())
@@ -221,7 +220,10 @@ pub async fn resend_webhook(
 
 /// Look up the job a webhook event points at. Events for emails sent before
 /// tagging existed (or sent outside notifyd) have no job — record-only.
-async fn job_context(pool: &PgPool, job_id: Option<Uuid>) -> Option<(Uuid, String, String, Option<String>)> {
+async fn job_context(
+    pool: &PgPool,
+    job_id: Option<Uuid>,
+) -> Option<(Uuid, String, String, Option<String>)> {
     let id = job_id?;
     sqlx::query_as::<_, (Uuid, String, String, Option<String>)>(
         "SELECT id, project_id, recipient, subscriber_id FROM jobs WHERE id = $1",
@@ -233,7 +235,12 @@ async fn job_context(pool: &PgPool, job_id: Option<Uuid>) -> Option<(Uuid, Strin
     .flatten()
 }
 
-async fn handle_bounce(state: &Arc<AppState>, job_id: Option<Uuid>, payload: &Value, svix_id: &str) {
+async fn handle_bounce(
+    state: &Arc<AppState>,
+    job_id: Option<Uuid>,
+    payload: &Value,
+    svix_id: &str,
+) {
     let bounce_type = payload
         .pointer("/data/bounce/type")
         .and_then(|v| v.as_str())
@@ -243,8 +250,7 @@ async fn handle_bounce(state: &Arc<AppState>, job_id: Option<Uuid>, payload: &Va
         .and_then(|v| v.as_str())
         .unwrap_or("bounced");
 
-    let Some((id, project_id, recipient, subscriber_id)) =
-        job_context(&state.pool, job_id).await
+    let Some((id, project_id, recipient, subscriber_id)) = job_context(&state.pool, job_id).await
     else {
         info!("Bounce event without a matching job — recorded only");
         return;
@@ -263,7 +269,19 @@ async fn handle_bounce(state: &Arc<AppState>, job_id: Option<Uuid>, payload: &Va
     // Transient bounces (full mailbox, greylisting) resolve on their own —
     // only a permanent rejection proves the address is dead.
     if bounce_type.eq_ignore_ascii_case("permanent") {
-        suppress(state, &project_id, &recipient, "bounce", message, Some(id), svix_id).await;
+        let impacted = impacted_recipients(payload, &recipient);
+        for address in impacted {
+            suppress(
+                state,
+                &project_id,
+                &address,
+                "bounce",
+                message,
+                Some(id),
+                svix_id,
+            )
+            .await;
+        }
     }
 
     warn!(
@@ -281,8 +299,7 @@ async fn handle_complaint(
     payload: &Value,
     svix_id: &str,
 ) {
-    let Some((id, project_id, recipient, subscriber_id)) =
-        job_context(&state.pool, job_id).await
+    let Some((id, project_id, recipient, subscriber_id)) = job_context(&state.pool, job_id).await
     else {
         info!("Complaint event without a matching job — recorded only");
         return;
@@ -297,7 +314,19 @@ async fn handle_complaint(
         .and_then(|v| v.as_str())
         .map(|s| format!("marked as spam (subject: {})", s))
         .unwrap_or_else(|| "marked as spam".to_string());
-    suppress(state, &project_id, &recipient, "complaint", &detail, Some(id), svix_id).await;
+    let impacted = impacted_recipients(payload, &recipient);
+    for address in impacted {
+        suppress(
+            state,
+            &project_id,
+            &address,
+            "complaint",
+            &detail,
+            Some(id),
+            svix_id,
+        )
+        .await;
+    }
 
     warn!(
         "Job {} complained ({})",
@@ -305,6 +334,25 @@ async fn handle_complaint(
         crate::pii::mask_email(&recipient)
     );
     fire_job_event(state, &project_id, "job.complained", id, subscriber_id);
+}
+
+fn impacted_recipients(payload: &Value, fallback: &str) -> Vec<String> {
+    let mut recipients: Vec<String> = payload
+        .pointer("/data/to")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .map(str::to_string)
+        .collect();
+    recipients.sort_by_key(|address| address.to_ascii_lowercase());
+    recipients.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    if recipients.is_empty() {
+        recipients.push(fallback.to_string());
+    }
+    recipients
 }
 
 /// Insert an active suppression; a concurrent duplicate loses silently
@@ -557,6 +605,11 @@ mod tests {
 
     #[test]
     fn rejects_missing_headers() {
-        assert!(!verify_svix(SECRET, &HeaderMap::new(), b"{}", 1_700_000_000));
+        assert!(!verify_svix(
+            SECRET,
+            &HeaderMap::new(),
+            b"{}",
+            1_700_000_000
+        ));
     }
 }

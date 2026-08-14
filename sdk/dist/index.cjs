@@ -131,7 +131,7 @@ function createNotifydClient(config) {
     throw new Error("notifyd fetch implementation is not available");
   }
   async function request(path, options = {}) {
-    const authHeaders = options.auth === "apiKey" ? { "X-Api-Key": assertApiKey(config.apiKey) } : assertInboxAuth(config.apiKey, config.subscriberToken);
+    const authHeaders = options.auth === "none" ? {} : options.auth === "apiKey" ? { "X-Api-Key": assertApiKey(config.apiKey) } : assertInboxAuth(config.apiKey, config.subscriberToken);
     const res = await fetchImpl(`${baseUrl}${path}${buildQuery(options.query)}`, {
       method: options.method ?? "GET",
       headers: {
@@ -166,7 +166,9 @@ function createNotifydClient(config) {
             filename: a.filename,
             content: a.content,
             content_type: a.contentType
-          }))
+          })),
+          cc: input.cc,
+          reply_to: input.replyTo
         }
       });
       return {
@@ -254,6 +256,50 @@ function createNotifydClient(config) {
         expiresAt: response.expires_at,
         ttlHours: response.ttl_hours
       };
+    },
+    async getVapidPublicKey(project) {
+      const response = await request("/v1/push/vapid-public-key", {
+        auth: "none",
+        query: { project }
+      });
+      return response.public_key;
+    },
+    async registerPushSubscription(input) {
+      return request("/v1/push-tokens", {
+        method: "POST",
+        auth: "apiKey",
+        body: {
+          subscriber_id: input.subscriberId,
+          endpoint: input.endpoint,
+          keys: input.keys,
+          expiration_time: input.expirationTime,
+          platform: input.platform ?? "web",
+          device_name: input.deviceName,
+          user_agent: input.userAgent
+        }
+      });
+    },
+    async listPushTokens(subscriberId) {
+      const response = await request(`/v1/push-tokens/subscriber/${encodeURIComponent(subscriberId)}`, {
+        auth: "apiKey"
+      });
+      return {
+        tokens: response.tokens.map((token) => ({
+          id: token.id,
+          token: token.token,
+          platform: token.platform,
+          deviceName: token.device_name,
+          endpoint: token.endpoint,
+          expirationTime: token.expiration_time,
+          userAgent: token.user_agent
+        }))
+      };
+    },
+    async deletePushToken(id) {
+      return request(`/v1/push-tokens/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        auth: "apiKey"
+      });
     },
     async getInbox(subscriberId, query) {
       const response = await request(`/v1/inbox/${encodeURIComponent(subscriberId)}`, {

@@ -148,6 +148,8 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
   "channels": ["email", "in_app"],
   "subscriber_id": "user-uuid",
   "to": "user@example.com",
+  "cc": ["orders@example.com"],
+  "reply_to": "buyer@example.com",
   "subject": "Your order shipped",
   "body": "Hey {{first_name}}, order #{{order_id}} is on its way!",
   "vars": {
@@ -172,6 +174,8 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `scheduled_at` | `ISO 8601` | ❌ | Schedule for future delivery (default: now) |
 | `idempotency_key` | `string` | ❌ | Dedupes sends: reusing a key held by a live or succeeded job returns that job untouched (no re-send); a `failed`/`cancelled` job releases its key, so retrying after a failure creates a fresh job |
 | `attachments` | `object[]` | ❌ | Email only. `[{ "filename", "content" (base64), "content_type"? }]`. Forces single-send (Resend batch rejects attachments). |
+| `cc` | `string[]` | ❌ | Email only. Up to 10 carbon-copy recipients; duplicates are removed. |
+| `reply_to` | `string` | ❌ | Email only. Address that receives replies. |
 
 **Response:**
 
@@ -181,6 +185,32 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
   "jobs": [
     {"id": "uuid", "channel": "email", "status": "pending"},
     {"id": "uuid", "channel": "in_app", "status": "pending"}
+  ]
+}
+```
+
+### GET /v1/jobs/:id
+
+Returns both the transport state and the provider evidence. `status: "sent"`
+means the provider accepted the API call; `delivered_at` and the per-recipient
+`provider_events` are the proof of what happened afterwards.
+
+```json
+{
+  "id": "uuid",
+  "status": "sent",
+  "sent_at": "2026-08-14T08:16:10Z",
+  "delivered_at": "2026-08-14T08:16:14Z",
+  "bounced_at": null,
+  "provider_events": [
+    {
+      "provider": "resend",
+      "type": "email.delivered",
+      "occurred_at": "2026-08-14T08:16:14Z",
+      "provider_message_id": "provider-email-id",
+      "recipients": ["user@example.com"],
+      "error": null
+    }
   ]
 }
 ```

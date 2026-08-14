@@ -36,6 +36,10 @@ export interface SendNotificationInput {
   url?: string;
   /** Email attachments (email channel only). */
   attachments?: NotifydAttachment[];
+  /** Carbon-copy recipients (email channel only, maximum 10). */
+  cc?: string[];
+  /** Address that receives replies (email channel only). */
+  replyTo?: string;
 }
 
 export interface SendNotificationResponse {
@@ -397,6 +401,8 @@ export function createNotifydClient(config: NotifydClientConfig) {
             content: a.content,
             content_type: a.contentType,
           })),
+          cc: input.cc,
+          reply_to: input.replyTo,
         },
       });
 

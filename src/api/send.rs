@@ -7,6 +7,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -133,6 +134,11 @@ pub struct SendRequest {
     /// single-send path. Format:
     /// `[ {"filename": "facture.pdf", "content": "<base64>", "content_type": "application/pdf"} ]`.
     pub attachments: Option<Value>,
+    /// Carbon-copy recipients for email deliveries. These are part of the
+    /// durable job payload so retries preserve the exact envelope.
+    pub cc: Option<Vec<String>>,
+    /// Address that receives replies to the email.
+    pub reply_to: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -188,6 +194,19 @@ pub async fn send_notification(
             )
         })?;
 
+    let (cc, reply_to) = validate_email_envelope(
+        &channels,
+        &recipient,
+        req.cc.as_deref(),
+        req.reply_to.as_deref(),
+    )
+    .map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
+
     let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
 
     let mut payload = json!({
@@ -219,6 +238,18 @@ pub async fn send_notification(
     if let Some(attachments) = &req.attachments {
         if let Some(p) = payload.as_object_mut() {
             p.insert("attachments".to_string(), attachments.clone());
+        }
+    }
+
+    if !cc.is_empty() {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("cc".to_string(), json!(cc));
+        }
+    }
+
+    if let Some(reply_to) = reply_to {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("reply_to".to_string(), json!(reply_to));
         }
     }
 
@@ -281,7 +312,12 @@ pub async fn send_notification(
             .bind(idem_key.as_deref())
             .fetch_optional(&state.pool)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?
+            .map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, {
+                    tracing::error!("DB error: {}", e);
+                    Json(json!({"error": "Internal server error"}))
+                })
+            })?
             .ok_or_else(|| {
                 // Only reachable if the holder flipped to failed between the
                 // two statements — the caller can simply retry.
@@ -301,6 +337,105 @@ pub async fn send_notification(
         "scheduled_at": scheduled_at,
         "channels": channels,
     })))
+}
+
+fn looks_like_email(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.len() <= 254
+        && !trimmed.contains(char::is_whitespace)
+        && trimmed
+            .split_once('@')
+            .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
+}
+
+fn validate_email_envelope(
+    channels: &[String],
+    recipient: &str,
+    cc: Option<&[String]>,
+    reply_to: Option<&str>,
+) -> Result<(Vec<String>, Option<String>), String> {
+    const MAX_CC_RECIPIENTS: usize = 10;
+
+    let has_email = channels.iter().any(|channel| channel == "email");
+    if !has_email && (cc.is_some() || reply_to.is_some()) {
+        return Err("cc and reply_to can only be used with the email channel".to_string());
+    }
+
+    let mut seen = HashSet::new();
+    seen.insert(recipient.trim().to_ascii_lowercase());
+    let mut normalized_cc = Vec::new();
+    for address in cc.unwrap_or_default() {
+        let address = address.trim();
+        if !looks_like_email(address) {
+            return Err(format!("Invalid CC email address: {address}"));
+        }
+        if seen.insert(address.to_ascii_lowercase()) {
+            normalized_cc.push(address.to_string());
+        }
+    }
+    if normalized_cc.len() > MAX_CC_RECIPIENTS {
+        return Err(format!(
+            "An email cannot contain more than {MAX_CC_RECIPIENTS} CC recipients"
+        ));
+    }
+
+    let normalized_reply_to = reply_to
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .map(|address| {
+            if looks_like_email(address) {
+                Ok(address.to_string())
+            } else {
+                Err(format!("Invalid reply_to email address: {address}"))
+            }
+        })
+        .transpose()?;
+
+    Ok((normalized_cc, normalized_reply_to))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_email_envelope;
+
+    #[test]
+    fn email_envelope_is_normalized_without_duplicate_primary_recipient() {
+        let channels = vec!["email".to_string()];
+        let cc = vec![
+            " Buyer@example.com ".to_string(),
+            "supplier@example.com".to_string(),
+            "buyer@example.com".to_string(),
+        ];
+
+        let (cc, reply_to) = validate_email_envelope(
+            &channels,
+            "SUPPLIER@example.com",
+            Some(&cc),
+            Some(" orders@example.com "),
+        )
+        .expect("valid envelope");
+
+        assert_eq!(cc, vec!["Buyer@example.com"]);
+        assert_eq!(reply_to.as_deref(), Some("orders@example.com"));
+    }
+
+    #[test]
+    fn email_only_fields_fail_closed_on_invalid_input() {
+        assert!(validate_email_envelope(
+            &["in_app".to_string()],
+            "subscriber-1",
+            Some(&["buyer@example.com".to_string()]),
+            None,
+        )
+        .is_err());
+        assert!(validate_email_envelope(
+            &["email".to_string()],
+            "supplier@example.com",
+            Some(&["invalid".to_string()]),
+            None,
+        )
+        .is_err());
+    }
 }
 
 pub async fn batch_notification(

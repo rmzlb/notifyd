@@ -33,6 +33,10 @@ interface SendNotificationInput {
     url?: string;
     /** Email attachments (email channel only). */
     attachments?: NotifydAttachment[];
+    /** Carbon-copy recipients (email channel only, maximum 10). */
+    cc?: string[];
+    /** Address that receives replies (email channel only). */
+    replyTo?: string;
 }
 interface SendNotificationResponse {
     success: boolean;
@@ -125,6 +129,33 @@ interface StreamTicketResponse {
     ticket: string;
     expiresInSeconds: number;
 }
+interface VapidPublicKeyResponse {
+    publicKey: string;
+}
+interface WebPushSubscriptionInput {
+    subscriberId: string;
+    endpoint: string;
+    keys: {
+        p256dh: string;
+        auth: string;
+    };
+    expirationTime?: string | null;
+    platform?: string;
+    deviceName?: string;
+    userAgent?: string;
+}
+interface PushToken {
+    id: string;
+    token: string;
+    platform: string;
+    deviceName?: string;
+    endpoint?: string;
+    expirationTime?: string;
+    userAgent?: string;
+}
+interface PushTokensResponse {
+    tokens: PushToken[];
+}
 interface NotifydErrorDetails {
     error?: string;
     [key: string]: unknown;
@@ -172,6 +203,14 @@ declare function createNotifydClient(config: NotifydClientConfig): {
         success: boolean;
     }>;
     createSubscriberToken(input: SubscriberTokenInput): Promise<SubscriberTokenResponse>;
+    getVapidPublicKey(project?: string): Promise<string>;
+    registerPushSubscription(input: WebPushSubscriptionInput): Promise<{
+        success: boolean;
+    }>;
+    listPushTokens(subscriberId: string): Promise<PushTokensResponse>;
+    deletePushToken(id: string): Promise<{
+        success: boolean;
+    }>;
     getInbox(subscriberId: string, query?: InboxQuery): Promise<InboxResponse>;
     getUnreadCount(subscriberId: string): Promise<number>;
     updateInboxMessage(subscriberId: string, messageId: string, input: UpdateInboxMessageInput): Promise<UpdateInboxMessageResponse>;
@@ -181,4 +220,4 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     openInboxStream(subscriberId: string, options?: OpenInboxStreamOptions): Promise<OpenInboxStreamResult>;
 };
 
-export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type OpenInboxStreamOptions, type OpenInboxStreamResult, type SendNotificationInput, type SendNotificationResponse, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, createNotifydClient };
+export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type OpenInboxStreamOptions, type OpenInboxStreamResult, type PushToken, type PushTokensResponse, type SendNotificationInput, type SendNotificationResponse, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, createNotifydClient };

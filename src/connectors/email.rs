@@ -83,6 +83,28 @@ impl ResendConnector {
             }
         }
 
+        if let Some(cc) = req.metadata.get("cc").and_then(Value::as_array) {
+            let recipients: Vec<Value> = cc
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|address| !address.trim().is_empty())
+                .map(|address| json!(address))
+                .collect();
+            if !recipients.is_empty() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("cc".to_string(), Value::Array(recipients));
+                }
+            }
+        }
+
+        if let Some(reply_to) = req.metadata.get("reply_to").and_then(Value::as_str) {
+            if !reply_to.trim().is_empty() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("reply_to".to_string(), json!(reply_to));
+                }
+            }
+        }
+
         // Forward email attachments to Resend's `/emails` endpoint.
         // Resend expects: [{ "filename": "...", "content": "<base64>" }]
         // (content_type is optional and inferred from the filename).
@@ -288,6 +310,28 @@ impl Connector for AgentMailConnector {
             }
         }
 
+        if let Some(cc) = req.metadata.get("cc").and_then(Value::as_array) {
+            let recipients: Vec<Value> = cc
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|address| !address.trim().is_empty())
+                .map(|address| json!(address))
+                .collect();
+            if !recipients.is_empty() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("cc".to_string(), Value::Array(recipients));
+                }
+            }
+        }
+
+        if let Some(reply_to) = req.metadata.get("reply_to").and_then(Value::as_str) {
+            if !reply_to.trim().is_empty() {
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("reply_to".to_string(), json!(reply_to));
+                }
+            }
+        }
+
         let res = self
             .client
             .post(&url)
@@ -308,5 +352,41 @@ impl Connector for AgentMailConnector {
             error!("AgentMail error {}: {}", status, text);
             Err(anyhow!("AgentMail error {}: {}", status, text))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResendConnector;
+    use crate::{config::EmailConfig, connectors::SendRequest};
+    use serde_json::json;
+
+    #[test]
+    fn resend_payload_preserves_cc_and_reply_to() {
+        let connector = ResendConnector::new(EmailConfig {
+            provider: "resend".to_string(),
+            api_key: "test".to_string(),
+            from: "sender@example.com".to_string(),
+            from_name: Some("Sender".to_string()),
+        });
+        let request = SendRequest {
+            recipient: "supplier@example.com".to_string(),
+            subject: Some("Purchase order".to_string()),
+            body: "Body".to_string(),
+            body_html: Some("<p>Body</p>".to_string()),
+            from_email: None,
+            from_name: None,
+            metadata: json!({
+                "cc": ["buyer@example.com", "orders@example.com"],
+                "reply_to": "reply@example.com"
+            }),
+        };
+
+        let body = connector.build_email_body(&request);
+        assert_eq!(
+            body.get("cc"),
+            Some(&json!(["buyer@example.com", "orders@example.com"]))
+        );
+        assert_eq!(body.get("reply_to"), Some(&json!("reply@example.com")));
     }
 }
