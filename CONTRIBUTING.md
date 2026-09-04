@@ -163,17 +163,21 @@ We maintain three layers of documentation:
 | `docs/llms.txt` | AI agents | Full reference in plain text (LLM-friendly) |
 | `docs/SETUP.md` | Contributors | Local dev setup, config options |
 | `docs/ARCHITECTURE.md` | Contributors | Design decisions, internals |
+| `docs/DEPLOYMENTS.md` | Operators | One instance per company, inventory, creation runbook, safety rules |
 
 When changing the API, update **all three**: API.md, llms.txt, and README if relevant.
 
 ## Release Process
 
-Releases are cut from `main`. Version follows semver in `Cargo.toml`.
+There is no CI and no registry: **every push to `main` is a production
+deployment** of every notifyd instance (Dokploy rebuilds each of them from
+this repository, see `docs/DEPLOYMENTS.md`). Therefore:
 
-1. Update version in `Cargo.toml`
-2. Update CHANGELOG.md
-3. Tag: `git tag v0.2.0 && git push --tags`
-4. Docker image builds automatically
+1. Run `cargo check`, `cargo test` and `docker build .` locally before pushing.
+2. Migrations are additive only (all instances migrate at boot on the same push).
+3. Bump the version in `Cargo.toml` when the API contract changes; `/v1/health`
+   also exposes `commit` and `built_at_epoch` for every instance.
+4. Accumulate a complete change and push `main` once.
 
 ## Questions?
 

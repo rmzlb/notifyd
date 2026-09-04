@@ -14,6 +14,9 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
         "status": if db_ok { "ok" } else { "degraded" },
         "db": if db_ok { "ok" } else { "error" },
         "version": env!("CARGO_PKG_VERSION"),
+        "commit": env!("NOTIFYD_GIT_COMMIT"),
+        "built_at_epoch": env!("NOTIFYD_BUILD_EPOCH").parse::<u64>().unwrap_or(0),
+        "uptime_seconds": state.started_at.elapsed().as_secs(),
     }))
 }
 

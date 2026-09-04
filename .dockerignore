@@ -1,0 +1,13 @@
+# Contexte de build minimal. `.git` est volontairement conservé : build.rs y
+# lit le commit affiché par /v1/health.
+target/
+.env
+.env.*
+notifyd.toml
+docs/
+*.md
+!README.md
+.github/
+.vscode/
+.idea/
+node_modules/
