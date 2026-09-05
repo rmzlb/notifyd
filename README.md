@@ -167,7 +167,7 @@ cargo run
 
 ```bash
 curl http://localhost:3400/v1/health
-# → {"status":"ok","db":"ok","version":"0.1.0"}
+# → {"status":"ok","db":"ok","version":"0.2.0"}
 ```
 
 → Full setup: [docs/SETUP.md](docs/SETUP.md)
