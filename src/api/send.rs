@@ -139,7 +139,67 @@ pub struct SendRequest {
     pub cc: Option<Vec<String>>,
     /// Address that receives replies to the email.
     pub reply_to: Option<String>,
+    /// Queue priority: `"critical"` (10), `"high"` (30), `"normal"` (50,
+    /// default), `"low"` (70), `"bulk"` (80) or a number 0–100. Lower goes
+    /// first. Transactional traffic keeps the default; marketing uses `bulk`.
+    pub priority: Option<Value>,
 }
+
+/// Resolve the `priority` request field to the 0–100 column value.
+pub fn resolve_priority(value: Option<&Value>, default: i16) -> Result<i16, String> {
+    match value {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .filter(|p| (0..=100).contains(p))
+            .map(|p| p as i16)
+            .ok_or_else(|| "priority must be an integer between 0 and 100".to_string()),
+        Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+            "critical" => Ok(PRIORITY_CRITICAL),
+            "high" => Ok(PRIORITY_HIGH),
+            "normal" => Ok(PRIORITY_NORMAL),
+            "low" => Ok(PRIORITY_LOW),
+            "bulk" => Ok(PRIORITY_BULK),
+            other => other
+                .parse::<i64>()
+                .ok()
+                .filter(|p| (0..=100).contains(p))
+                .map(|p| p as i16)
+                .ok_or_else(|| {
+                    "priority must be critical, high, normal, low, bulk or 0–100".to_string()
+                }),
+        },
+        Some(_) => Err("priority must be a string or a number".to_string()),
+    }
+}
+
+/// Marketing traffic identified by its provider tag defaults to `bulk`, so
+/// clients that already tag campaigns get the priority lane for free.
+pub fn default_priority_from_tags(tags: Option<&Value>) -> i16 {
+    let is_marketing = tags
+        .and_then(Value::as_array)
+        .map(|items| {
+            items.iter().any(|tag| {
+                tag.get("name").and_then(Value::as_str) == Some("category")
+                    && matches!(
+                        tag.get("value").and_then(Value::as_str),
+                        Some("campaign") | Some("marketing") | Some("newsletter") | Some("bulk")
+                    )
+            })
+        })
+        .unwrap_or(false);
+    if is_marketing {
+        PRIORITY_BULK
+    } else {
+        PRIORITY_NORMAL
+    }
+}
+
+pub const PRIORITY_CRITICAL: i16 = 10;
+pub const PRIORITY_HIGH: i16 = 30;
+pub const PRIORITY_NORMAL: i16 = 50;
+pub const PRIORITY_LOW: i16 = 70;
+pub const PRIORITY_BULK: i16 = 80;
 
 #[derive(Debug, Deserialize)]
 pub struct BatchRequest {
@@ -154,6 +214,9 @@ pub struct BatchRequest {
     pub scheduled_at: Option<DateTime<Utc>>,
     pub icon: Option<String>,
     pub url: Option<String>,
+    /// Same values as on `/v1/send`. A fan-out is marketing by default:
+    /// `bulk` (80) unless the caller says otherwise.
+    pub priority: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -208,6 +271,16 @@ pub async fn send_notification(
     })?;
 
     let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
+    let priority = resolve_priority(
+        req.priority.as_ref(),
+        default_priority_from_tags(req.tags.as_ref()),
+    )
+    .map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
 
     let mut payload = json!({
         "subject": req.subject,
@@ -278,8 +351,8 @@ pub async fn send_notification(
         // fresh row and the history keeps both.
         let inserted: Option<Uuid> = sqlx::query_scalar(
             r#"
-            INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, idempotency_key)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, idempotency_key, priority, max_attempts)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (project_id, idempotency_key)
                 WHERE idempotency_key IS NOT NULL
                   AND status NOT IN ('failed', 'cancelled')
@@ -295,6 +368,8 @@ pub async fn send_notification(
         .bind(&payload)
         .bind(scheduled_at)
         .bind(idem_key.as_deref())
+        .bind(priority)
+        .bind(state.config.worker.max_attempts)
         .fetch_optional(&state.pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
@@ -395,6 +470,32 @@ fn validate_email_envelope(
 }
 
 #[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    #[test]
+    fn named_and_numeric_priorities() {
+        assert_eq!(resolve_priority(Some(&json!("critical")), 50).unwrap(), 10);
+        assert_eq!(resolve_priority(Some(&json!("BULK")), 50).unwrap(), 80);
+        assert_eq!(resolve_priority(Some(&json!(42)), 50).unwrap(), 42);
+        assert_eq!(resolve_priority(Some(&json!("7")), 50).unwrap(), 7);
+        assert_eq!(resolve_priority(None, 80).unwrap(), 80);
+        assert!(resolve_priority(Some(&json!(101)), 50).is_err());
+        assert!(resolve_priority(Some(&json!("urgentissime")), 50).is_err());
+        assert!(resolve_priority(Some(&json!(true)), 50).is_err());
+    }
+
+    #[test]
+    fn campaign_tag_defaults_to_bulk() {
+        let tags = json!([{"name": "category", "value": "campaign"}]);
+        assert_eq!(default_priority_from_tags(Some(&tags)), PRIORITY_BULK);
+        let tags = json!([{"name": "category", "value": "transactional"}]);
+        assert_eq!(default_priority_from_tags(Some(&tags)), PRIORITY_NORMAL);
+        assert_eq!(default_priority_from_tags(None), PRIORITY_NORMAL);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::validate_email_envelope;
 
@@ -463,6 +564,12 @@ pub async fn batch_notification(
     });
 
     let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
+    let priority = resolve_priority(req.priority.as_ref(), PRIORITY_BULK).map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
 
     let payload = json!({
         "subject": req.subject,
@@ -477,7 +584,7 @@ pub async fn batch_notification(
     for subscriber_id in &req.subscribers {
         for channel in &channels {
             sqlx::query(
-                "INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+                "INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
             )
             .bind(&project.id)
             .bind(channel)
@@ -486,6 +593,8 @@ pub async fn batch_notification(
             .bind(req.template.as_deref())
             .bind(&payload)
             .bind(scheduled_at)
+            .bind(priority)
+            .bind(state.config.worker.max_attempts)
             .execute(&state.pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;

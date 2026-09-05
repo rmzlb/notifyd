@@ -20,7 +20,16 @@ pub struct Job {
     pub created_at: Option<DateTime<Utc>>,
     pub sent_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
+    /// 0 = most urgent … 100 = bulk. Transactional defaults to 50, `/v1/batch`
+    /// fan-outs to 80, so a campaign never delays an order confirmation.
+    pub priority: i16,
+    /// Provider that accepted the message and its own message id.
+    pub provider: Option<String>,
+    pub provider_message_id: Option<String>,
 }
+
+/// Column list shared by every `SELECT … FROM jobs` that loads a [`Job`].
+pub const JOB_COLUMNS: &str = "id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error, priority, provider, provider_message_id";
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct InboxMessage {

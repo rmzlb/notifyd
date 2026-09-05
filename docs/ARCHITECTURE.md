@@ -51,10 +51,16 @@ Redis + BullMQ is the standard for job queues. But for a notification service do
 SELECT * FROM jobs
 WHERE status IN ('pending', 'retry')
   AND scheduled_at <= now()
-ORDER BY scheduled_at ASC
+  AND NOT (channel = ANY($paused_lanes))   -- lanes a provider asked us to pause (429)
+ORDER BY priority ASC, scheduled_at ASC    -- 10 critical … 50 normal … 80 bulk
 LIMIT 50
 FOR UPDATE SKIP LOCKED
 ```
+
+Before every provider request the worker takes a token from the channel's
+bucket (`EMAIL_RATE_PER_SEC`…, one token per call, a batch call counts once).
+A `429` pauses the lane for `Retry-After` and re-queues the job without
+consuming an attempt; the other lanes keep flowing.
 
 This gives us:
 - **At-most-once processing** per poll cycle
@@ -64,15 +70,28 @@ This gives us:
 
 ### Retry Strategy
 
-Failed jobs get exponential backoff:
+Every connector answers with a `Delivery` or a typed `ProviderError`
+(`RateLimited`, `Transient`, `Permanent`, `Suppressed`); the kind decides:
+
+| Kind | What the worker does |
+|---|---|
+| accepted | `sent`, `provider` + `provider_message_id` stored on the job |
+| `RateLimited` (429) | `retry` without consuming an attempt; lane paused for `Retry-After` (default 2 s) |
+| `Transient` (5xx, timeout, network, SMTP 4xx) | backoff below |
+| `Permanent` (other 4xx, invalid recipient, unverified sender, SMTP 5xx, integrity violation) | `failed` at once |
+| `Suppressed` (bounce/complaint list) | `failed` at once, provider never contacted |
+
+Transient backoff, ±20 % jitter:
 
 | Attempt | Delay | Total elapsed |
 |---------|-------|---------------|
 | 1 | 30 seconds | 30s |
 | 2 | 2 minutes | 2m 30s |
 | 3 | 10 minutes | 12m 30s |
+| 4 | 30 minutes | 42m 30s |
+| 5 | 2 hours | 2h 42m |
 
-After `max_attempts` (default 3), the job moves to `failed` status. Check via `GET /v1/jobs/:id`.
+After `max_attempts` (default 5), the job moves to `failed` status. Check via `GET /v1/jobs/:id`.
 
 ### Job Lifecycle
 
@@ -125,10 +144,11 @@ Notifications are inherently one-way: server pushes to client. SSE is the simple
 
 1. Client connects: `GET /v1/inbox/:sub_id/stream?token=xxx`
 2. `SseBroadcaster` creates a `tokio::sync::broadcast` channel for this subscriber
-3. When a notification is sent to this subscriber, the in-app connector calls `broadcaster.send()`
-4. All connected clients receive the event instantly
+3. When a notification is sent to this subscriber, the in-app connector calls `broadcaster.send()`, which publishes the event with Postgres `NOTIFY notifyd_sse`
+4. Every replica runs a `LISTEN` task and delivers the event to the browsers connected to it — the tab may be attached to any replica
 
 **Cleanup**: channels with no receivers are cleaned up periodically (every 2 minutes).
+**Replicas**: nothing about a connection lives in one process only (events go through `NOTIFY`, tickets through the `sse_tickets` table), so the service scales horizontally.
 
 ### SSE Auth: One-Time Tickets
 

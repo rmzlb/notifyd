@@ -36,6 +36,10 @@ pub struct WorkerConfig {
     pub batch_size: i64,
     #[serde(default = "default_max_attempts")]
     pub max_attempts: i32,
+    /// Outbound pacing per channel, in provider requests per second. A batch
+    /// call counts as one request. Zero disables pacing for that channel.
+    #[serde(default)]
+    pub pacing: PacingConfig,
 }
 
 fn default_poll_interval() -> u64 {
@@ -44,8 +48,52 @@ fn default_poll_interval() -> u64 {
 fn default_batch_size() -> i64 {
     50
 }
+/// Five attempts with the worker's backoff (30 s, 2 min, 10 min, 30 min)
+/// covers a provider incident of about 45 minutes without losing a job.
 fn default_max_attempts() -> i32 {
-    3
+    5
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PacingConfig {
+    /// Resend allows 10 requests/s per team; 8 leaves room for the
+    /// application's own direct calls (webhook provisioning, audiences).
+    #[serde(default = "default_email_per_sec")]
+    pub email_per_sec: f64,
+    #[serde(default = "default_sms_per_sec")]
+    pub sms_per_sec: f64,
+    #[serde(default = "default_sms_per_sec")]
+    pub whatsapp_per_sec: f64,
+    #[serde(default = "default_push_per_sec")]
+    pub push_per_sec: f64,
+    /// Lane pause after a 429 without `Retry-After`, in seconds.
+    #[serde(default = "default_rate_limit_pause_secs")]
+    pub rate_limit_pause_secs: u64,
+}
+
+impl Default for PacingConfig {
+    fn default() -> Self {
+        Self {
+            email_per_sec: default_email_per_sec(),
+            sms_per_sec: default_sms_per_sec(),
+            whatsapp_per_sec: default_sms_per_sec(),
+            push_per_sec: default_push_per_sec(),
+            rate_limit_pause_secs: default_rate_limit_pause_secs(),
+        }
+    }
+}
+
+fn default_email_per_sec() -> f64 {
+    8.0
+}
+fn default_sms_per_sec() -> f64 {
+    10.0
+}
+fn default_push_per_sec() -> f64 {
+    50.0
+}
+fn default_rate_limit_pause_secs() -> u64 {
+    2
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,12 +105,47 @@ pub struct ConnectorsConfig {
     pub push: Option<PushConfig>,
 }
 
+/// Email provider. `provider` selects the connector:
+/// - `resend`     : `api_key` = Resend key
+/// - `agentmail`  : `api_key` = AgentMail token, `from` = inbox address
+/// - `cloudflare` : `api_key` = Cloudflare API token with Email Sending
+///                  permission, `account_id` = Cloudflare account
+/// - `smtp`       : `smtp` block (any SMTP submission service)
+/// - `log`        : nothing is sent; every message is logged as accepted.
+///                  For development and previews only.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EmailConfig {
-    pub provider: String, // "resend"
+    pub provider: String,
+    #[serde(default)]
     pub api_key: String,
     pub from: String,
     pub from_name: Option<String>,
+    #[serde(default)]
+    pub account_id: Option<String>,
+    #[serde(default)]
+    pub smtp: Option<SmtpConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SmtpConfig {
+    pub host: String,
+    #[serde(default = "default_smtp_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    /// `starttls` (port 587, default), `tls` (implicit TLS, port 465) or
+    /// `none` (plain text, local relays only).
+    #[serde(default = "default_smtp_security")]
+    pub security: String,
+}
+
+fn default_smtp_port() -> u16 {
+    587
+}
+fn default_smtp_security() -> String {
+    "starttls".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +161,35 @@ pub struct SmsConfig {
     pub from: String,
 }
 
+impl SmsConfig {
+    /// `SMS_PROVIDER=telnyx` with `TELNYX_API_KEY` (+ optional
+    /// `TELNYX_MESSAGING_PROFILE_ID`), or `SMS_PROVIDER=twilio` with
+    /// `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`. Both need `SMS_FROM`.
+    pub fn from_env() -> Option<Self> {
+        let provider = env_non_empty("SMS_PROVIDER")?;
+        let from = env_non_empty("SMS_FROM")?;
+        match provider.as_str() {
+            "telnyx" => Some(Self {
+                provider,
+                account_sid: None,
+                auth_token: None,
+                api_key: Some(env_non_empty("TELNYX_API_KEY")?),
+                messaging_profile_id: env_non_empty("TELNYX_MESSAGING_PROFILE_ID"),
+                from,
+            }),
+            "twilio" => Some(Self {
+                provider,
+                account_sid: Some(env_non_empty("TWILIO_ACCOUNT_SID")?),
+                auth_token: Some(env_non_empty("TWILIO_AUTH_TOKEN")?),
+                api_key: None,
+                messaging_profile_id: None,
+                from,
+            }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WhatsappConfig {
     pub provider: String, // "telnyx"
@@ -88,17 +200,13 @@ pub struct WhatsappConfig {
 
 impl WhatsappConfig {
     pub fn from_env() -> Option<Self> {
-        let api_key = std::env::var("TELNYX_WHATSAPP_API_KEY")
-            .ok()
-            .or_else(|| std::env::var("TELNYX_API_KEY").ok())?;
-        let from = std::env::var("WHATSAPP_FROM").ok()?;
-        if api_key.trim().is_empty() || from.trim().is_empty() {
-            return None;
-        }
+        let api_key =
+            env_non_empty("TELNYX_WHATSAPP_API_KEY").or_else(|| env_non_empty("TELNYX_API_KEY"))?;
+        let from = env_non_empty("WHATSAPP_FROM")?;
         Some(Self {
             provider: "telnyx".to_string(),
             api_key: Some(api_key),
-            messaging_profile_id: std::env::var("TELNYX_MESSAGING_PROFILE_ID").ok(),
+            messaging_profile_id: env_non_empty("TELNYX_MESSAGING_PROFILE_ID"),
             from,
         })
     }
@@ -169,6 +277,98 @@ pub struct ProjectConfig {
     pub from_name: Option<String>,
 }
 
+fn env_non_empty(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_parse<T: std::str::FromStr>(name: &str, default: T) -> T {
+    env_non_empty(name)
+        .and_then(|value| value.parse::<T>().ok())
+        .unwrap_or(default)
+}
+
+impl EmailConfig {
+    /// `EMAIL_PROVIDER` selects the connector. When unset, `RESEND_API_KEY`
+    /// alone still means Resend, so existing deployments keep working.
+    pub fn from_env() -> anyhow::Result<Option<Self>> {
+        let from =
+            env_non_empty("EMAIL_FROM").unwrap_or_else(|| "notifications@example.com".to_string());
+        let from_name = env_non_empty("EMAIL_FROM_NAME");
+        let provider = match env_non_empty("EMAIL_PROVIDER") {
+            Some(p) => p,
+            None => {
+                if env_non_empty("RESEND_API_KEY").is_some() {
+                    "resend".to_string()
+                } else {
+                    return Ok(None);
+                }
+            }
+        };
+        let config = match provider.as_str() {
+            "resend" => Self {
+                provider,
+                api_key: required("RESEND_API_KEY", "EMAIL_PROVIDER=resend")?,
+                from,
+                from_name,
+                account_id: None,
+                smtp: None,
+            },
+            "agentmail" => Self {
+                provider,
+                api_key: required("AGENTMAIL_API_KEY", "EMAIL_PROVIDER=agentmail")?,
+                from,
+                from_name,
+                account_id: None,
+                smtp: None,
+            },
+            "cloudflare" => Self {
+                provider,
+                api_key: required("CLOUDFLARE_EMAIL_API_TOKEN", "EMAIL_PROVIDER=cloudflare")?,
+                from,
+                from_name,
+                account_id: Some(required(
+                    "CLOUDFLARE_ACCOUNT_ID",
+                    "EMAIL_PROVIDER=cloudflare",
+                )?),
+                smtp: None,
+            },
+            "smtp" => Self {
+                provider,
+                api_key: String::new(),
+                from,
+                from_name,
+                account_id: None,
+                smtp: Some(SmtpConfig {
+                    host: required("SMTP_HOST", "EMAIL_PROVIDER=smtp")?,
+                    port: env_parse("SMTP_PORT", default_smtp_port()),
+                    username: env_non_empty("SMTP_USERNAME"),
+                    password: env_non_empty("SMTP_PASSWORD"),
+                    security: env_non_empty("SMTP_SECURITY").unwrap_or_else(default_smtp_security),
+                }),
+            },
+            "log" => Self {
+                provider,
+                api_key: String::new(),
+                from,
+                from_name,
+                account_id: None,
+                smtp: None,
+            },
+            other => anyhow::bail!(
+                "EMAIL_PROVIDER={other} is not supported (resend, agentmail, cloudflare, smtp, log)"
+            ),
+        };
+        Ok(Some(config))
+    }
+}
+
+fn required(name: &str, context: &str) -> anyhow::Result<String> {
+    env_non_empty(name).ok_or_else(|| anyhow::anyhow!("{name} is required with {context}"))
+}
+
 impl Config {
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
@@ -179,6 +379,9 @@ impl Config {
         if config.connectors.whatsapp.is_none() {
             config.connectors.whatsapp = WhatsappConfig::from_env();
         }
+        if config.connectors.sms.is_none() {
+            config.connectors.sms = SmsConfig::from_env();
+        }
         Ok(config)
     }
 
@@ -188,36 +391,34 @@ impl Config {
         if std::path::Path::new(&path).exists() {
             return Self::from_file(&path);
         }
-        // Minimal env-based config
         let config = Config {
             server: ServerConfig {
-                port: std::env::var("PORT")
-                    .unwrap_or_else(|_| "3400".to_string())
-                    .parse()
-                    .unwrap_or(3400),
+                port: env_parse("PORT", 3400),
                 jwt_secret: std::env::var("JWT_SECRET")
                     .unwrap_or_else(|_| "change-me-in-production".to_string()),
             },
             database: DatabaseConfig {
                 url: std::env::var("DATABASE_URL").expect("DATABASE_URL required"),
-                max_connections: 10,
+                max_connections: env_parse("DATABASE_MAX_CONNECTIONS", default_max_connections()),
             },
             worker: WorkerConfig {
-                poll_interval_ms: 500,
-                batch_size: 50,
-                max_attempts: 3,
+                poll_interval_ms: env_parse("WORKER_POLL_INTERVAL_MS", default_poll_interval()),
+                batch_size: env_parse("WORKER_BATCH_SIZE", default_batch_size()),
+                max_attempts: env_parse("WORKER_MAX_ATTEMPTS", default_max_attempts()),
+                pacing: PacingConfig {
+                    email_per_sec: env_parse("EMAIL_RATE_PER_SEC", default_email_per_sec()),
+                    sms_per_sec: env_parse("SMS_RATE_PER_SEC", default_sms_per_sec()),
+                    whatsapp_per_sec: env_parse("WHATSAPP_RATE_PER_SEC", default_sms_per_sec()),
+                    push_per_sec: env_parse("PUSH_RATE_PER_SEC", default_push_per_sec()),
+                    rate_limit_pause_secs: env_parse(
+                        "RATE_LIMIT_PAUSE_SECS",
+                        default_rate_limit_pause_secs(),
+                    ),
+                },
             },
             connectors: ConnectorsConfig {
-                email: std::env::var("RESEND_API_KEY")
-                    .ok()
-                    .map(|api_key| EmailConfig {
-                        provider: "resend".to_string(),
-                        api_key,
-                        from: std::env::var("EMAIL_FROM")
-                            .unwrap_or_else(|_| "notifications@example.com".to_string()),
-                        from_name: std::env::var("EMAIL_FROM_NAME").ok(),
-                    }),
-                sms: None,
+                email: EmailConfig::from_env()?,
+                sms: SmsConfig::from_env(),
                 whatsapp: WhatsappConfig::from_env(),
                 push: PushConfig::from_env(),
             },

@@ -1,21 +1,89 @@
-use super::{Channel, Connector, SendRequest};
+use super::{http_outcome, Channel, Connector, ProviderError, SendRequest, SendResult};
 use crate::config::EmailConfig;
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Maximum number of emails the Resend `/emails/batch` endpoint accepts
 /// in a single API call (2026-05). Documented at
 /// https://resend.com/docs/api-reference/emails/send-batch-emails
 pub const RESEND_BATCH_MAX: usize = 100;
 
-/// Create the right email connector based on provider config
+/// Create the email connector selected by `config.provider`.
 pub fn create_email_connector(config: EmailConfig) -> Box<dyn Connector> {
     match config.provider.as_str() {
         "agentmail" => Box::new(AgentMailConnector::new(config)),
+        "cloudflare" => Box::new(super::cloudflare::CloudflareEmailConnector::new(config)),
+        "smtp" => Box::new(super::smtp::SmtpConnector::new(config)),
+        "log" => Box::new(super::log::LogConnector::new(Channel::Email)),
         _ => Box::new(ResendConnector::new(config)), // "resend" or default
     }
+}
+
+/// `Name <address>` or the bare address. Per-project override wins over the
+/// instance default; the two never mix (a project address without a name
+/// sends bare rather than with the instance's name).
+pub fn from_address(config: &EmailConfig, req: &SendRequest) -> String {
+    let (email, name) = match &req.from_email {
+        Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
+        None => (config.from.as_str(), config.from_name.as_deref()),
+    };
+    match name {
+        Some(n) => format!("{} <{}>", n, email),
+        None => email.to_string(),
+    }
+}
+
+/// Attachments as `[{filename, content(base64), content_type?}]`, accepting
+/// the `name` / `file` / `mime` aliases callers have used.
+pub fn normalized_attachments(metadata: &Value) -> Vec<Value> {
+    metadata
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|atts| {
+            atts.iter()
+                .filter_map(|a| {
+                    let filename = a.get("filename").or_else(|| a.get("name"))?.as_str()?;
+                    let content = a.get("content").or_else(|| a.get("file"))?.as_str()?;
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("filename".into(), json!(filename));
+                    obj.insert("content".into(), json!(content));
+                    if let Some(ct) = a
+                        .get("content_type")
+                        .or_else(|| a.get("mime"))
+                        .and_then(|v| v.as_str())
+                    {
+                        obj.insert("content_type".into(), json!(ct));
+                    }
+                    Some(Value::Object(obj))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn cc_recipients(metadata: &Value) -> Vec<String> {
+    metadata
+        .get("cc")
+        .and_then(Value::as_array)
+        .map(|cc| {
+            cc.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|address| !address.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn reply_to(metadata: &Value) -> Option<String> {
+    metadata
+        .get("reply_to")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
 }
 
 // ─── Resend ─────────────────────────────────────────────────────────
@@ -33,110 +101,41 @@ impl ResendConnector {
         }
     }
 
-    /// Resolve the "from" string for one request: per-project override
-    /// (req.from_email/from_name) wins, otherwise the instance-wide config.
-    /// The two never mix — a project from_email without from_name sends
-    /// bare, not with the instance's from_name.
-    fn from_address(&self, req: &SendRequest) -> String {
-        let (email, name) = match &req.from_email {
-            Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
-            None => (self.config.from.as_str(), self.config.from_name.as_deref()),
-        };
-        match name {
-            Some(n) => format!("{} <{}>", n, email),
-            None => email.to_string(),
-        }
-    }
-
     /// Build a single email JSON object suitable for either `/emails`
     /// (single send) or one item of `/emails/batch`. The `from` field is
     /// always included so it works in both contexts.
-    fn build_email_body(&self, req: &SendRequest) -> Value {
+    pub fn build_email_body(&self, req: &SendRequest) -> Value {
         let mut body = json!({
-            "from": self.from_address(req),
+            "from": from_address(&self.config, req),
             "to": [req.recipient],
             "subject": req.subject.as_deref().unwrap_or("Notification"),
             "html": req.body_html.as_deref().unwrap_or(&req.body),
             "text": req.body,
         });
+        let obj = body.as_object_mut().expect("json object");
 
-        // Forward custom email headers (e.g. List-Unsubscribe,
-        // List-Unsubscribe-Post) — required for Gmail/Yahoo bulk sender
-        // compliance (RFC 8058). Set by the caller via
-        // `metadata.email_headers = { "Header-Name": "value", ... }`.
-        if let Some(headers) = req.metadata.get("email_headers") {
-            if headers.is_object() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("headers".to_string(), headers.clone());
-                }
-            }
+        // Custom MIME headers (List-Unsubscribe, List-Unsubscribe-Post…):
+        // required for Gmail/Yahoo bulk sender compliance (RFC 8058).
+        if let Some(headers) = req.metadata.get("email_headers").filter(|h| h.is_object()) {
+            obj.insert("headers".to_string(), headers.clone());
         }
-
-        // Forward Resend tags (category=transactional/campaign/test, etc.)
-        // for dashboard filtering. Format:
-        //   [{"name":"category","value":"campaign"}, ...]
-        if let Some(tags) = req.metadata.get("tags") {
-            if tags.is_array() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("tags".to_string(), tags.clone());
-                }
-            }
+        // Resend tags (category=transactional/campaign/test, job id…).
+        if let Some(tags) = req.metadata.get("tags").filter(|t| t.is_array()) {
+            obj.insert("tags".to_string(), tags.clone());
         }
-
-        if let Some(cc) = req.metadata.get("cc").and_then(Value::as_array) {
-            let recipients: Vec<Value> = cc
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|address| !address.trim().is_empty())
-                .map(|address| json!(address))
-                .collect();
-            if !recipients.is_empty() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("cc".to_string(), Value::Array(recipients));
-                }
-            }
+        let cc = cc_recipients(&req.metadata);
+        if !cc.is_empty() {
+            obj.insert("cc".to_string(), json!(cc));
         }
-
-        if let Some(reply_to) = req.metadata.get("reply_to").and_then(Value::as_str) {
-            if !reply_to.trim().is_empty() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("reply_to".to_string(), json!(reply_to));
-                }
-            }
+        if let Some(reply_to) = reply_to(&req.metadata) {
+            obj.insert("reply_to".to_string(), json!(reply_to));
         }
-
-        // Forward email attachments to Resend's `/emails` endpoint.
-        // Resend expects: [{ "filename": "...", "content": "<base64>" }]
-        // (content_type is optional and inferred from the filename).
-        // We accept the inbound `content_type`/`mime` alias and normalise.
-        // NOTE: only valid on single-send; the batch endpoint rejects
-        // attachments, so the worker must never batch these (see worker.rs).
-        if let Some(atts) = req.metadata.get("attachments").and_then(|v| v.as_array()) {
-            let mapped: Vec<Value> = atts
-                .iter()
-                .filter_map(|a| {
-                    let filename = a.get("filename").or_else(|| a.get("name"))?.as_str()?;
-                    let content = a.get("content").or_else(|| a.get("file"))?.as_str()?;
-                    let mut obj = serde_json::Map::new();
-                    obj.insert("filename".into(), json!(filename));
-                    obj.insert("content".into(), json!(content));
-                    if let Some(ct) = a
-                        .get("content_type")
-                        .or_else(|| a.get("mime"))
-                        .and_then(|v| v.as_str())
-                    {
-                        obj.insert("content_type".into(), json!(ct));
-                    }
-                    Some(Value::Object(obj))
-                })
-                .collect();
-            if !mapped.is_empty() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("attachments".to_string(), Value::Array(mapped));
-                }
-            }
+        // Only valid on single-send; the batch endpoint rejects attachments,
+        // so the worker never batches these (see worker.rs).
+        let attachments = normalized_attachments(&req.metadata);
+        if !attachments.is_empty() {
+            obj.insert("attachments".to_string(), Value::Array(attachments));
         }
-
         body
     }
 }
@@ -147,46 +146,44 @@ impl Connector for ResendConnector {
         Channel::Email
     }
 
-    async fn send(&self, req: &SendRequest) -> Result<()> {
-        let body = self.build_email_body(req);
+    fn provider(&self) -> &'static str {
+        "resend"
+    }
 
-        let res = self
+    fn batch_max(&self) -> usize {
+        RESEND_BATCH_MAX
+    }
+
+    async fn send(&self, req: &SendRequest) -> SendResult {
+        let body = self.build_email_body(req);
+        let response = self
             .client
             .post("https://api.resend.com/emails")
             .bearer_auth(&self.config.api_key)
             .json(&body)
             .send()
-            .await?;
-
-        if res.status().is_success() {
-            info!(
-                "Email sent via Resend to {}",
-                crate::pii::mask_email(&req.recipient)
-            );
-            Ok(())
-        } else {
-            let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            error!("Resend error {}: {}", status, text);
-            Err(anyhow!("Resend error {}: {}", status, text))
-        }
+            .await
+            .map_err(|e| ProviderError::transport("resend", e))?;
+        let delivery = http_outcome("resend", response, |json| {
+            json.get("id").and_then(Value::as_str).map(String::from)
+        })
+        .await?;
+        info!(
+            "Email sent via Resend to {}",
+            crate::pii::mask_email(&req.recipient)
+        );
+        Ok(delivery)
     }
 
     /// Coalesce up to `RESEND_BATCH_MAX` requests into a single API call.
-    /// Falls back to `send()` for a single request (no point batching 1).
-    /// Returns the per-job results in the SAME order as the input slice
-    /// so the worker can match them to job ids.
+    /// Returns the per-job results in the SAME order as the input slice.
     ///
-    /// Resend `/emails/batch` rules (2026-05):
-    /// - Max 100 emails per call
-    /// - Each item has its own from/to/subject/html/text/headers/tags
-    /// - `attachments` and `scheduled_at` are NOT supported
-    /// - Idempotency-Key header is per-call (not per-email) — we skip it
-    ///   here because per-recipient idempotency is enforced upstream by
-    ///   the worker's `idempotency_key` payload field
-    /// - Response shape: { "data": [{ "id": "..." }, ...] } same order
-    /// - On API error: ALL items in the batch fail the same way
-    async fn send_batch(&self, reqs: &[SendRequest]) -> Vec<Result<()>> {
+    /// Resend `/emails/batch` rules (2026-05): max 100 emails per call, each
+    /// item carries its own from/to/subject/html/text/headers/tags,
+    /// `attachments` and `scheduled_at` are not supported, the response is
+    /// `{ "data": [{ "id": "..." }, ...] }` in input order, and an API error
+    /// fails every item the same way.
+    async fn send_batch(&self, reqs: &[SendRequest]) -> Vec<SendResult> {
         if reqs.is_empty() {
             return Vec::new();
         }
@@ -194,9 +191,8 @@ impl Connector for ResendConnector {
             return vec![self.send(&reqs[0]).await];
         }
         if reqs.len() > RESEND_BATCH_MAX {
-            // Defensive: caller should chunk before calling. Don't silently
-            // truncate — that would drop emails. Bubble up an error per item
-            // so the worker retries them.
+            // Never truncate silently: that would drop emails. Fail every
+            // item so the worker retries them in smaller chunks.
             warn!(
                 "send_batch called with {} > {} items — caller should chunk",
                 reqs.len(),
@@ -205,56 +201,59 @@ impl Connector for ResendConnector {
             return reqs
                 .iter()
                 .map(|_| {
-                    Err(anyhow!(
-                        "Batch size {} exceeds Resend max {}",
-                        reqs.len(),
-                        RESEND_BATCH_MAX
+                    Err(ProviderError::transient(
+                        "resend",
+                        format!("batch size {} exceeds max {}", reqs.len(), RESEND_BATCH_MAX),
                     ))
                 })
                 .collect();
         }
 
         let bodies: Vec<Value> = reqs.iter().map(|r| self.build_email_body(r)).collect();
-        let payload = Value::Array(bodies);
-
-        let res = self
+        let response = match self
             .client
             .post("https://api.resend.com/emails/batch")
             .bearer_auth(&self.config.api_key)
-            .json(&payload)
+            .json(&Value::Array(bodies))
             .send()
-            .await;
-
-        let res = match res {
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
-                error!("Resend batch transport error: {}", e);
-                // All items fail the same network error — workers will retry.
-                return reqs
-                    .iter()
-                    .map(|_| Err(anyhow!("transport error: {}", e)))
-                    .collect();
+                let err = ProviderError::transport("resend", e);
+                return reqs.iter().map(|_| Err(err.clone())).collect();
             }
         };
 
-        let status = res.status();
+        let status = response.status();
+        let retry_after = super::parse_retry_after(response.headers());
+        let text = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            let text = res.text().await.unwrap_or_default();
-            error!("Resend batch error {}: {}", status, text);
-            // All items fail with the same provider error — workers retry.
-            return reqs
-                .iter()
-                .map(|_| Err(anyhow!("Resend batch {} : {}", status, text)))
-                .collect();
+            let err = super::classify_status("resend", status, retry_after, &text);
+            return reqs.iter().map(|_| Err(err.clone())).collect();
         }
 
         info!("Email batch sent via Resend ({} recipients)", reqs.len());
-
-        // Per-item success: Resend returns one row per accepted email,
-        // keyed by index. We treat all as Ok(()) — partial failures inside
-        // a 200-response batch are not currently surfaced by the Resend API
-        // beyond what the webhook events stream tells us later.
-        reqs.iter().map(|_| Ok(())).collect()
+        let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        let ids: Vec<Option<String>> = parsed
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| item.get("id").and_then(Value::as_str).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        reqs.iter()
+            .enumerate()
+            .map(|(i, _)| {
+                Ok(super::Delivery::new(
+                    "resend",
+                    ids.get(i).cloned().flatten(),
+                ))
+            })
+            .collect()
     }
 }
 
@@ -283,7 +282,11 @@ impl Connector for AgentMailConnector {
         Channel::Email
     }
 
-    async fn send(&self, req: &SendRequest) -> Result<()> {
+    fn provider(&self) -> &'static str {
+        "agentmail"
+    }
+
+    async fn send(&self, req: &SendRequest) -> SendResult {
         // config.from = inbox address (e.g., "craie@agentmail.to")
         // config.api_key = AgentMail API bearer token
         let inbox = &self.config.from;
@@ -298,95 +301,110 @@ impl Connector for AgentMailConnector {
             "text": req.body,
             "html": req.body_html.as_deref().unwrap_or(&req.body),
         });
-
-        // Forward custom headers (List-Unsubscribe, etc.) — same convention
-        // as the Resend path. AgentMail doc:
-        // https://docs.agentmail.to/api-reference/inboxes/send-message
-        if let Some(headers) = req.metadata.get("email_headers") {
-            if headers.is_object() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("headers".to_string(), headers.clone());
-                }
-            }
+        let obj = body.as_object_mut().expect("json object");
+        if let Some(headers) = req.metadata.get("email_headers").filter(|h| h.is_object()) {
+            obj.insert("headers".to_string(), headers.clone());
+        }
+        let cc = cc_recipients(&req.metadata);
+        if !cc.is_empty() {
+            obj.insert("cc".to_string(), json!(cc));
+        }
+        if let Some(reply_to) = reply_to(&req.metadata) {
+            obj.insert("reply_to".to_string(), json!(reply_to));
         }
 
-        if let Some(cc) = req.metadata.get("cc").and_then(Value::as_array) {
-            let recipients: Vec<Value> = cc
-                .iter()
-                .filter_map(Value::as_str)
-                .filter(|address| !address.trim().is_empty())
-                .map(|address| json!(address))
-                .collect();
-            if !recipients.is_empty() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("cc".to_string(), Value::Array(recipients));
-                }
-            }
-        }
-
-        if let Some(reply_to) = req.metadata.get("reply_to").and_then(Value::as_str) {
-            if !reply_to.trim().is_empty() {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("reply_to".to_string(), json!(reply_to));
-                }
-            }
-        }
-
-        let res = self
+        let response = self
             .client
             .post(&url)
             .bearer_auth(&self.config.api_key)
             .json(&body)
             .send()
-            .await?;
-
-        if res.status().is_success() {
-            info!(
-                "Email sent via AgentMail to {}",
-                crate::pii::mask_email(&req.recipient)
-            );
-            Ok(())
-        } else {
-            let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            error!("AgentMail error {}: {}", status, text);
-            Err(anyhow!("AgentMail error {}: {}", status, text))
-        }
+            .await
+            .map_err(|e| ProviderError::transport("agentmail", e))?;
+        let delivery = http_outcome("agentmail", response, |json| {
+            json.get("message_id")
+                .or_else(|| json.get("id"))
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
+        .await?;
+        info!(
+            "Email sent via AgentMail to {}",
+            crate::pii::mask_email(&req.recipient)
+        );
+        Ok(delivery)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ResendConnector;
-    use crate::{config::EmailConfig, connectors::SendRequest};
-    use serde_json::json;
+    use super::*;
 
-    #[test]
-    fn resend_payload_preserves_cc_and_reply_to() {
-        let connector = ResendConnector::new(EmailConfig {
+    fn config() -> EmailConfig {
+        EmailConfig {
             provider: "resend".to_string(),
             api_key: "test".to_string(),
             from: "sender@example.com".to_string(),
             from_name: Some("Sender".to_string()),
-        });
-        let request = SendRequest {
+            account_id: None,
+            smtp: None,
+        }
+    }
+
+    fn request(metadata: Value) -> SendRequest {
+        SendRequest {
             recipient: "supplier@example.com".to_string(),
             subject: Some("Purchase order".to_string()),
             body: "Body".to_string(),
             body_html: Some("<p>Body</p>".to_string()),
             from_email: None,
             from_name: None,
-            metadata: json!({
-                "cc": ["buyer@example.com", "orders@example.com"],
-                "reply_to": "reply@example.com"
-            }),
-        };
+            metadata,
+        }
+    }
 
-        let body = connector.build_email_body(&request);
+    #[test]
+    fn resend_payload_preserves_cc_and_reply_to() {
+        let connector = ResendConnector::new(config());
+        let body = connector.build_email_body(&request(json!({
+            "cc": ["buyer@example.com", "orders@example.com"],
+            "reply_to": "reply@example.com"
+        })));
         assert_eq!(
             body.get("cc"),
             Some(&json!(["buyer@example.com", "orders@example.com"]))
         );
         assert_eq!(body.get("reply_to"), Some(&json!("reply@example.com")));
+        assert_eq!(
+            body.get("from"),
+            Some(&json!("Sender <sender@example.com>"))
+        );
+    }
+
+    #[test]
+    fn project_sender_overrides_instance_default_without_mixing_names() {
+        let mut req = request(json!({}));
+        req.from_email = Some("hello@philoeparis.fr".to_string());
+        assert_eq!(from_address(&config(), &req), "hello@philoeparis.fr");
+        req.from_name = Some("Philoé".to_string());
+        assert_eq!(
+            from_address(&config(), &req),
+            "Philoé <hello@philoeparis.fr>"
+        );
+    }
+
+    #[test]
+    fn attachments_accept_aliases() {
+        let atts = normalized_attachments(&json!({
+            "attachments": [
+                {"name": "a.pdf", "file": "QUJD", "mime": "application/pdf"},
+                {"filename": "b.txt", "content": "QUJD"},
+                {"filename": "broken"}
+            ]
+        }));
+        assert_eq!(atts.len(), 2);
+        assert_eq!(atts[0]["filename"], "a.pdf");
+        assert_eq!(atts[0]["content_type"], "application/pdf");
+        assert!(atts[1].get("content_type").is_none());
     }
 }

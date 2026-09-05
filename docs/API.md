@@ -176,6 +176,9 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `attachments` | `object[]` | ❌ | Email only. `[{ "filename", "content" (base64), "content_type"? }]`. Forces single-send (Resend batch rejects attachments). |
 | `cc` | `string[]` | ❌ | Email only. Up to 10 carbon-copy recipients; duplicates are removed. |
 | `reply_to` | `string` | ❌ | Email only. Address that receives replies. |
+| `priority` | `string \| int` | ❌ | Queue lane: `critical` (10), `high` (30), `normal` (50, default), `low` (70), `bulk` (80) or `0–100`. Lower goes first. An email tagged `{"name":"category","value":"campaign"\|"marketing"\|"newsletter"}` defaults to `bulk`. |
+| `tags` | `object[]` | ❌ | Email only. Provider tags `[{ "name", "value" }]`; also drives the default priority (see above). |
+| `email_headers` | `object` | ❌ | Email only. Custom MIME headers such as `List-Unsubscribe`. |
 
 **Response:**
 
@@ -199,6 +202,11 @@ means the provider accepted the API call; `delivered_at` and the per-recipient
 {
   "id": "uuid",
   "status": "sent",
+  "priority": 50,
+  "attempts": 1,
+  "max_attempts": 5,
+  "provider": "resend",
+  "provider_message_id": "provider-email-id",
   "sent_at": "2026-08-14T08:16:10Z",
   "delivered_at": "2026-08-14T08:16:14Z",
   "bounced_at": null,
@@ -219,6 +227,21 @@ means the provider accepted the API call; `delivered_at` and the per-recipient
   ]
 }
 ```
+
+`provider` and `provider_message_id` name the connector that accepted the
+message and the provider's own identifier (Resend id, Telnyx message id, SMTP
+`Message-ID`).
+
+**Job lifecycle.** `pending` → `processing` → `sent` | `retry` | `failed`.
+The worker classifies every provider answer:
+
+| Provider answer | Job | Notes |
+|---|---|---|
+| accepted | `sent` | `provider_message_id` stored |
+| `429` | `retry`, attempt **not** consumed | the channel lane pauses for `Retry-After` (default `RATE_LIMIT_PAUSE_SECS`) |
+| `5xx`, timeout, network | `retry` | backoff 30 s → 2 min → 10 min → 30 min → 2 h (±20 % jitter), `failed` after `max_attempts` (default 5) |
+| other `4xx`, invalid recipient, unverified sender, integrity violation | `failed` at once | retrying the same request would give the same answer |
+| recipient on the suppression list | `failed` at once | the provider is never contacted |
 
 `email_envelope` is the exact recipient envelope persisted before provider
 handoff. It lets clients distinguish a recipient still awaiting an event from
@@ -280,6 +303,9 @@ let res = client
 ---
 
 ### POST /v1/batch
+
+Fan-out to many subscribers. Jobs default to priority `bulk` (80): a campaign
+never delays transactional traffic. Pass `"priority"` to override.
 
 Send the same notification to multiple subscribers.
 
@@ -422,7 +448,7 @@ curl http://localhost:3400/v1/health
 
 ### GET /v1/metrics
 
-Requires admin API key.
+Requires admin API key (`x-api-key` or `Authorization: Bearer`).
 
 ```json
 {
@@ -436,6 +462,20 @@ Requires admin API key.
   "uptime_seconds": 86400
 }
 ```
+
+### GET /v1/metrics/prometheus
+
+Same admin key, Prometheus text exposition (point a Prometheus / Grafana
+Agent scrape at it with `bearer_token`). Series:
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `notifyd_jobs_outcome_total` | `channel`, `provider`, `outcome` | `sent`, `retry`, `failed`, `rate_limited`, `skipped` |
+| `notifyd_provider_errors_total` | `channel`, `provider`, `kind` | `rate_limited`, `transient`, `permanent`, `suppressed` |
+| `notifyd_lane_pauses_total` | `channel` | lane pauses after a 429 |
+| `notifyd_send_latency_seconds` | `channel`, `provider` | provider call latency histogram |
+| `notifyd_jobs_queue_depth` | `status` | `pending`, `retry`, `processing` at scrape time |
+| `notifyd_oldest_pending_age_seconds` | `band` | oldest waiting job per priority band (`urgent` <50, `normal`, `bulk` ≥80) |
 
 ---
 

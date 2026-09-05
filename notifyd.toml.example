@@ -9,7 +9,17 @@ max_connections = 10
 [worker]
 poll_interval_ms = 500
 batch_size = 50
-max_attempts = 3
+# Attempts for transient provider errors: 30 s, 2 min, 10 min, 30 min, 2 h.
+max_attempts = 5
+
+# Outbound pacing, provider requests per second per replica (a batch call
+# counts once). 0 disables pacing for that channel.
+[worker.pacing]
+email_per_sec = 8.0       # Resend: 10 req/s per team
+sms_per_sec = 10.0
+whatsapp_per_sec = 10.0
+push_per_sec = 50.0
+rate_limit_pause_secs = 2 # lane pause after a 429 without Retry-After
 
 # ─── Email connector ─────────────────────────────────────────────────
 # Provider: "resend" or "agentmail"
@@ -27,6 +37,31 @@ from_name = "Mon App"
 # api_key = "am_xxx"  # AgentMail API Bearer token
 # from = "myapp@agentmail.to"  # AgentMail inbox address
 # from_name = "Mon App"
+
+# Cloudflare Email Service (REST API, token with the Email Sending permission):
+# [connectors.email]
+# provider = "cloudflare"
+# api_key = "cf_xxx"
+# account_id = "your-cloudflare-account-id"
+# from = "notifications@yourdomain.com"
+# from_name = "Mon App"
+
+# Any SMTP submission service (SES, Postmark, Brevo, OVH, Cloudflare SMTP…):
+# [connectors.email]
+# provider = "smtp"
+# from = "notifications@yourdomain.com"
+# from_name = "Mon App"
+# [connectors.email.smtp]
+# host = "smtp.example.com"
+# port = 587
+# username = "user"
+# password = "pass"
+# security = "starttls"   # starttls | tls | none
+
+# Development: nothing is sent, every message is logged as accepted.
+# [connectors.email]
+# provider = "log"
+# from = "dev@localhost"
 
 # ─── SMS connector ────────────────────────────────────────────────────
 # Provider: "twilio" or "telnyx"

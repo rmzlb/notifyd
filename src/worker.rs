@@ -1,23 +1,26 @@
 use crate::{
     connectors::{
         email::create_email_connector, in_app::InAppConnector, sms::SmsConnector, Channel,
-        Connector, SendRequest,
+        Connector, Delivery, ProviderError, ProviderErrorKind, SendRequest, SendResult,
     },
-    db::Job,
-    templates, workflow_engine, AppState,
+    db::{Job, JOB_COLUMNS},
+    metrics, templates, workflow_engine, AppState,
 };
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 pub async fn run(state: Arc<AppState>, mut shutdown: watch::Receiver<bool>) {
     let interval = std::time::Duration::from_millis(state.config.worker.poll_interval_ms);
     info!(
-        "Worker started, polling every {}ms",
-        state.config.worker.poll_interval_ms
+        "Worker started, polling every {}ms, max {} attempts, email pacing {}/s",
+        state.config.worker.poll_interval_ms,
+        state.config.worker.max_attempts,
+        state.config.worker.pacing.email_per_sec
     );
 
     let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
@@ -48,29 +51,32 @@ pub async fn run(state: Arc<AppState>, mut shutdown: watch::Receiver<bool>) {
     info!("Worker stopped");
 }
 
+/// Claim due jobs, most urgent first, skipping the lanes a provider asked
+/// us to pause. The claim runs in one transaction with `FOR UPDATE SKIP
+/// LOCKED`, so several workers never take the same job.
 async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     let now = Utc::now();
     let batch_size = state.config.worker.batch_size;
+    let paused = state.pacer.paused_channels();
 
-    // BUG FIX #1: Wrap in transaction for SELECT FOR UPDATE safety
     let mut tx = state.pool.begin().await?;
 
-    let jobs: Vec<Job> = sqlx::query_as(
+    let jobs: Vec<Job> = sqlx::query_as(&format!(
         r#"
-        SELECT id, project_id, channel, subscriber_id, recipient, template_id, payload,
-               status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key,
-               created_at, sent_at, error
+        SELECT {JOB_COLUMNS}
         FROM jobs
         WHERE status IN ('pending', 'retry')
           AND scheduled_at <= $1
           AND (next_retry_at IS NULL OR next_retry_at <= $1)
-        ORDER BY scheduled_at ASC
+          AND NOT (channel = ANY($3))
+        ORDER BY priority ASC, scheduled_at ASC
         LIMIT $2
         FOR UPDATE SKIP LOCKED
-        "#,
-    )
+        "#
+    ))
     .bind(now)
     .bind(batch_size)
+    .bind(&paused)
     .fetch_all(&mut *tx)
     .await?;
 
@@ -90,44 +96,20 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
 
     tx.commit().await?;
 
-    // Group email jobs together so we can send them via Resend's
-    // `/emails/batch` endpoint (up to 100 per call) instead of N
-    // individual API calls. Other channels (SMS, in-app, push) still
-    // dispatch one-by-one but in parallel via for_each_concurrent.
-    //
-    // EXCEPTION: emails carrying attachments cannot use `/emails/batch`
-    // (Resend's batch endpoint rejects `attachments`). Those are peeled
-    // off and dispatched through the single-send path alongside the other
-    // channels, so they still get attachments while plain emails keep the
-    // batch fast-path.
-    //
-    // Why this matters at scale:
-    // - Resend default rate limit is 5 req/s per team. With 50 jobs
-    //   sequential @ ~50ms each, we burn ~5s wall clock and get throttled.
-    //   With batch we make 1 call for 50 emails — same content, 50× less
-    //   API surface, no rate limit pressure.
-    // - The email connector trait has a default `send_batch` that just
-    //   loops `send()`, so non-Resend connectors (AgentMail) still work
-    //   correctly without being aware of batching.
+    // Plain emails go through the connector's batch path (one provider call
+    // for up to `batch_max` messages); emails with attachments and every
+    // other channel dispatch one by one, a few in flight at a time.
     let (email_jobs, mut other_jobs): (Vec<_>, Vec<_>) =
         jobs.into_iter().partition(|j| j.channel == "email");
-
-    // Peel attachment-bearing emails out of the batch path.
     let (email_batch_jobs, email_attachment_jobs): (Vec<_>, Vec<_>) = email_jobs
         .into_iter()
         .partition(|j| !job_has_attachments(j));
     other_jobs.extend(email_attachment_jobs);
 
-    // 1. Email batch path (plain emails only — no attachments)
     if !email_batch_jobs.is_empty() {
         process_email_batch(state, email_batch_jobs).await;
     }
 
-    // 2. Other channels + attachment emails: parallel single-send dispatch
-    //    (up to 4 concurrent in-flight). SMS / in-app / push connectors
-    //    typically have their own rate limits much higher than Resend's,
-    //    but we cap at 4 to avoid overwhelming the DB pool when updating
-    //    statuses.
     if !other_jobs.is_empty() {
         use futures::stream::{self, StreamExt};
         const PARALLEL_DISPATCH: usize = 4;
@@ -142,20 +124,9 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     Ok(())
 }
 
-/// Process a batch of email jobs by routing them through the email
-/// connector's `send_batch()` method. For Resend, this hits
-/// `POST /emails/batch` (up to 100 emails per call); for connectors
-/// without native batch the trait default loops `send()`.
-///
-/// Jobs that need a per-recipient subscriber preference check (opt-out
-/// per channel/template) are filtered upstream — for emails we currently
-/// only check at the project level (the global preference mechanism is
-/// per-subscriber but channel-level only). If a project later adds
-/// per-template opt-outs for email, this batch path needs to filter the
-/// batch the same way `dispatch_job` does today.
+/// Route plain email jobs through `send_batch()`: for Resend that is
+/// `POST /emails/batch`; connectors without native batch loop `send()`.
 async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
-    use crate::connectors::email::{create_email_connector, RESEND_BATCH_MAX};
-
     let config = match &state.config.connectors.email {
         Some(c) => c.clone(),
         None => {
@@ -167,7 +138,10 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
                 finalize_job_result(
                     state,
                     job,
-                    Err(anyhow::anyhow!("Email connector not configured")),
+                    Err(ProviderError::permanent(
+                        "none",
+                        "email connector not configured",
+                    )),
                 )
                 .await;
             }
@@ -175,12 +149,8 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
         }
     };
 
-    // Build the SendRequest for each job (template render etc.). If a job
-    // is opted-out at the subscriber level, mark it sent (skipped) right
-    // away — same semantic as `dispatch_job`'s skip path.
     let mut prepared: Vec<(Job, SendRequest)> = Vec::with_capacity(jobs.len());
     for job in jobs {
-        // Subscriber preference check (per-channel opt-out)
         if let Some(sub_id) = &job.subscriber_id {
             if !workflow_engine::check_preference(
                 state,
@@ -195,136 +165,259 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
                     "Job {} skipped (subscriber opted out of {} channel)",
                     job.id, job.channel
                 );
-                finalize_job_result(state, &job, Ok(())).await;
+                finalize_skipped(state, &job).await;
                 continue;
             }
         }
 
-        let req = match build_send_request(state, &job).await {
-            Ok(r) => r,
-            Err(e) => {
-                finalize_job_result(state, &job, Err(e)).await;
-                continue;
-            }
-        };
-        prepared.push((job, req));
+        match build_send_request(state, &job).await {
+            Ok(req) => prepared.push((job, req)),
+            Err(e) => finalize_job_result(state, &job, Err(e)).await,
+        }
     }
 
     if prepared.is_empty() {
         return;
     }
 
-    // Chunk by RESEND_BATCH_MAX (defensive — our default batch_size is 50,
-    // but if the operator raises it >100 we still respect Resend's cap).
     let connector = create_email_connector(config);
-    for chunk in prepared.chunks(RESEND_BATCH_MAX) {
+    let chunk_size = connector.batch_max().max(1);
+    for chunk in prepared.chunks(chunk_size) {
+        // One provider request per chunk: one token.
+        state.pacer.acquire("email").await;
         let reqs: Vec<SendRequest> = chunk.iter().map(|(_, r)| r.clone()).collect();
-        let results = connector.send_batch(&reqs).await;
+        let started = Instant::now();
+        let mut results = connector.send_batch(&reqs).await;
+        metrics::observe_latency(
+            "email",
+            connector.provider(),
+            started.elapsed().as_secs_f64(),
+        );
 
-        // Match results back to jobs (same order guaranteed by send_batch contract).
+        // A provider rejects a whole batch (4xx) when a single item is bad,
+        // e.g. one malformed address among a hundred. Sending the items one
+        // by one lets the 99 good ones go and pins the failure on the bad one.
+        if chunk.len() > 1 && all_permanent(&results) {
+            warn!(
+                "Email batch of {} rejected permanently — retrying items individually",
+                chunk.len()
+            );
+            results = Vec::with_capacity(reqs.len());
+            for req in &reqs {
+                state.pacer.acquire("email").await;
+                results.push(connector.send(req).await);
+            }
+        }
+
         for ((job, _), result) in chunk.iter().zip(results.into_iter()) {
             finalize_job_result(state, job, result).await;
         }
     }
 }
 
-/// Update the job row to its terminal state (sent/failed/retry) and fire
-/// webhooks on terminal states. Extracted so both the email batch path
-/// and the parallel non-email path share the same status-update logic.
-async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: Result<()>) {
+fn all_permanent(results: &[SendResult]) -> bool {
+    !results.is_empty()
+        && results
+            .iter()
+            .all(|r| matches!(r, Err(e) if e.kind == ProviderErrorKind::Permanent))
+}
+
+/// Backoff for transient errors, by attempt number (1-based), with ±20 %
+/// jitter so a burst of failures does not come back as one burst of retries.
+pub fn retry_delay(attempt: i32) -> Duration {
+    const SCHEDULE_SECS: [i64; 5] = [30, 120, 600, 1800, 7200];
+    let index = (attempt.max(1) as usize - 1).min(SCHEDULE_SECS.len() - 1);
+    let base = SCHEDULE_SECS[index];
+    let jitter = jitter_fraction();
+    let with_jitter = (base as f64 * (1.0 + jitter)).round() as i64;
+    Duration::seconds(with_jitter.max(1))
+}
+
+/// Uniform in [-0.2, 0.2] from the clock: no RNG dependency needed for
+/// spreading retries.
+fn jitter_fraction() -> f64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    (nanos % 401) as f64 / 1000.0 - 0.2
+}
+
+async fn finalize_skipped(state: &Arc<AppState>, job: &Job) {
+    if let Err(e) = sqlx::query(
+        "UPDATE jobs SET status='sent', sent_at=now(), error=NULL, provider='skipped' WHERE id=$1",
+    )
+    .bind(job.id)
+    .execute(&state.pool)
+    .await
+    {
+        error!("Failed to mark job {} as skipped: {}", job.id, e);
+        return;
+    }
+    metrics::record_outcome(&job.channel, "skipped", "skipped");
+    fire_terminal_webhooks(state, job, "sent");
+}
+
+/// Move the job to its next state from the provider's answer:
+/// - accepted → `sent`, with provider and provider_message_id;
+/// - rate limited → back to `retry` without consuming an attempt, and the
+///   lane pauses for `Retry-After` (or the default pause);
+/// - permanent or suppressed → `failed` now;
+/// - transient → `retry` with backoff, `failed` after `max_attempts`.
+async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: SendResult) {
     let new_status = match result {
-        Ok(()) => {
-            if let Err(e) =
-                sqlx::query("UPDATE jobs SET status='sent', sent_at=now(), error=NULL WHERE id=$1")
-                    .bind(job.id)
-                    .execute(&state.pool)
-                    .await
-            {
+        Ok(delivery) => {
+            if let Err(e) = mark_sent(state, job, &delivery).await {
                 error!("Failed to mark job {} as sent: {}", job.id, e);
                 return;
             }
-            info!("Job {} sent", job.id);
+            metrics::record_outcome(&job.channel, delivery.provider, "sent");
+            info!(
+                "Job {} sent via {}{}",
+                job.id,
+                delivery.provider,
+                delivery
+                    .provider_message_id
+                    .as_deref()
+                    .map(|id| format!(" ({id})"))
+                    .unwrap_or_default()
+            );
             "sent"
         }
-        Err(e) => {
-            let attempts = job.attempts + 1;
-            let max = job.max_attempts;
-            let err_msg = e.to_string();
-            let suppressed = e
-                .downcast_ref::<crate::deliverability::RecipientSuppressed>()
-                .is_some();
+        Err(err) => {
+            metrics::record_provider_error(&job.channel, err.provider, err.kind_label());
+            let attempts = job.attempts + 1; // the claim already incremented the row
+            let max = job.max_attempts.max(1);
+            let err_msg = err.to_string();
 
-            if suppressed || attempts >= max {
-                if let Err(db_e) =
-                    sqlx::query("UPDATE jobs SET status='failed', error=$2 WHERE id=$1")
-                        .bind(job.id)
-                        .bind(&err_msg)
-                        .execute(&state.pool)
-                        .await
-                {
-                    error!("Failed to mark job {} as failed: {}", job.id, db_e);
-                    return;
+            match &err.kind {
+                ProviderErrorKind::RateLimited { retry_after } => {
+                    let pause = state.pacer.pause(&job.channel, *retry_after);
+                    metrics::record_lane_pause(&job.channel);
+                    metrics::record_outcome(&job.channel, err.provider, "rate_limited");
+                    let next_retry = Utc::now() + Duration::milliseconds(pause.as_millis() as i64);
+                    if let Err(db_e) = sqlx::query(
+                        "UPDATE jobs SET status='retry', attempts=GREATEST(attempts-1, 0), error=$2, next_retry_at=$3 WHERE id=$1",
+                    )
+                    .bind(job.id)
+                    .bind(&err_msg)
+                    .bind(next_retry)
+                    .execute(&state.pool)
+                    .await
+                    {
+                        error!("Failed to requeue rate-limited job {}: {}", job.id, db_e);
+                        return;
+                    }
+                    warn!(
+                        "Job {} rate limited by {} — lane {} paused {:?}",
+                        job.id, err.provider, job.channel, pause
+                    );
+                    "retry"
                 }
-                if suppressed {
-                    warn!("Job {} failed without dispatch: {}", job.id, err_msg);
-                } else {
+                ProviderErrorKind::Permanent | ProviderErrorKind::Suppressed => {
+                    if let Err(db_e) = mark_failed(state, job, &err_msg).await {
+                        error!("Failed to mark job {} as failed: {}", job.id, db_e);
+                        return;
+                    }
+                    metrics::record_outcome(&job.channel, err.provider, "failed");
+                    warn!(
+                        "Job {} failed without retry ({}): {}",
+                        job.id,
+                        err.kind_label(),
+                        err_msg
+                    );
+                    "failed"
+                }
+                ProviderErrorKind::Transient if attempts >= max => {
+                    if let Err(db_e) = mark_failed(state, job, &err_msg).await {
+                        error!("Failed to mark job {} as failed: {}", job.id, db_e);
+                        return;
+                    }
+                    metrics::record_outcome(&job.channel, err.provider, "failed");
                     error!(
                         "Job {} failed permanently after {} attempts: {}",
                         job.id, attempts, err_msg
                     );
+                    "failed"
                 }
-                "failed"
-            } else {
-                let delay_secs: i64 = match attempts {
-                    1 => 30,
-                    2 => 120,
-                    _ => 600,
-                };
-                let next_retry = Utc::now() + Duration::seconds(delay_secs);
-                if let Err(db_e) = sqlx::query(
-                    "UPDATE jobs SET status='retry', error=$2, next_retry_at=$3 WHERE id=$1",
-                )
-                .bind(job.id)
-                .bind(&err_msg)
-                .bind(next_retry)
-                .execute(&state.pool)
-                .await
-                {
-                    error!("Failed to mark job {} as retry: {}", job.id, db_e);
-                    return;
+                ProviderErrorKind::Transient => {
+                    let delay = retry_delay(attempts);
+                    let next_retry = Utc::now() + delay;
+                    if let Err(db_e) = sqlx::query(
+                        "UPDATE jobs SET status='retry', error=$2, next_retry_at=$3 WHERE id=$1",
+                    )
+                    .bind(job.id)
+                    .bind(&err_msg)
+                    .bind(next_retry)
+                    .execute(&state.pool)
+                    .await
+                    {
+                        error!("Failed to mark job {} as retry: {}", job.id, db_e);
+                        return;
+                    }
+                    metrics::record_outcome(&job.channel, err.provider, "retry");
+                    warn!(
+                        "Job {} retry in {}s (attempt {}/{}): {}",
+                        job.id,
+                        delay.num_seconds(),
+                        attempts,
+                        max,
+                        err_msg
+                    );
+                    "retry"
                 }
-                warn!(
-                    "Job {} retry in {}s (attempt {}/{}): {}",
-                    job.id, delay_secs, attempts, max, err_msg
-                );
-                "retry"
             }
         }
     };
 
-    // Fire outbound webhooks on terminal states (decoupled from DB update).
     if new_status == "sent" || new_status == "failed" {
-        let pool = state.pool.clone();
-        let job_id = job.id;
-        let channel = job.channel.clone();
-        let subscriber_id = job.subscriber_id.clone();
-        let project_id = job.project_id.clone();
-        let status = new_status.to_string();
-        tokio::spawn(async move {
-            if let Err(e) = crate::webhooks::fire_webhooks(
-                &pool,
-                &project_id,
-                &format!("job.{}", status),
-                job_id,
-                &channel,
-                subscriber_id.as_deref(),
-            )
-            .await
-            {
-                warn!("Webhook fire error: {}", e);
-            }
-        });
+        fire_terminal_webhooks(state, job, new_status);
     }
+}
+
+async fn mark_sent(state: &Arc<AppState>, job: &Job, delivery: &Delivery) -> Result<()> {
+    sqlx::query(
+        "UPDATE jobs SET status='sent', sent_at=now(), error=NULL, provider=$2, provider_message_id=$3 WHERE id=$1",
+    )
+    .bind(job.id)
+    .bind(delivery.provider)
+    .bind(&delivery.provider_message_id)
+    .execute(&state.pool)
+    .await?;
+    Ok(())
+}
+
+async fn mark_failed(state: &Arc<AppState>, job: &Job, error: &str) -> Result<()> {
+    sqlx::query("UPDATE jobs SET status='failed', error=$2 WHERE id=$1")
+        .bind(job.id)
+        .bind(error)
+        .execute(&state.pool)
+        .await?;
+    Ok(())
+}
+
+/// Outbound webhooks on terminal states, decoupled from the DB update.
+fn fire_terminal_webhooks(state: &Arc<AppState>, job: &Job, status: &str) {
+    let pool = state.pool.clone();
+    let job_id = job.id;
+    let channel = job.channel.clone();
+    let subscriber_id = job.subscriber_id.clone();
+    let project_id = job.project_id.clone();
+    let status = status.to_string();
+    tokio::spawn(async move {
+        if let Err(e) = crate::webhooks::fire_webhooks(
+            &pool,
+            &project_id,
+            &format!("job.{}", status),
+            job_id,
+            &channel,
+            subscriber_id.as_deref(),
+        )
+        .await
+        {
+            warn!("Webhook fire error: {}", e);
+        }
+    });
 }
 
 /// Resolve the per-project sender override for the email channel.
@@ -359,16 +452,19 @@ async fn resolve_project_from(
     }
 }
 
-/// Build the `SendRequest` for a job (template render + metadata). Extracted
-/// from the original `dispatch_job` so both the email batch path and the
-/// per-job dispatch can share the prep work.
-async fn build_send_request(state: &Arc<AppState>, job: &Job) -> Result<SendRequest> {
+/// Build the `SendRequest` for a job (template render + metadata). Shared by
+/// the email batch path and the per-job dispatch.
+async fn build_send_request(
+    state: &Arc<AppState>,
+    job: &Job,
+) -> Result<SendRequest, ProviderError> {
     let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
         let tmpl: Option<crate::db::Template> = sqlx::query_as(
             "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 AND id=$2 AND channel=$3"
         )
         .bind(&job.project_id).bind(tmpl_id).bind(&job.channel)
-        .fetch_optional(&state.pool).await?;
+        .fetch_optional(&state.pool).await
+        .map_err(|e| ProviderError::transient("database", e.to_string()))?;
 
         if let Some(t) = tmpl {
             let vars = job
@@ -397,15 +493,13 @@ async fn build_send_request(state: &Arc<AppState>, job: &Job) -> Result<SendRequ
     }
 
     if job.channel == "email" {
-        // Suppressed address (bounce/complaint): fail before the provider —
-        // finalize_job_result treats RecipientSuppressed as terminal.
+        // Suppressed address (bounce/complaint): fail before the provider.
         if let Some(reason) =
             crate::deliverability::active_suppression(&state.pool, &job.project_id, &job.recipient)
-                .await?
+                .await
+                .map_err(|e| ProviderError::transient("database", e.to_string()))?
         {
-            return Err(anyhow::Error::new(
-                crate::deliverability::RecipientSuppressed(reason),
-            ));
+            return Err(ProviderError::suppressed(reason));
         }
 
         // Tag the outgoing email with its job id: Resend echoes tags back in
@@ -423,7 +517,6 @@ async fn build_send_request(state: &Arc<AppState>, job: &Job) -> Result<SendRequ
         }
     }
 
-    // Sender override only matters for email; skip the lookup elsewhere.
     let (from_email, from_name) = if job.channel == "email" {
         resolve_project_from(state, &job.project_id).await
     } else {
@@ -441,7 +534,7 @@ async fn build_send_request(state: &Arc<AppState>, job: &Job) -> Result<SendRequ
     })
 }
 
-/// Feature #8: Cleanup old jobs periodically
+/// Cleanup old jobs periodically
 async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
     let sent_deleted = sqlx::query(
         "DELETE FROM jobs WHERE status IN ('sent', 'cancelled') AND created_at < now() - interval '7 days'"
@@ -467,7 +560,7 @@ async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
     Ok(())
 }
 
-async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
+async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
     if let Some(sub_id) = &job.subscriber_id {
         if !workflow_engine::check_preference(
             state,
@@ -482,108 +575,149 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> Result<()> {
                 "Job {} skipped (subscriber opted out of {} channel)",
                 job.id, job.channel
             );
-            return Ok(());
+            return Ok(Delivery::new("skipped", None));
         }
     }
 
     let req = build_send_request(state, job).await?;
 
-    match Channel::from_str(&job.channel) {
+    let connector: Box<dyn Connector> = match Channel::from_str(&job.channel) {
         Some(Channel::Email) => {
-            let config = state
-                .config
-                .connectors
-                .email
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Email connector not configured"))?;
-            create_email_connector(config.clone()).send(&req).await
+            let config = state.config.connectors.email.as_ref().ok_or_else(|| {
+                ProviderError::permanent("none", "email connector not configured")
+            })?;
+            create_email_connector(config.clone())
         }
         Some(Channel::Sms) => {
-            let config = state
-                .config
-                .connectors
-                .sms
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("SMS connector not configured"))?;
-            SmsConnector::new(config.clone()).send(&req).await
+            let config =
+                state.config.connectors.sms.as_ref().ok_or_else(|| {
+                    ProviderError::permanent("none", "SMS connector not configured")
+                })?;
+            Box::new(SmsConnector::new(config.clone()))
         }
         Some(Channel::Whatsapp) => {
-            let config = state
-                .config
-                .connectors
-                .whatsapp
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("WhatsApp connector not configured"))?;
-            crate::connectors::whatsapp::WhatsappConnector::new(config.clone())
-                .send(&req)
-                .await
+            let config = state.config.connectors.whatsapp.as_ref().ok_or_else(|| {
+                ProviderError::permanent("none", "WhatsApp connector not configured")
+            })?;
+            Box::new(crate::connectors::whatsapp::WhatsappConnector::new(
+                config.clone(),
+            ))
         }
-        Some(Channel::InApp) => {
-            InAppConnector::new(state.pool.clone(), state.broadcaster.clone())
-                .send(&req)
-                .await
+        Some(Channel::InApp) => Box::new(InAppConnector::new(
+            state.pool.clone(),
+            state.broadcaster.clone(),
+        )),
+        Some(Channel::Push) => return dispatch_push(state, job, req).await,
+        None => {
+            return Err(ProviderError::permanent(
+                "none",
+                format!("unknown channel: {}", job.channel),
+            ))
         }
-        Some(Channel::Push) => {
-            if let Some(sub_id) = &job.subscriber_id {
-                let tokens: Vec<PushTokenRow> = sqlx::query_as(
-                    r#"
-                    SELECT id, token, platform, endpoint, p256dh, auth
-                    FROM push_tokens
-                    WHERE project_id=$1 AND subscriber_id=$2
-                    ORDER BY last_used_at DESC NULLS LAST, created_at DESC
-                    "#,
-                )
-                .bind(&job.project_id)
-                .bind(sub_id)
-                .fetch_all(&state.pool)
-                .await?;
+    };
 
-                if tokens.is_empty() {
-                    warn!(
-                        "No push tokens for subscriber {} in project {}",
-                        sub_id, job.project_id
-                    );
-                    return Ok(());
-                }
+    let lane = connector.channel().as_str();
+    state.pacer.acquire(lane).await;
+    let started = Instant::now();
+    let result = connector.send(&req).await;
+    metrics::observe_latency(lane, connector.provider(), started.elapsed().as_secs_f64());
+    result
+}
 
-                let config = state
-                    .config
-                    .connectors
-                    .push
-                    .clone()
-                    .or_else(crate::config::PushConfig::from_env)
-                    .ok_or_else(|| anyhow::anyhow!("Push connector not configured"))?;
-                let connector = crate::connectors::push::PushConnector::new(config);
+/// Push fans out to every registered token of the subscriber. The job is
+/// accepted when at least one token accepted it; a token that the push
+/// service rejects permanently is dropped so it stops failing every send.
+async fn dispatch_push(state: &Arc<AppState>, job: &Job, req: SendRequest) -> SendResult {
+    let Some(sub_id) = &job.subscriber_id else {
+        return Err(ProviderError::permanent(
+            "web-push",
+            "push requires subscriber_id",
+        ));
+    };
+    let tokens: Vec<PushTokenRow> = sqlx::query_as(
+        r#"
+        SELECT id, token, platform, endpoint, p256dh, auth
+        FROM push_tokens
+        WHERE project_id=$1 AND subscriber_id=$2
+        ORDER BY last_used_at DESC NULLS LAST, created_at DESC
+        "#,
+    )
+    .bind(&job.project_id)
+    .bind(sub_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| ProviderError::transient("database", e.to_string()))?;
 
-                for token in tokens {
-                    let mut push_req = req.clone();
-                    if let (Some(endpoint), Some(p256dh), Some(auth)) =
-                        (&token.endpoint, &token.p256dh, &token.auth)
+    if tokens.is_empty() {
+        warn!(
+            "No push tokens for subscriber {} in project {}",
+            sub_id, job.project_id
+        );
+        return Ok(Delivery::new("skipped", None));
+    }
+
+    let config = state
+        .config
+        .connectors
+        .push
+        .clone()
+        .or_else(crate::config::PushConfig::from_env)
+        .ok_or_else(|| ProviderError::permanent("none", "push connector not configured"))?;
+    let connector = crate::connectors::push::PushConnector::new(config);
+
+    let mut accepted: Option<Delivery> = None;
+    let mut last_error: Option<ProviderError> = None;
+    for token in tokens {
+        let mut push_req = req.clone();
+        if let (Some(endpoint), Some(p256dh), Some(auth)) =
+            (&token.endpoint, &token.p256dh, &token.auth)
+        {
+            push_req.recipient = endpoint.clone();
+            if let Some(obj) = push_req.metadata.as_object_mut() {
+                obj.insert(
+                    "web_push".into(),
+                    serde_json::json!({
+                        "endpoint": endpoint,
+                        "p256dh": p256dh,
+                        "auth": auth,
+                        "platform": token.platform,
+                        "token_id": token.id,
+                    }),
+                );
+            }
+        } else {
+            push_req.recipient = token.token.clone();
+        }
+        state.pacer.acquire("push").await;
+        let started = Instant::now();
+        let result = connector.send(&push_req).await;
+        metrics::observe_latency(
+            "push",
+            connector.provider(),
+            started.elapsed().as_secs_f64(),
+        );
+        match result {
+            Ok(delivery) => accepted = Some(delivery),
+            Err(err) => {
+                if err.kind == ProviderErrorKind::Permanent {
+                    if let Err(db_e) = sqlx::query("DELETE FROM push_tokens WHERE id=$1")
+                        .bind(token.id)
+                        .execute(&state.pool)
+                        .await
                     {
-                        push_req.recipient = endpoint.clone();
-                        if let Some(obj) = push_req.metadata.as_object_mut() {
-                            obj.insert(
-                                "web_push".into(),
-                                serde_json::json!({
-                                    "endpoint": endpoint,
-                                    "p256dh": p256dh,
-                                    "auth": auth,
-                                    "platform": token.platform,
-                                    "token_id": token.id,
-                                }),
-                            );
-                        }
+                        warn!("Could not drop dead push token {}: {}", token.id, db_e);
                     } else {
-                        push_req.recipient = token.token.clone();
+                        info!("Dropped dead push token {} ({})", token.id, err.message);
                     }
-                    connector.send(&push_req).await?;
                 }
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Push requires subscriber_id"))
+                last_error = Some(err);
             }
         }
-        None => Err(anyhow::anyhow!("Unknown channel: {}", job.channel)),
+    }
+    match (accepted, last_error) {
+        (Some(delivery), _) => Ok(delivery),
+        (None, Some(err)) => Err(err),
+        (None, None) => Ok(Delivery::new("skipped", None)),
     }
 }
 
@@ -624,4 +758,40 @@ fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<Strin
             .and_then(|v| v.as_str())
             .map(String::from),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_schedule_grows_and_caps() {
+        let seconds: Vec<i64> = (1..=7).map(|a| retry_delay(a).num_seconds()).collect();
+        // Within ±20 % of 30 s, 2 min, 10 min, 30 min, 2 h, then capped at 2 h.
+        let expected = [30, 120, 600, 1800, 7200, 7200, 7200];
+        for (got, want) in seconds.iter().zip(expected.iter()) {
+            let (lo, hi) = ((*want as f64 * 0.79) as i64, (*want as f64 * 1.21) as i64);
+            assert!(*got >= lo && *got <= hi, "got {got} for expected ~{want}");
+        }
+    }
+
+    #[test]
+    fn whole_batch_permanent_rejection_is_detected() {
+        let perm = || Err(ProviderError::permanent("resend", "bad"));
+        assert!(all_permanent(&[perm(), perm()]));
+        assert!(!all_permanent(&[
+            perm(),
+            Err(ProviderError::transient("resend", "503"))
+        ]));
+        assert!(!all_permanent(&[perm(), Ok(Delivery::new("resend", None))]));
+        assert!(!all_permanent(&[]));
+    }
+
+    #[test]
+    fn jitter_stays_within_bounds() {
+        for _ in 0..50 {
+            let j = jitter_fraction();
+            assert!((-0.2..=0.2).contains(&j), "jitter {j}");
+        }
+    }
 }

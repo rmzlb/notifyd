@@ -2,7 +2,8 @@ use crate::api::projects::require_admin;
 use crate::AppState;
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde_json::{json, Value};
@@ -79,4 +80,23 @@ pub async fn metrics(
         "active_workflow_runs": active_workflow_runs,
         "uptime_seconds": uptime_seconds,
     })))
+}
+
+/// GET /v1/metrics/prometheus — text exposition for Prometheus / Grafana
+/// Agent. Same admin key as `/v1/metrics`, sent as `x-api-key` or
+/// `Authorization: Bearer` (Prometheus `bearer_token`).
+pub async fn metrics_prometheus(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    require_admin(&headers)?;
+    let body = crate::metrics::render(&state.pool).await;
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response())
 }

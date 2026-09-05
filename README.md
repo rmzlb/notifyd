@@ -281,7 +281,9 @@ api_key = "sk_myapp_xxx"
 channels = ["email", "in_app"]
 ```
 
-→ Full config: [notifyd.toml.example](notifyd.toml.example)
+→ Full config: [notifyd.toml.example](notifyd.toml.example). Providers and
+their environment variables (Resend, Cloudflare Email Service, any SMTP,
+AgentMail, Telnyx, Twilio, web push): [docs/CONNECTORS.md](docs/CONNECTORS.md).
 
 ---
 
@@ -319,6 +321,8 @@ notifyd/
 | 📦 **[Setup Guide](docs/SETUP.md)** | Local dev, Docker, production deploy |
 | 🔌 **[API Reference](docs/API.md)** | Every endpoint with curl/TS/Rust examples |
 | 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue design, SSE internals, connectors |
+| 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
+| 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook, inventory |
 | 🤖 **[LLM Docs](docs/llms.txt)** | Full API in plain text — feed to your agent |
 
 ---

@@ -10,8 +10,10 @@
 # (see src/config.rs `from_env`). We deliberately don't mount a TOML so
 # the same image works across environments without a config file.
 #
-# IMPORTANT: notifyd's SSE inbox uses an in-memory broadcast channel
-# (tokio::sync::broadcast). DO NOT scale horizontally — pin replicas: 1.
+# Replicas: live inbox events fan out through Postgres NOTIFY and stream
+# tickets live in the database, so several replicas are fine. Outbound pacing
+# (EMAIL_RATE_PER_SEC…) is per replica: divide the provider limit by the
+# replica count.
 
 services:
   notifyd:
@@ -24,10 +26,38 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (random 32+ chars, used to sign subscriber JWTs)}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (random 32+ chars, gates /v1/admin/*)}
 
-      # Email connector (Resend) -------------------------------------------
+      # Email connector ----------------------------------------------------
+      # EMAIL_PROVIDER: resend (default when RESEND_API_KEY is set) | agentmail
+      #                 | cloudflare | smtp | log (development only)
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      EMAIL_FROM: ${EMAIL_FROM:-bonjour@craie.ctrlnz.com}
-      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Craie}
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      EMAIL_FROM: ${EMAIL_FROM:-notifications@example.com}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-}
+
+      # SMS connector (SMS_PROVIDER: telnyx | twilio) + WhatsApp (Telnyx) -----
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      SMS_FROM: ${SMS_FROM:-}
+      TELNYX_API_KEY: ${TELNYX_API_KEY:-}
+      TELNYX_MESSAGING_PROFILE_ID: ${TELNYX_MESSAGING_PROFILE_ID:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TELNYX_WHATSAPP_API_KEY: ${TELNYX_WHATSAPP_API_KEY:-}
+      WHATSAPP_FROM: ${WHATSAPP_FROM:-}
+
+      # Worker: attempts, outbound pacing (provider requests per second) ----
+      WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-5}
+      EMAIL_RATE_PER_SEC: ${EMAIL_RATE_PER_SEC:-8}
+      SMS_RATE_PER_SEC: ${SMS_RATE_PER_SEC:-10}
+      WHATSAPP_RATE_PER_SEC: ${WHATSAPP_RATE_PER_SEC:-10}
+      RATE_LIMIT_PAUSE_SECS: ${RATE_LIMIT_PAUSE_SECS:-2}
       # Svix signing secret of the Resend webhook endpoint. Empty = the
       # /webhooks/resend route answers 503 and nothing is ingested.
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
@@ -40,7 +70,7 @@ services:
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:ops@yourdomain.com}
 
       # CORS for browsers calling /v1/inbox/*/stream ------------------------
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://maisoncraie.com,https://www.maisoncraie.com,https://craie.ctrlnz.com,https://helmai.ai,https://www.helmai.ai}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
 
       # Optional -----------------------------------------------------------
       PORT: "3400"
@@ -60,7 +90,7 @@ services:
         aliases: [notifyd]
     restart: unless-stopped
     deploy:
-      replicas: 1   # SSE in-memory; do NOT scale horizontally without LISTEN/NOTIFY rework
+      replicas: 1   # raise freely; pacing limits are per replica
 
   notifyd-db:
     image: postgres:16-alpine

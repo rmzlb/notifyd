@@ -19,9 +19,18 @@ pub fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>
         ));
     }
 
+    // `x-api-key` or `Authorization: Bearer …` (Prometheus scrapers only
+    // speak the latter).
     let provided = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+        })
+        .map(str::trim)
         .unwrap_or("");
 
     if !constant_time_eq(provided.as_bytes(), admin_key.as_bytes()) {
@@ -131,17 +140,19 @@ pub async fn list_projects(
 
     let projects: Vec<Value> = rows
         .iter()
-        .map(|(id, name, channels, rate_limit, created_at, from_email, from_name)| {
-            json!({
-                "id": id,
-                "name": name,
-                "channels": channels,
-                "rate_limit_per_min": rate_limit,
-                "created_at": created_at,
-                "from_email": from_email,
-                "from_name": from_name,
-            })
-        })
+        .map(
+            |(id, name, channels, rate_limit, created_at, from_email, from_name)| {
+                json!({
+                    "id": id,
+                    "name": name,
+                    "channels": channels,
+                    "rate_limit_per_min": rate_limit,
+                    "created_at": created_at,
+                    "from_email": from_email,
+                    "from_name": from_name,
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({"projects": projects})))

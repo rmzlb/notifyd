@@ -35,6 +35,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
         // Health + Metrics
         .route("/health", get(health::health))
         .route("/metrics", get(health::metrics))
+        .route("/metrics/prometheus", get(health::metrics_prometheus))
         // Auth
         .route("/auth/subscriber-token", post(auth::subscriber_token))
         // Send

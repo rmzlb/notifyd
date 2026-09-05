@@ -1,10 +1,10 @@
-use super::{Channel, Connector, SendRequest};
+use super::{http_outcome, Channel, Connector, Delivery, ProviderError, SendRequest, SendResult};
 use crate::config::PushConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use base64::Engine;
-use serde_json::json;
-use tracing::{error, info};
+use serde_json::{json, Value};
+use tracing::info;
 use web_push::{
     ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
     WebPushMessageBuilder,
@@ -54,14 +54,14 @@ impl PushConnector {
         Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
     }
 
-    async fn send_fcm(&self, req: &SendRequest) -> Result<()> {
+    async fn send_fcm(&self, req: &SendRequest) -> SendResult {
         let server_key = self
             .config
             .fcm_server_key
             .as_deref()
             .map(str::trim)
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| anyhow!("FCM server key not configured"))?;
+            .ok_or_else(|| ProviderError::permanent("fcm", "FCM server key not configured"))?;
 
         // req.recipient is the FCM device token
         let body = json!({
@@ -73,26 +73,28 @@ impl PushConnector {
             "data": req.metadata,
         });
 
-        let res = self
+        let response = self
             .client
             .post("https://fcm.googleapis.com/fcm/send")
             .header("Authorization", format!("key={}", server_key))
             .json(&body)
             .send()
-            .await?;
-
-        if res.status().is_success() {
-            info!(
-                "Push sent via FCM to {}",
-                crate::pii::mask_recipient("push", &req.recipient)
-            );
-            Ok(())
-        } else {
-            let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            error!("FCM error {}: {}", status, text);
-            Err(anyhow!("FCM error {}: {}", status, text))
-        }
+            .await
+            .map_err(|e| ProviderError::transport("fcm", e))?;
+        let delivery = http_outcome("fcm", response, |json| {
+            json.get("results")
+                .and_then(Value::as_array)
+                .and_then(|r| r.first())
+                .and_then(|r| r.get("message_id"))
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
+        .await?;
+        info!(
+            "Push sent via FCM to {}",
+            crate::pii::mask_recipient("push", &req.recipient)
+        );
+        Ok(delivery)
     }
 
     async fn send_web_push(&self, req: &SendRequest) -> Result<()> {
@@ -176,11 +178,39 @@ impl Connector for PushConnector {
         Channel::Push
     }
 
-    async fn send(&self, req: &SendRequest) -> Result<()> {
+    fn provider(&self) -> &'static str {
+        "web-push"
+    }
+
+    async fn send(&self, req: &SendRequest) -> SendResult {
         if req.metadata.get("web_push").is_some() || req.recipient.starts_with("https://") {
-            self.send_web_push(req).await
+            self.send_web_push(req)
+                .await
+                .map(|_| Delivery::new("web-push", None))
+                .map_err(classify_web_push_error)
         } else {
             self.send_fcm(req).await
         }
+    }
+}
+
+/// A dead endpoint (404/410) or a rejected payload will not get better by
+/// retrying; the subscription should be dropped instead. Push service
+/// outages are transient.
+pub fn classify_web_push_error(error: anyhow::Error) -> ProviderError {
+    use web_push::WebPushError;
+    let message = error.to_string();
+    match error.downcast_ref::<WebPushError>() {
+        Some(WebPushError::ServerError { .. }) => ProviderError::transient("web-push", message),
+        Some(WebPushError::EndpointNotValid(_))
+        | Some(WebPushError::EndpointNotFound(_))
+        | Some(WebPushError::InvalidUri)
+        | Some(WebPushError::Unauthorized(_))
+        | Some(WebPushError::BadRequest(_))
+        | Some(WebPushError::PayloadTooLarge)
+        | Some(WebPushError::InvalidTtl)
+        | Some(WebPushError::InvalidTopic) => ProviderError::permanent("web-push", message),
+        Some(_) => ProviderError::transient("web-push", message),
+        None => ProviderError::permanent("web-push", message),
     }
 }

@@ -34,11 +34,23 @@ Body:
   "template": "template_id",         // optional, use stored template instead
   "vars": {"first_name": "Alice"},   // template variables
   "scheduled_at": "2026-03-25T14:00:00Z",  // optional future delivery
-  "idempotency_key": "unique-key"    // optional dedup key
+  "idempotency_key": "unique-key",   // optional dedup key
+  "priority": "normal",              // critical|high|normal|low|bulk or 0-100; lower first
+  "tags": [{"name": "category", "value": "transactional"}],  // email; category=campaign|marketing|newsletter defaults priority to bulk
+  "email_headers": {"List-Unsubscribe": "<https://...>"},    // email, custom MIME headers
+  "attachments": [{"filename": "f.pdf", "content": "<base64>", "content_type": "application/pdf"}],
+  "cc": ["copy@example.com"], "reply_to": "support@example.com"
 }
 
-Channels: "email", "sms", "in_app", "push"
+Channels: "email", "sms", "whatsapp", "in_app", "push"
 Response: {"success": true, "jobs": [{"id": "uuid", "channel": "email", "status": "pending"}]}
+
+Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed.
+- provider accepted: sent, provider + provider_message_id stored
+- 429: retry WITHOUT consuming an attempt; the channel lane pauses for Retry-After
+- 5xx / timeout / network: retry with backoff 30s, 2min, 10min, 30min, 2h (+-20% jitter), failed after max_attempts (5)
+- other 4xx, invalid recipient, suppression list: failed immediately
+Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 
 ---
 
@@ -281,13 +293,27 @@ max_connections = 10
 [worker]
 poll_interval_ms = 500
 batch_size = 50
-max_attempts = 3
+max_attempts = 5
+
+[worker.pacing]                 # provider requests per second per replica
+email_per_sec = 8.0
+sms_per_sec = 10.0
+rate_limit_pause_secs = 2
 
 [connectors.email]
-provider = "resend"
+provider = "resend"             # resend | cloudflare | smtp | agentmail | log
 api_key = "re_xxx"
 from = "notifications@domain.com"
 from_name = "My App"
+# cloudflare: api_key = Cloudflare token, account_id = "..."
+# smtp: [connectors.email.smtp] host/port/username/password/security(starttls|tls|none)
+# log: development only, nothing is sent
+
+Env-only deployments (no TOML): EMAIL_PROVIDER, RESEND_API_KEY | CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_EMAIL_API_TOKEN
+| SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/SMTP_SECURITY | AGENTMAIL_API_KEY, EMAIL_FROM, EMAIL_FROM_NAME,
+SMS_PROVIDER (telnyx|twilio) + SMS_FROM + TELNYX_API_KEY | TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN,
+WORKER_MAX_ATTEMPTS, EMAIL_RATE_PER_SEC, SMS_RATE_PER_SEC, WHATSAPP_RATE_PER_SEC, PUSH_RATE_PER_SEC, RATE_LIMIT_PAUSE_SECS.
+Metrics: GET /v1/metrics (JSON) and GET /v1/metrics/prometheus (text), admin key as x-api-key or Bearer.
 
 [connectors.sms]
 provider = "twilio"          # or "telnyx"

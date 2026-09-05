@@ -1,6 +1,5 @@
-use super::{Channel, Connector, SendRequest};
+use super::{Channel, Connector, Delivery, ProviderError, SendRequest, SendResult};
 use crate::sse::SseBroadcaster;
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::json;
@@ -31,7 +30,11 @@ impl Connector for InAppConnector {
         Channel::InApp
     }
 
-    async fn send(&self, req: &SendRequest) -> Result<()> {
+    fn provider(&self) -> &'static str {
+        "postgres"
+    }
+
+    async fn send(&self, req: &SendRequest) -> SendResult {
         let project_id = req.metadata["project_id"].as_str().unwrap_or("");
         let subscriber_id = req.metadata["subscriber_id"]
             .as_str()
@@ -49,7 +52,8 @@ impl Connector for InAppConnector {
         .bind(url)
         .bind(&req.metadata)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| ProviderError::database("postgres", e))?;
 
         let event = json!({
             "type": "new_notification",
@@ -74,7 +78,8 @@ impl Connector for InAppConnector {
         .bind(project_id)
         .bind(subscriber_id)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| ProviderError::database("postgres", e))?;
 
         let count_event = json!({"type": "count_update", "unread_count": count});
         self.broadcaster
@@ -82,6 +87,6 @@ impl Connector for InAppConnector {
             .await;
 
         info!("In-app sent to {}:{}", project_id, subscriber_id);
-        Ok(())
+        Ok(Delivery::new("postgres", Some(row.id.to_string())))
     }
 }

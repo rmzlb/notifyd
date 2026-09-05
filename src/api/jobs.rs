@@ -46,14 +46,20 @@ pub async fn get_job(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
 
-    let job: Option<Job> = sqlx::query_as(
-        "SELECT id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error FROM jobs WHERE id=$1 AND project_id=$2"
-    )
+    let job: Option<Job> = sqlx::query_as(&format!(
+        "SELECT {} FROM jobs WHERE id=$1 AND project_id=$2",
+        crate::db::JOB_COLUMNS
+    ))
     .bind(id)
     .bind(&project.id)
     .fetch_optional(&state.pool)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    .map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
     let job = job.ok_or_else(|| {
         (

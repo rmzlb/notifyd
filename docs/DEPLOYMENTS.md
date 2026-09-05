@@ -75,6 +75,14 @@ serves which company.
   `<dokploy>/api/deploy/compose/<refreshToken>` (the token is on the compose
   record). Dokploy only deploys when the pushed branch matches the configured one.
 
+## Observability
+
+`GET /v1/metrics/prometheus` (admin key as `Authorization: Bearer`) exposes
+outcomes, provider errors by kind, lane pauses, provider latency, queue depth
+and the age of the oldest waiting job per priority band. Point the Dokploy
+monitoring stack (or any Prometheus) at each instance. `/v1/health` carries
+`commit` and `built_at_epoch` for drift checks.
+
 ## Rules that keep N instances safe
 
 - **Migrations are additive only.** Every instance runs `sqlx::migrate!` at
@@ -85,5 +93,7 @@ serves which company.
   set `from_email` and `from_name` when creating a project.
 - **Pins move on purpose.** The Dockerfile pins images by digest; refresh them
   together with `Cargo.lock`, never implicitly.
-- **`replicas: 1`.** The in-app inbox uses an in-memory broadcast; scale
-  vertically or port `src/sse.rs` to Postgres `LISTEN/NOTIFY` first.
+- **Replicas are allowed.** Live inbox events fan out through Postgres
+  `NOTIFY` and stream tickets live in `sse_tickets`. Outbound pacing is per
+  replica: `EMAIL_RATE_PER_SEC` × replicas must stay under the provider limit
+  (Resend: 10 req/s per team).

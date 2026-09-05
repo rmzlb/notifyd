@@ -15,7 +15,7 @@
 //!     idempotently, stamps the job (`delivered_at` / `bounced_at`), and turns
 //!     permanent bounces and complaints into suppressions;
 //!   - the worker refuses to dispatch email to an actively suppressed address
-//!     (`RecipientSuppressed`, terminal — retrying cannot succeed);
+//!     (`ProviderError::suppressed`, terminal — retrying cannot succeed);
 //!   - `GET /v1/suppressions` + `DELETE /v1/suppressions/:id` let a project
 //!     inspect and release (never delete — history stays).
 
@@ -48,13 +48,6 @@ pub const JOB_ID_TAG: &str = "notifyd_job_id";
 const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
 
 // ─── Suppression check (used by the worker) ─────────────────────────────────
-
-/// Terminal send error: the recipient is on the suppression list. The worker
-/// downcasts to this to fail the job immediately — a retry cannot succeed
-/// while the suppression is active, so burning attempts on it is noise.
-#[derive(Debug, thiserror::Error)]
-#[error("recipient suppressed: {0}")]
-pub struct RecipientSuppressed(pub String);
 
 /// Human-readable description of the active suppression for this address,
 /// or None when sending is allowed.

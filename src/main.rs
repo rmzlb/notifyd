@@ -3,7 +3,9 @@ mod config;
 mod connectors;
 mod db;
 mod deliverability;
+mod metrics;
 mod middleware;
+mod pacing;
 mod pii;
 mod sse;
 mod templates;
@@ -34,6 +36,8 @@ pub struct AppState {
     /// disabled: /webhooks/resend answers 503 instead of trusting anyone.
     pub resend_webhook_secret: Option<String>,
     pub started_at: Instant,
+    /// Outbound pacing and 429 lane pauses, shared by the worker.
+    pub pacer: Arc<pacing::Pacer>,
 }
 
 // Implement manually since Instant doesn't impl Debug
@@ -87,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
     info!("Migrations applied");
 
-    let broadcaster = sse::SseBroadcaster::new();
+    let broadcaster = sse::SseBroadcaster::new(pool.clone());
     let rate_limiter = middleware::RateLimiter::new();
 
     let resend_webhook_secret = std::env::var("RESEND_WEBHOOK_SECRET")
@@ -104,10 +108,18 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter: rate_limiter.clone(),
         resend_webhook_secret,
         started_at: Instant::now(),
+        pacer: Arc::new(pacing::Pacer::new(config.worker.pacing.clone())),
     });
 
     // Feature #13: Graceful shutdown signal
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // SSE fan-out listener (one per replica)
+    let listener_broadcaster = broadcaster.clone();
+    let listener_shutdown = shutdown_rx.clone();
+    tokio::spawn(async move {
+        listener_broadcaster.run_listener(listener_shutdown).await;
+    });
 
     // Worker
     let worker_state = state.clone();
@@ -141,9 +153,14 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173".to_string());
         let origins: Vec<_> = origins_str
             .split(',')
-            .filter_map(|s| s.trim().parse::<axum::http::HeaderValue>().ok())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
             .collect();
         if origins.is_empty() {
+            tracing::warn!(
+                "CORS_ORIGINS is empty — browsers from any origin may open the inbox stream"
+            );
             CorsLayer::new().allow_origin(Any)
         } else {
             CorsLayer::new().allow_origin(origins)

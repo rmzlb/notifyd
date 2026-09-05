@@ -1,8 +1,7 @@
-use super::{Channel, Connector, SendRequest};
+use super::{http_outcome, Channel, Connector, ProviderError, SendRequest, SendResult};
 use crate::config::WhatsappConfig;
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use tracing::{error, info};
+use tracing::info;
 
 /// WhatsApp connector via Telnyx (`POST /v2/messages/whatsapp`).
 ///
@@ -88,17 +87,26 @@ impl Connector for WhatsappConnector {
         Channel::Whatsapp
     }
 
-    async fn send(&self, req: &SendRequest) -> Result<()> {
+    fn provider(&self) -> &'static str {
+        "telnyx"
+    }
+
+    async fn send(&self, req: &SendRequest) -> SendResult {
         match self.config.provider.as_str() {
             "telnyx" => {}
-            p => return Err(anyhow!("Unknown WhatsApp provider: {}", p)),
+            p => {
+                return Err(ProviderError::permanent(
+                    "whatsapp",
+                    format!("unknown WhatsApp provider: {p}"),
+                ))
+            }
         }
 
         let api_key = self
             .config
             .api_key
             .as_deref()
-            .ok_or_else(|| anyhow!("Telnyx WhatsApp api_key required"))?;
+            .ok_or_else(|| ProviderError::permanent("telnyx", "WhatsApp api_key required"))?;
 
         let mut body = serde_json::json!({
             "from": self.config.from,
@@ -109,25 +117,19 @@ impl Connector for WhatsappConnector {
             body["messaging_profile_id"] = serde_json::Value::String(profile_id.clone());
         }
 
-        let res = self
+        let response = self
             .client
             .post("https://api.telnyx.com/v2/messages/whatsapp")
             .bearer_auth(api_key)
             .json(&body)
             .send()
-            .await?;
-
-        if res.status().is_success() {
-            info!(
-                "WhatsApp sent via Telnyx to {}",
-                crate::pii::mask_phone(&req.recipient)
-            );
-            Ok(())
-        } else {
-            let status = res.status();
-            let text = res.text().await.unwrap_or_default();
-            error!("Telnyx WhatsApp error {}: {}", status, text);
-            Err(anyhow!("Telnyx WhatsApp error {}: {}", status, text))
-        }
+            .await
+            .map_err(|e| ProviderError::transport("telnyx", e))?;
+        let delivery = http_outcome("telnyx", response, super::sms::telnyx_message_id).await?;
+        info!(
+            "WhatsApp sent via Telnyx to {}",
+            crate::pii::mask_phone(&req.recipient)
+        );
+        Ok(delivery)
     }
 }
