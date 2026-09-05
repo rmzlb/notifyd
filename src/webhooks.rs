@@ -9,6 +9,40 @@ use uuid::Uuid;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// One HTTP client for every webhook delivery: building a client per call
+/// (TLS setup included) was the dominant cost of a batch of 500 jobs.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("reqwest client")
+    });
+    &CLIENT
+}
+
+/// Projects among `projects` that have at least one enabled webhook. Lets the
+/// worker skip the per-job fan-out entirely when nobody listens.
+pub async fn projects_with_webhooks(
+    pool: &sqlx::PgPool,
+    projects: &[String],
+) -> std::collections::HashSet<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT project_id FROM webhooks WHERE enabled = true AND project_id = ANY($1)",
+    )
+    .bind(projects)
+    .fetch_all(pool)
+    .await
+    .map(|v| v.into_iter().collect())
+    .unwrap_or_else(|e| {
+        tracing::warn!(
+            "webhook lookup failed ({}), assuming every project listens",
+            e
+        );
+        projects.iter().cloned().collect()
+    })
+}
+
 /// Fire webhooks for a project event. Called via tokio::spawn (fire-and-forget).
 pub async fn fire_webhooks(
     pool: &PgPool,
@@ -39,9 +73,7 @@ pub async fn fire_webhooks(
     });
     let body = serde_json::to_string(&payload)?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    let client = http_client();
 
     for (wh_id, url, secret) in webhooks {
         let signature = sign_payload(&secret, &body);

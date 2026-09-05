@@ -677,58 +677,80 @@ pub async fn batch_notification(
         "url": req.url,
     });
 
-    let mut total = 0usize;
-    let mut deduplicated = 0usize;
+    // Recipient timezones in one query (only when a window applies).
+    let timezones: std::collections::HashMap<String, String> = if window.is_some() {
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, timezone FROM subscribers WHERE project_id = $1 AND id = ANY($2)",
+        )
+        .bind(&project.id)
+        .bind(&req.subscribers)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?
+        .into_iter()
+        .filter_map(|(id, tz)| tz.map(|tz| (id, tz)))
+        .collect()
+    } else {
+        Default::default()
+    };
+
+    // One set-based INSERT per request: a 5 000-recipient campaign is one
+    // round trip, not 5 000. Same idempotency rule as /v1/send: a key held
+    // by a live or succeeded job returns it untouched (partial unique index,
+    // migration 014).
+    let mut col_channel: Vec<String> = Vec::new();
+    let mut col_subscriber: Vec<String> = Vec::new();
+    let mut col_scheduled: Vec<DateTime<Utc>> = Vec::new();
+    let mut col_idem: Vec<Option<String>> = Vec::new();
     for subscriber_id in &req.subscribers {
-        // Each recipient gets its own daytime.
-        let recipient_tz = if window.is_some() {
-            subscriber_timezone(&state, &project.id, Some(subscriber_id)).await
-        } else {
-            None
-        };
         let scheduled_at = windowed_schedule(
             window.as_ref(),
             requested_at,
             marketing,
-            recipient_tz.as_deref(),
+            timezones.get(subscriber_id).map(String::as_str),
         );
         for channel in &channels {
-            let idem_key = req
-                .idempotency_key
-                .as_ref()
-                .map(|k| format!("{}-{}-{}", k, subscriber_id, channel));
-            // Same rule as /v1/send: a key held by a live or succeeded job
-            // returns it untouched (partial unique index, migration 014).
-            let inserted = sqlx::query(
-                r#"
-                INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts, idempotency_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                ON CONFLICT (project_id, idempotency_key)
-                    WHERE idempotency_key IS NOT NULL
-                      AND status NOT IN ('failed', 'cancelled')
-                    DO NOTHING
-                "#,
-            )
-            .bind(&project.id)
-            .bind(channel)
-            .bind(subscriber_id)
-            .bind(subscriber_id)
-            .bind(req.template.as_deref())
-            .bind(&payload)
-            .bind(scheduled_at)
-            .bind(priority)
-            .bind(state.config.worker.max_attempts)
-            .bind(idem_key.as_deref())
-            .execute(&state.pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
-            if inserted.rows_affected() == 1 {
-                total += 1;
-            } else {
-                deduplicated += 1;
-            }
+            col_channel.push(channel.clone());
+            col_subscriber.push(subscriber_id.clone());
+            col_scheduled.push(scheduled_at);
+            col_idem.push(
+                req.idempotency_key
+                    .as_ref()
+                    .map(|k| format!("{}-{}-{}", k, subscriber_id, channel)),
+            );
         }
     }
+    let requested_total = col_channel.len();
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts, idempotency_key)
+        SELECT $1, c, s, s, $2, $3, t, $4, $5, k
+        FROM unnest($6::text[], $7::text[], $8::timestamptz[], $9::text[]) AS rows(c, s, t, k)
+        ON CONFLICT (project_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+              AND status NOT IN ('failed', 'cancelled')
+            DO NOTHING
+        "#,
+    )
+    .bind(&project.id)
+    .bind(req.template.as_deref())
+    .bind(&payload)
+    .bind(priority)
+    .bind(state.config.worker.max_attempts)
+    .bind(&col_channel)
+    .bind(&col_subscriber)
+    .bind(&col_scheduled)
+    .bind(&col_idem)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    let total = inserted.rows_affected() as usize;
+    let deduplicated = requested_total.saturating_sub(total);
 
     Ok(Json(json!({
         "success": true,

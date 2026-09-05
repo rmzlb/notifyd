@@ -94,14 +94,13 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
 
     info!("Processing {} jobs", jobs.len());
 
-    for job in &jobs {
-        sqlx::query(
-            "UPDATE jobs SET status='processing', attempts=attempts+1, claimed_at=now() WHERE id=$1",
-        )
-            .bind(job.id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    let ids: Vec<uuid::Uuid> = jobs.iter().map(|j| j.id).collect();
+    sqlx::query(
+        "UPDATE jobs SET status='processing', attempts=attempts+1, claimed_at=now() WHERE id = ANY($1)",
+    )
+    .bind(&ids)
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
 
@@ -158,18 +157,28 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
         }
     };
 
+    let ctx = EmailContext::load(state, &jobs).await;
     let mut prepared: Vec<(Job, SendRequest)> = Vec::with_capacity(jobs.len());
     for job in jobs {
         if let Some(sub_id) = &job.subscriber_id {
-            if !workflow_engine::check_preference(
-                state,
-                &job.project_id,
-                sub_id,
-                &job.channel,
-                job.template_id.as_deref(),
-            )
-            .await
-            {
+            let allowed = if ctx.preferences_loaded {
+                ctx.preference_allows(
+                    &job.project_id,
+                    sub_id,
+                    &job.channel,
+                    job.template_id.as_deref(),
+                )
+            } else {
+                workflow_engine::check_preference(
+                    state,
+                    &job.project_id,
+                    sub_id,
+                    &job.channel,
+                    job.template_id.as_deref(),
+                )
+                .await
+            };
+            if !allowed {
                 info!(
                     "Job {} skipped (subscriber opted out of {} channel)",
                     job.id, job.channel
@@ -179,7 +188,7 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
             }
         }
 
-        match build_send_request(state, &job).await {
+        match build_send_request(state, &job, Some(&ctx)).await {
             Ok(req) => prepared.push((job, req)),
             Err(e) => finalize_job_result(state, &job, Err(e)).await,
         }
@@ -226,10 +235,61 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
                     .await;
         }
 
+        // Accepted messages: one UPDATE for the chunk; failures keep the
+        // per-job path (rare, and each needs its own decision).
+        let mut sent: Vec<(&Job, Delivery)> = Vec::new();
         for ((job, _), result) in chunk.iter().zip(results.into_iter()) {
-            finalize_job_result(state, job, result).await;
+            match result {
+                Ok(delivery) => sent.push((job, delivery)),
+                Err(err) => finalize_job_result(state, job, Err(err)).await,
+            }
+        }
+        finalize_sent_batch(state, &sent, &ctx.webhook_projects).await;
+    }
+}
+
+/// Mark a chunk of accepted jobs `sent` in one statement, then metrics and
+/// webhooks per job. Falls back to per-job updates if the batch update fails.
+async fn finalize_sent_batch(
+    state: &Arc<AppState>,
+    sent: &[(&Job, Delivery)],
+    webhook_projects: &std::collections::HashSet<String>,
+) {
+    if sent.is_empty() {
+        return;
+    }
+    let ids: Vec<uuid::Uuid> = sent.iter().map(|(j, _)| j.id).collect();
+    let providers: Vec<String> = sent.iter().map(|(_, d)| d.provider.to_string()).collect();
+    let message_ids: Vec<Option<String>> = sent
+        .iter()
+        .map(|(_, d)| d.provider_message_id.clone())
+        .collect();
+    let updated = sqlx::query(
+        r#"
+        UPDATE jobs SET status='sent', sent_at=now(), error=NULL, provider=r.provider, provider_message_id=r.mid
+        FROM unnest($1::uuid[], $2::text[], $3::text[]) AS r(id, provider, mid)
+        WHERE jobs.id = r.id
+        "#,
+    )
+    .bind(&ids)
+    .bind(&providers)
+    .bind(&message_ids)
+    .execute(&state.pool)
+    .await;
+    if let Err(e) = updated {
+        warn!("batch sent update failed ({}), marking jobs one by one", e);
+        for (job, delivery) in sent {
+            finalize_job_result(state, job, Ok(delivery.clone())).await;
+        }
+        return;
+    }
+    for (job, delivery) in sent {
+        metrics::record_outcome(&job.channel, delivery.provider, "sent");
+        if webhook_projects.contains(&job.project_id) {
+            fire_terminal_webhooks(state, job, "sent");
         }
     }
+    info!("{} job(s) sent via {}", sent.len(), sent[0].1.provider);
 }
 
 /// Primary and fallback email connectors. While the breaker is open the
@@ -552,9 +612,156 @@ async fn resolve_project_from(
 
 /// Build the `SendRequest` for a job (template render + metadata). Shared by
 /// the email batch path and the per-job dispatch.
+/// Per-batch lookups done once instead of once per job: sender identity per
+/// project and active suppressions for the recipients of the batch.
+#[derive(Default)]
+struct EmailContext {
+    /// False when the suppression prefetch failed: fall back to per-job checks
+    /// rather than sending to an address that may be blocked.
+    suppressions_loaded: bool,
+    senders: std::collections::HashMap<String, (Option<String>, Option<String>)>,
+    /// (project, lower(email)) → (reason, scope, since)
+    suppressions:
+        std::collections::HashMap<(String, String), (String, String, chrono::DateTime<Utc>)>,
+    /// (project, subscriber) → [(channel, workflow_id, enabled)]
+    preferences: std::collections::HashMap<(String, String), Vec<(String, String, bool)>>,
+    preferences_loaded: bool,
+    /// Projects with at least one enabled outbound webhook.
+    webhook_projects: std::collections::HashSet<String>,
+}
+
+impl EmailContext {
+    async fn load(state: &Arc<AppState>, jobs: &[Job]) -> Self {
+        let mut ctx = Self::default();
+        let mut projects: Vec<String> = jobs.iter().map(|j| j.project_id.clone()).collect();
+        projects.sort();
+        projects.dedup();
+        for project in &projects {
+            let from = resolve_project_from(state, project).await;
+            ctx.senders.insert(project.clone(), from);
+        }
+        ctx.webhook_projects =
+            crate::webhooks::projects_with_webhooks(&state.pool, &projects).await;
+        let recipients: Vec<String> = jobs.iter().map(|j| j.recipient.to_lowercase()).collect();
+        let rows: Result<
+            Vec<(String, String, String, String, chrono::DateTime<Utc>)>,
+            sqlx::Error,
+        > = sqlx::query_as(
+            "SELECT project_id, lower(email), reason, scope, created_at FROM email_suppressions
+             WHERE project_id = ANY($1) AND lower(email) = ANY($2) AND released_at IS NULL",
+        )
+        .bind(&projects)
+        .bind(&recipients)
+        .fetch_all(&state.pool)
+        .await;
+        let rows = match rows {
+            Ok(rows) => {
+                ctx.suppressions_loaded = true;
+                rows
+            }
+            Err(e) => {
+                warn!(
+                    "suppression prefetch failed ({}), falling back to per-job checks",
+                    e
+                );
+                Vec::new()
+            }
+        };
+        let subscribers: Vec<String> = jobs
+            .iter()
+            .filter_map(|j| j.subscriber_id.clone())
+            .collect();
+        if !subscribers.is_empty() {
+            let prefs: Result<Vec<(String, String, String, String, bool)>, sqlx::Error> = sqlx::query_as(
+                "SELECT project_id, subscriber_id, channel, workflow_id, enabled FROM subscriber_preferences
+                 WHERE project_id = ANY($1) AND subscriber_id = ANY($2)",
+            )
+            .bind(&projects)
+            .bind(&subscribers)
+            .fetch_all(&state.pool)
+            .await;
+            match prefs {
+                Ok(rows) => {
+                    ctx.preferences_loaded = true;
+                    for (project, sub, channel, workflow, enabled) in rows {
+                        ctx.preferences
+                            .entry((project, sub))
+                            .or_default()
+                            .push((channel, workflow, enabled));
+                    }
+                }
+                Err(e) => warn!(
+                    "preference prefetch failed ({}), falling back to per-job checks",
+                    e
+                ),
+            }
+        } else {
+            ctx.preferences_loaded = true;
+        }
+        for (project, email, reason, scope, since) in rows {
+            // 'all' wins over 'marketing' for the same address.
+            let entry = ctx.suppressions.entry((project, email)).or_insert((
+                reason.clone(),
+                scope.clone(),
+                since,
+            ));
+            if scope == "all" {
+                *entry = (reason, scope, since);
+            }
+        }
+        ctx
+    }
+
+    /// Same precedence as `workflow_engine::check_preference`: specific
+    /// workflow, then channel wildcard, then global opt-out, default allowed.
+    fn preference_allows(
+        &self,
+        project: &str,
+        subscriber: &str,
+        channel: &str,
+        workflow: Option<&str>,
+    ) -> bool {
+        let Some(rows) = self
+            .preferences
+            .get(&(project.to_string(), subscriber.to_string()))
+        else {
+            return true;
+        };
+        if let Some(wf) = workflow {
+            if let Some((_, _, enabled)) = rows.iter().find(|(c, w, _)| c == channel && w == wf) {
+                return *enabled;
+            }
+        }
+        if let Some((_, _, enabled)) = rows.iter().find(|(c, w, _)| c == channel && w == "*") {
+            return *enabled;
+        }
+        if let Some((_, _, enabled)) = rows.iter().find(|(c, w, _)| c == "*" && w == "*") {
+            return *enabled;
+        }
+        true
+    }
+
+    /// Same answer as `deliverability::active_suppression`, from memory.
+    fn suppression(&self, project: &str, email: &str, marketing: bool) -> Option<String> {
+        let (reason, scope, since) = self
+            .suppressions
+            .get(&(project.to_string(), email.to_lowercase()))?;
+        if scope == "all" || marketing {
+            Some(format!(
+                "{} on {} — release it via DELETE /v1/suppressions to send again",
+                reason,
+                since.format("%Y-%m-%d")
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 async fn build_send_request(
     state: &Arc<AppState>,
     job: &Job,
+    ctx: Option<&EmailContext>,
 ) -> Result<SendRequest, ProviderError> {
     let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
         let tmpl: Option<crate::db::Template> = sqlx::query_as(
@@ -595,15 +802,20 @@ async fn build_send_request(
 
         // Suppressed address: fail before the provider. A commercial
         // unsubscribe only stops marketing; bounces and complaints stop all.
-        if let Some(reason) = crate::deliverability::active_suppression(
-            &state.pool,
-            &job.project_id,
-            &job.recipient,
-            marketing,
-        )
-        .await
-        .map_err(|e| ProviderError::transient("database", e.to_string()))?
-        {
+        let suppressed = match ctx {
+            Some(c) if c.suppressions_loaded => {
+                c.suppression(&job.project_id, &job.recipient, marketing)
+            }
+            _ => crate::deliverability::active_suppression(
+                &state.pool,
+                &job.project_id,
+                &job.recipient,
+                marketing,
+            )
+            .await
+            .map_err(|e| ProviderError::transient("database", e.to_string()))?,
+        };
+        if let Some(reason) = suppressed {
             return Err(ProviderError::suppressed(reason));
         }
 
@@ -656,7 +868,10 @@ async fn build_send_request(
     }
 
     let (from_email, from_name) = if job.channel == "email" {
-        resolve_project_from(state, &job.project_id).await
+        match ctx.and_then(|c| c.senders.get(&job.project_id)) {
+            Some(from) => from.clone(),
+            None => resolve_project_from(state, &job.project_id).await,
+        }
     } else {
         (None, None)
     };
@@ -749,7 +964,7 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
         }
     }
 
-    let req = build_send_request(state, job).await?;
+    let req = build_send_request(state, job, None).await?;
 
     let connector: Box<dyn Connector> = match Channel::from_str(&job.channel) {
         Some(Channel::Email) => {

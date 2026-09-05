@@ -27,6 +27,12 @@ impl Connector for LogConnector {
         "log"
     }
 
+    /// Same batch size as Resend, so a `log` instance exercises the same
+    /// code paths (and benchmarks the engine, not a per-message artefact).
+    fn batch_max(&self) -> usize {
+        100
+    }
+
     async fn send(&self, req: &SendRequest) -> SendResult {
         let id = uuid::Uuid::new_v4().to_string();
         info!(
