@@ -1,0 +1,49 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rmzlb/notifyd",
+  "title": "notifyd",
+  "description": "Operate a self-hosted notifyd notification service: digest of what needs attention, jobs, retries, suppressions, project settings, test sends.",
+  "repository": {
+    "url": "https://github.com/rmzlb/notifyd",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/rmzlb/notifyd",
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/rmzlb/notifyd:0.1.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:3400/mcp"
+      },
+      "environmentVariables": [
+        { "name": "DATABASE_URL", "description": "PostgreSQL connection string", "isRequired": true, "isSecret": true },
+        { "name": "JWT_SECRET", "description": "Secret for subscriber tokens", "isRequired": true, "isSecret": true },
+        { "name": "ADMIN_API_KEY", "description": "Operator key; also the Bearer token for /mcp", "isRequired": true, "isSecret": true },
+        { "name": "EMAIL_PROVIDER", "description": "resend | cloudflare | smtp | agentmail | log", "isRequired": false, "isSecret": false },
+        { "name": "EMAIL_FROM", "description": "Default sender address", "isRequired": false, "isSecret": false }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{host}/mcp",
+      "variables": {
+        "host": {
+          "description": "Hostname of your notifyd instance (one instance per company)",
+          "isRequired": true
+        }
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <ADMIN_API_KEY> for full access, or Bearer <READONLY_API_KEY> for the read-only tool set",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

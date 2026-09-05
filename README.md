@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/image-42_MB-green?style=flat-square" alt="Image size">
   <img src="https://img.shields.io/badge/RSS-13_MB_idle-green?style=flat-square" alt="Memory">
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=flat-square" alt="MCP server"></a>
+  <a href="https://skills.sh/rmzlb/notifyd"><img src="https://skills.sh/b/rmzlb/notifyd" alt="Agent Skills"></a>
 </p>
 
 <p align="center">
@@ -102,7 +103,7 @@ Or describe notifyd as a tool:
 | **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only, one 42 MB image |
 | **Setup** | 30+ min | Signup + dashboard | `docker compose up` (2 min) |
 | **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
-| **Memory** | several hundred MB | N/A | 13 MB idle, 23 MB draining 100k jobs |
+| **Memory** | not measured by us | N/A | 13 MB idle, 23 MB draining 100k jobs ([method](docs/BENCHMARKS.md)) |
 | **Throughput** | — | quota-bound | 44k jobs/s enqueued, 3.5k jobs/s drained ([benchmarks](docs/BENCHMARKS.md)) |
 | **Provider 429** | job fails | managed | lane paused, `Retry-After` honoured, failover provider |
 | **Priorities / send windows** | ❌ | ✅ | ✅ critical → bulk lanes, per-subscriber timezone windows |
@@ -292,6 +293,8 @@ Agent Skills for Claude Code, Cursor and friends live in [`skills/`](skills/):
 npx skills add rmzlb/notifyd
 ```
 
+MCP registry name: `mcp-name: io.github.rmzlb/notifyd` (see [`server.json`](server.json)).
+
 ## Configuration
 
 Single TOML file. Minimal setup:
@@ -355,6 +358,7 @@ notifyd/
 | 🔌 **[API Reference](docs/API.md)** | Every endpoint with curl/TS/Rust examples |
 | 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue design, SSE internals, connectors |
 | 📈 **[Benchmarks](docs/BENCHMARKS.md)** | Footprint, throughput, how to reproduce |
+| 📣 **[Visibility](docs/VISIBILITY.md)** | Registries, lists and launch channels, in order |
 | 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
 | 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, how an agent runs an instance |
 | 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook, inventory |

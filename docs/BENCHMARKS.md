@@ -70,20 +70,22 @@ entirely for projects without a webhook.
 
 ## How the numbers compare
 
-Published or commonly observed figures for the alternatives, for orientation
-only (different hardware, different scope):
+Are we biased? Probably, yes: this page is written by the people who wrote
+notifyd. So it only publishes numbers we measured ourselves, on notifyd. We
+have not run Novu, Knock, Courier or SuprSend through this protocol, and the
+hosted products cannot be measured this way at all. What can be compared
+without a benchmark is the shape of each system:
 
 | | notifyd | Novu (self-hosted) | Knock / Courier / SuprSend |
 |---|---|---|---|
-| Runtime | 1 container, Postgres | API + worker + WS + web, MongoDB, Redis | hosted SaaS |
-| Memory at idle | 13 MB | several hundred MB across containers | n/a |
-| Image | 42 MB | > 1 GB across images | n/a |
+| Runtime | 1 container, Postgres | API, worker, WebSocket and web containers, MongoDB, Redis | hosted SaaS |
 | Queue durability | Postgres row per job, `SKIP LOCKED` | Redis / BullMQ | managed |
-| Provider 429 | pauses the lane, retries with `Retry-After` | job fails | managed |
-| Ops surface | REST digest + MCP tools + Prometheus | React dashboard | dashboard + API |
+| Provider 429 | pauses the lane, retries with `Retry-After` | job fails (one attempt) | managed |
+| Ops surface | REST digest, MCP tools, Prometheus | React dashboard | dashboard + API |
 
-If you publish a benchmark of your own, open an issue with the command lines
-and we will link it here.
+If you run Novu (or anything else) through the protocol below on the same
+class of hardware, open an issue with the command lines and the numbers and
+we will link it here, whatever they say.
 
 ## Reproduce
 

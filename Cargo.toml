@@ -7,7 +7,9 @@ description = "Agent-first self-hosted notification service. Email, SMS, Push, I
 repository = "https://github.com/rmzlb/notifyd"
 homepage = "https://github.com/rmzlb/notifyd"
 keywords = ["notifications", "email", "sms", "push", "sse"]
-categories = ["web-programming::http-server"]
+categories = ["web-programming::http-server", "email"]
+readme = "README.md"
+include = ["src/**", "migrations/**", "build.rs", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "notifyd.toml.example"]
 
 [[bin]]
 name = "notifyd"

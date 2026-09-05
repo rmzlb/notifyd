@@ -1,0 +1,38 @@
+# Publish server.json to the official MCP registry (registry.modelcontextprotocol.io).
+# Manual: run it AFTER the release workflow has pushed the image and the GHCR
+# package has been made public (the registry fetches the image manifest to
+# check the io.modelcontextprotocol.server.name label).
+name: mcp-registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag already published to GHCR (e.g. v0.2.0)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Pin server.json to the release
+        run: |
+          v="${{ inputs.tag }}"; v="${v#v}"
+          jq --arg v "$v" '.version = $v | .packages[0].identifier = ("ghcr.io/rmzlb/notifyd:" + $v)' server.json > server.pinned.json
+          mv server.pinned.json server.json
+          cat server.json
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --version
+      - name: Publish
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

@@ -25,6 +25,9 @@ RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
 COPY --from=builder /app/target/release/notifyd /usr/local/bin/notifyd
 COPY --from=builder /app/migrations ./migrations
+LABEL org.opencontainers.image.source="https://github.com/rmzlb/notifyd" \
+      org.opencontainers.image.licenses="MIT" \
+      io.modelcontextprotocol.server.name="io.github.rmzlb/notifyd"
 USER nobody
 EXPOSE 3400
 ENV RUST_LOG=notifyd=info
