@@ -18,6 +18,23 @@ acting, they move.
 | Agent Skills | `skills/` | `npx skills add rmzlb/notifyd`, skills.sh badge |
 | `llms.txt` | `docs/llms.txt` | agent-readable API reference |
 
+## Status (2026-09-06)
+
+| Step | State |
+|---|---|
+| Repository metadata (topics, description, homepage, Discussions) | done |
+| Release `v0.2.0`, image `ghcr.io/rmzlb/notifyd` public (amd64, arm64), GitHub Release | done |
+| Official MCP registry `io.github.rmzlb/notifyd` 0.2.0 | done, status `active` |
+| PR punkpeye/awesome-mcp-servers | open, #13725 |
+| mcpservers.org (free submission, Communication) | submitted, review within 12 h |
+| selfh.st, Self-Host Weekly "Project Launch" | submitted |
+| Social preview image | rendered, to upload (UI only) |
+| crates.io publish | waiting for a crates.io token (`cargo login`) |
+| GitHub MCP Registry inclusion mail, Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
+| Glama "Add Server" | needs a GitHub login in a browser |
+| awesome-selfhosted | eligible from 2027-01-06 (4 months after the first release) |
+| awesome-rust | eligible at 50 stars or 2 000 crate downloads |
+
 ## Steps that need a human (rmzlb) — in order
 
 1. **Repository metadata** (5 min). Topics, description, homepage, Discussions,
@@ -42,8 +59,8 @@ acting, they move.
    ```
 
    Then open the package page (`github.com/rmzlb/notifyd/pkgs/container/notifyd`)
-   → Package settings → **Change visibility → Public**. GHCR packages are
-   private by default. Test `docker pull ghcr.io/rmzlb/notifyd:0.2.0` from a
+   → check the package is public (the `org.opencontainers.image.source`
+   label linked it to this public repo; for `v0.2.0` it was public at once). Test `docker pull ghcr.io/rmzlb/notifyd:0.2.0` from a
    machine that has never built it. The release date starts the 4-month clock
    for awesome-selfhosted.
 
