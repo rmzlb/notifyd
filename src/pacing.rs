@@ -148,6 +148,7 @@ mod tests {
             whatsapp_per_sec: 10.0,
             push_per_sec: 50.0,
             rate_limit_pause_secs: 2,
+            failover_cooldown_secs: 60,
         })
     }
 

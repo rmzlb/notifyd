@@ -35,6 +35,15 @@ pub static LANE_PAUSES: Lazy<IntCounterVec> = Lazy::new(|| {
     .expect("metric registration")
 });
 
+pub static FAILOVERS: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
+        "notifyd_email_failovers_total",
+        "Emails re-routed from the primary to the fallback provider, by outcome (sent, failed)",
+        &["from", "to", "outcome"]
+    )
+    .expect("metric registration")
+});
+
 pub static SEND_LATENCY: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
         "notifyd_send_latency_seconds",
@@ -73,6 +82,10 @@ pub fn record_provider_error(channel: &str, provider: &str, kind: &str) {
     PROVIDER_ERRORS
         .with_label_values(&[channel, provider, kind])
         .inc();
+}
+
+pub fn record_failover(from: &str, to: &str, outcome: &str) {
+    FAILOVERS.with_label_values(&[from, to, outcome]).inc();
 }
 
 pub fn record_lane_pause(channel: &str) {

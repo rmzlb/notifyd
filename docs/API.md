@@ -238,6 +238,7 @@ The worker classifies every provider answer:
 | Provider answer | Job | Notes |
 |---|---|---|
 | accepted | `sent` | `provider_message_id` stored |
+| `429`, `5xx`, network — with `EMAIL_FALLBACK_PROVIDER` set | sent through the fallback at once | the primary rests for `EMAIL_FAILOVER_COOLDOWN_SECS`; `provider` on the job names the connector that accepted |
 | `429` | `retry`, attempt **not** consumed | the channel lane pauses for `Retry-After` (default `RATE_LIMIT_PAUSE_SECS`) |
 | `5xx`, timeout, network | `retry` | backoff 30 s → 2 min → 10 min → 30 min → 2 h (±20 % jitter), `failed` after `max_attempts` (default 5) |
 | other `4xx`, invalid recipient, unverified sender, integrity violation | `failed` at once | retrying the same request would give the same answer |

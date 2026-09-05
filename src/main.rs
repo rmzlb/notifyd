@@ -3,6 +3,7 @@ mod config;
 mod connectors;
 mod db;
 mod deliverability;
+mod failover;
 mod mcp;
 mod metrics;
 mod middleware;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub started_at: Instant,
     /// Outbound pacing and 429 lane pauses, shared by the worker.
     pub pacer: Arc<pacing::Pacer>,
+    /// Circuit breaker in front of the primary email provider.
+    pub email_breaker: Arc<failover::Breaker>,
 }
 
 // Implement manually since Instant doesn't impl Debug
@@ -111,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
         resend_webhook_secret,
         started_at: Instant::now(),
         pacer: Arc::new(pacing::Pacer::new(config.worker.pacing.clone())),
+        email_breaker: Arc::new(failover::Breaker::new()),
     });
 
     // Feature #13: Graceful shutdown signal

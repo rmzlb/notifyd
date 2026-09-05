@@ -25,6 +25,21 @@ Common: `EMAIL_FROM` (default sender, verified at the provider),
 | `agentmail` | `AGENTMAIL_API_KEY`, `EMAIL_FROM` = inbox address | Agent inbox provider. |
 | `log` | — | Nothing is sent. One info log line per message, `provider="log"` in metrics. Development and previews only. |
 
+### Failover — `EMAIL_FALLBACK_PROVIDER`
+
+A second email provider, configured with its own variables exactly as if it
+were primary (`EMAIL_FALLBACK_PROVIDER=smtp` + `SMTP_*`, or `cloudflare` +
+`CLOUDFLARE_*`, or `resend` + `RESEND_API_KEY`). The sender domain must be
+verified at both providers.
+
+When the primary answers 429, 5xx or fails at the network level, the message
+goes out through the fallback **in the same worker tick** and a breaker
+opens: for `EMAIL_FAILOVER_COOLDOWN_SECS` (60) every email uses the fallback,
+then the primary is tried again. Permanent errors (bad address, unverified
+sender) never fail over: they would fail at any provider. Metrics:
+`notifyd_email_failovers_total{from,to,outcome}`; the digest reports the
+breaker state and suggests a fallback when none is configured.
+
 ## SMS — `SMS_PROVIDER`
 
 Common: `SMS_FROM` (E.164 number or alphanumeric sender), pacing
@@ -66,6 +81,7 @@ stream. An unknown subscriber is a permanent error.
 | `WORKER_POLL_INTERVAL_MS` | 500 | Poll interval. |
 | `EMAIL_RATE_PER_SEC`, `SMS_RATE_PER_SEC`, `WHATSAPP_RATE_PER_SEC`, `PUSH_RATE_PER_SEC` | 8, 10, 10, 50 | Provider requests per second per replica (a batch call counts once). `0` disables pacing for that channel. |
 | `RATE_LIMIT_PAUSE_SECS` | 2 | Lane pause after a 429 without `Retry-After`. |
+| `EMAIL_FALLBACK_PROVIDER`, `EMAIL_FAILOVER_COOLDOWN_SECS` | none, 60 | Second email provider and how long the primary rests after tripping the breaker. |
 
 ## Adding a provider
 

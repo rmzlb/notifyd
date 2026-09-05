@@ -41,6 +41,9 @@ services:
       SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
       EMAIL_FROM: ${EMAIL_FROM:-notifications@example.com}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-}
+      # Second provider used when the primary answers 429/5xx (same sender).
+      EMAIL_FALLBACK_PROVIDER: ${EMAIL_FALLBACK_PROVIDER:-}
+      EMAIL_FAILOVER_COOLDOWN_SECS: ${EMAIL_FAILOVER_COOLDOWN_SECS:-60}
 
       # SMS connector (SMS_PROVIDER: telnyx | twilio) + WhatsApp (Telnyx) -----
       SMS_PROVIDER: ${SMS_PROVIDER:-}

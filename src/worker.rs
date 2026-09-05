@@ -189,7 +189,7 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
         return;
     }
 
-    let connector = create_email_connector(config);
+    let (connector, fallback) = email_connectors(state, config);
     let chunk_size = connector.batch_max().max(1);
     for chunk in prepared.chunks(chunk_size) {
         // One provider request per chunk: one token.
@@ -218,10 +218,99 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
             }
         }
 
+        // Failover: what the primary could not take (429, 5xx, network) goes
+        // out through the fallback now, and the primary rests.
+        if let Some(fallback) = &fallback {
+            results =
+                failover_results(state, connector.as_ref(), fallback.as_ref(), &reqs, results)
+                    .await;
+        }
+
         for ((job, _), result) in chunk.iter().zip(results.into_iter()) {
             finalize_job_result(state, job, result).await;
         }
     }
+}
+
+/// Primary and fallback email connectors. While the breaker is open the
+/// fallback takes the primary's seat, so nothing waits on a provider that
+/// just told us to stop.
+fn email_connectors(
+    state: &Arc<AppState>,
+    primary: crate::config::EmailConfig,
+) -> (Box<dyn Connector>, Option<Box<dyn Connector>>) {
+    let fallback_cfg = state.config.connectors.email_fallback.clone();
+    match fallback_cfg {
+        Some(fb) if state.email_breaker.is_open() => {
+            info!(
+                "Email primary provider resting ({:?} left) — sending through fallback {}",
+                state.email_breaker.open_for().unwrap_or_default(),
+                fb.provider
+            );
+            (create_email_connector(fb), None)
+        }
+        Some(fb) => (
+            create_email_connector(primary),
+            Some(create_email_connector(fb)),
+        ),
+        None => (create_email_connector(primary), None),
+    }
+}
+
+fn should_fail_over(result: &SendResult) -> bool {
+    matches!(
+        result,
+        Err(e) if matches!(e.kind, ProviderErrorKind::Transient | ProviderErrorKind::RateLimited { .. })
+    )
+}
+
+/// Re-send through `fallback` every request the primary refused for a
+/// transient reason. Trips the breaker on the first such refusal.
+async fn failover_results(
+    state: &Arc<AppState>,
+    primary: &dyn Connector,
+    fallback: &dyn Connector,
+    reqs: &[SendRequest],
+    mut results: Vec<SendResult>,
+) -> Vec<SendResult> {
+    let to_retry: Vec<usize> = results
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| should_fail_over(r))
+        .map(|(i, _)| i)
+        .collect();
+    if to_retry.is_empty() {
+        return results;
+    }
+    let cooldown =
+        std::time::Duration::from_secs(state.config.worker.pacing.failover_cooldown_secs.max(1));
+    state.email_breaker.trip(cooldown);
+    warn!(
+        "Email failover: {} message(s) refused by {} — sending through {}, primary rests {:?}",
+        to_retry.len(),
+        primary.provider(),
+        fallback.provider(),
+        cooldown
+    );
+    for i in to_retry {
+        state.pacer.acquire("email").await;
+        let started = Instant::now();
+        let second = fallback.send(&reqs[i]).await;
+        metrics::observe_latency(
+            "email",
+            fallback.provider(),
+            started.elapsed().as_secs_f64(),
+        );
+        let outcome = if second.is_ok() { "sent" } else { "failed" };
+        metrics::record_failover(primary.provider(), fallback.provider(), outcome);
+        match second {
+            Ok(delivery) => results[i] = Ok(delivery),
+            // Both refused: keep the fallback's answer (it is the fresher
+            // one); the normal retry policy applies to it.
+            Err(err) => results[i] = Err(err),
+        }
+    }
+    results
 }
 
 fn all_permanent(results: &[SendResult]) -> bool {
@@ -627,7 +716,25 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
             let config = state.config.connectors.email.as_ref().ok_or_else(|| {
                 ProviderError::permanent("none", "email connector not configured")
             })?;
-            create_email_connector(config.clone())
+            let (primary, fallback) = email_connectors(state, config.clone());
+            state.pacer.acquire("email").await;
+            let started = Instant::now();
+            let first = primary.send(&req).await;
+            metrics::observe_latency("email", primary.provider(), started.elapsed().as_secs_f64());
+            return match fallback {
+                Some(fallback) if should_fail_over(&first) => {
+                    let mut results = failover_results(
+                        state,
+                        primary.as_ref(),
+                        fallback.as_ref(),
+                        std::slice::from_ref(&req),
+                        vec![first],
+                    )
+                    .await;
+                    results.pop().expect("one result")
+                }
+                _ => first,
+            };
         }
         Some(Channel::Sms) => {
             let config =
@@ -814,6 +921,21 @@ mod tests {
             let (lo, hi) = ((*want as f64 * 0.79) as i64, (*want as f64 * 1.21) as i64);
             assert!(*got >= lo && *got <= hi, "got {got} for expected ~{want}");
         }
+    }
+
+    #[test]
+    fn only_transient_and_rate_limited_fail_over() {
+        assert!(should_fail_over(&Err(ProviderError::transient(
+            "resend", "503"
+        ))));
+        assert!(should_fail_over(&Err(ProviderError::rate_limited(
+            "resend", None, "429"
+        ))));
+        assert!(!should_fail_over(&Err(ProviderError::permanent(
+            "resend", "422"
+        ))));
+        assert!(!should_fail_over(&Err(ProviderError::suppressed("bounce"))));
+        assert!(!should_fail_over(&Ok(Delivery::new("resend", None))));
     }
 
     #[test]

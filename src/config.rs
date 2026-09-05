@@ -69,6 +69,10 @@ pub struct PacingConfig {
     /// Lane pause after a 429 without `Retry-After`, in seconds.
     #[serde(default = "default_rate_limit_pause_secs")]
     pub rate_limit_pause_secs: u64,
+    /// How long the primary email provider rests after tripping the
+    /// failover breaker, in seconds.
+    #[serde(default = "default_failover_cooldown_secs")]
+    pub failover_cooldown_secs: u64,
 }
 
 impl Default for PacingConfig {
@@ -79,8 +83,13 @@ impl Default for PacingConfig {
             whatsapp_per_sec: default_sms_per_sec(),
             push_per_sec: default_push_per_sec(),
             rate_limit_pause_secs: default_rate_limit_pause_secs(),
+            failover_cooldown_secs: default_failover_cooldown_secs(),
         }
     }
+}
+
+fn default_failover_cooldown_secs() -> u64 {
+    60
 }
 
 fn default_email_per_sec() -> f64 {
@@ -99,6 +108,12 @@ fn default_rate_limit_pause_secs() -> u64 {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectorsConfig {
     pub email: Option<EmailConfig>,
+    /// Second email provider, used when the primary answers 429 or 5xx:
+    /// the failing message goes out through it at once and the primary
+    /// rests for `pacing.failover_cooldown_secs`. Same sender identity: the
+    /// domain must be verified at both providers.
+    #[serde(default)]
+    pub email_fallback: Option<EmailConfig>,
     pub sms: Option<SmsConfig>,
     #[serde(default)]
     pub whatsapp: Option<WhatsappConfig>,
@@ -294,9 +309,6 @@ impl EmailConfig {
     /// `EMAIL_PROVIDER` selects the connector. When unset, `RESEND_API_KEY`
     /// alone still means Resend, so existing deployments keep working.
     pub fn from_env() -> anyhow::Result<Option<Self>> {
-        let from =
-            env_non_empty("EMAIL_FROM").unwrap_or_else(|| "notifications@example.com".to_string());
-        let from_name = env_non_empty("EMAIL_FROM_NAME");
         let provider = match env_non_empty("EMAIL_PROVIDER") {
             Some(p) => p,
             None => {
@@ -307,10 +319,28 @@ impl EmailConfig {
                 }
             }
         };
+        Self::for_provider(&provider, "EMAIL_PROVIDER").map(Some)
+    }
+
+    /// `EMAIL_FALLBACK_PROVIDER` names the second provider; its credentials
+    /// come from the same variables as if it were primary (each provider has
+    /// its own: RESEND_API_KEY, SMTP_*, CLOUDFLARE_*…).
+    pub fn fallback_from_env() -> anyhow::Result<Option<Self>> {
+        match env_non_empty("EMAIL_FALLBACK_PROVIDER") {
+            None => Ok(None),
+            Some(p) => Self::for_provider(&p, "EMAIL_FALLBACK_PROVIDER").map(Some),
+        }
+    }
+
+    fn for_provider(provider: &str, variable: &str) -> anyhow::Result<Self> {
+        let from =
+            env_non_empty("EMAIL_FROM").unwrap_or_else(|| "notifications@example.com".to_string());
+        let from_name = env_non_empty("EMAIL_FROM_NAME");
+        let provider = provider.to_string();
         let config = match provider.as_str() {
             "resend" => Self {
                 provider,
-                api_key: required("RESEND_API_KEY", "EMAIL_PROVIDER=resend")?,
+                api_key: required("RESEND_API_KEY", &format!("{variable}=resend"))?,
                 from,
                 from_name,
                 account_id: None,
@@ -318,7 +348,7 @@ impl EmailConfig {
             },
             "agentmail" => Self {
                 provider,
-                api_key: required("AGENTMAIL_API_KEY", "EMAIL_PROVIDER=agentmail")?,
+                api_key: required("AGENTMAIL_API_KEY", &format!("{variable}=agentmail"))?,
                 from,
                 from_name,
                 account_id: None,
@@ -326,12 +356,15 @@ impl EmailConfig {
             },
             "cloudflare" => Self {
                 provider,
-                api_key: required("CLOUDFLARE_EMAIL_API_TOKEN", "EMAIL_PROVIDER=cloudflare")?,
+                api_key: required(
+                    "CLOUDFLARE_EMAIL_API_TOKEN",
+                    &format!("{variable}=cloudflare"),
+                )?,
                 from,
                 from_name,
                 account_id: Some(required(
                     "CLOUDFLARE_ACCOUNT_ID",
-                    "EMAIL_PROVIDER=cloudflare",
+                    &format!("{variable}=cloudflare"),
                 )?),
                 smtp: None,
             },
@@ -342,7 +375,7 @@ impl EmailConfig {
                 from_name,
                 account_id: None,
                 smtp: Some(SmtpConfig {
-                    host: required("SMTP_HOST", "EMAIL_PROVIDER=smtp")?,
+                    host: required("SMTP_HOST", &format!("{variable}=smtp"))?,
                     port: env_parse("SMTP_PORT", default_smtp_port()),
                     username: env_non_empty("SMTP_USERNAME"),
                     password: env_non_empty("SMTP_PASSWORD"),
@@ -358,10 +391,10 @@ impl EmailConfig {
                 smtp: None,
             },
             other => anyhow::bail!(
-                "EMAIL_PROVIDER={other} is not supported (resend, agentmail, cloudflare, smtp, log)"
+                "{variable}={other} is not supported (resend, agentmail, cloudflare, smtp, log)"
             ),
         };
-        Ok(Some(config))
+        Ok(config)
     }
 }
 
@@ -414,10 +447,15 @@ impl Config {
                         "RATE_LIMIT_PAUSE_SECS",
                         default_rate_limit_pause_secs(),
                     ),
+                    failover_cooldown_secs: env_parse(
+                        "EMAIL_FAILOVER_COOLDOWN_SECS",
+                        default_failover_cooldown_secs(),
+                    ),
                 },
             },
             connectors: ConnectorsConfig {
                 email: EmailConfig::from_env()?,
+                email_fallback: EmailConfig::fallback_from_env()?,
                 sms: SmsConfig::from_env(),
                 whatsapp: WhatsappConfig::from_env(),
                 push: PushConfig::from_env(),

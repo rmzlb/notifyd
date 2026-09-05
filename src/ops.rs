@@ -57,6 +57,11 @@ pub struct InstanceInfo {
     pub sms_provider: Option<String>,
     pub whatsapp_provider: Option<String>,
     pub paused_lanes: Vec<String>,
+    pub email_fallback_provider: Option<String>,
+    /// Seconds before the primary email provider is tried again, when the
+    /// failover breaker is open.
+    pub email_primary_resting_seconds: Option<u64>,
+    pub email_failovers_since_boot: u64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -365,6 +370,14 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
             .as_ref()
             .map(|c| c.provider.clone()),
         paused_lanes: state.pacer.paused_channels(),
+        email_fallback_provider: state
+            .config
+            .connectors
+            .email_fallback
+            .as_ref()
+            .map(|c| c.provider.clone()),
+        email_primary_resting_seconds: state.email_breaker.open_for().map(|d| d.as_secs()),
+        email_failovers_since_boot: state.email_breaker.trips(),
     };
 
     let findings = compute_findings(
@@ -418,6 +431,24 @@ fn compute_findings(
             severity: "critical",
             message: "Email provider is `log`: nothing is actually sent.".into(),
             action: "Development setting. Switch EMAIL_PROVIDER to a real provider before serving customers.".into(),
+        });
+    }
+    if let Some(secs) = instance.email_primary_resting_seconds {
+        findings.push(Finding {
+            severity: "warning",
+            message: format!(
+                "Primary email provider `{}` is resting for {secs}s after refusing messages; `{}` is delivering.",
+                instance.email_provider.as_deref().unwrap_or("?"),
+                instance.email_fallback_provider.as_deref().unwrap_or("?")
+            ),
+            action: "Nothing lost. Check the primary provider's status page; if it repeats, lower EMAIL_RATE_PER_SEC or move the primary role to the other provider.".into(),
+        });
+    }
+    if instance.email_fallback_provider.is_none() && instance.email_provider.is_some() {
+        findings.push(Finding {
+            severity: "info",
+            message: "No fallback email provider: a provider incident delays emails until it ends.".into(),
+            action: "Set EMAIL_FALLBACK_PROVIDER (smtp, cloudflare, resend…) with its credentials; the sender domain must be verified there too.".into(),
         });
     }
     for lane in &instance.paused_lanes {
@@ -554,7 +585,15 @@ pub fn render_markdown(d: &Digest) -> String {
         d.instance.email_provider.as_deref().unwrap_or("none"),
         d.instance.sms_provider.as_deref().unwrap_or("none"),
         d.instance.whatsapp_provider.as_deref().unwrap_or("none"),
-        if d.instance.paused_lanes.is_empty() {
+        match (
+            &d.instance.email_fallback_provider,
+            d.instance.email_primary_resting_seconds
+        ) {
+            (Some(fb), Some(secs)) =>
+                format!(", email fallback `{fb}` ACTIVE ({secs}s left on primary rest)"),
+            (Some(fb), None) => format!(", email fallback `{fb}`"),
+            (None, _) => String::new(),
+        } + &if d.instance.paused_lanes.is_empty() {
             String::new()
         } else {
             format!(", paused lanes: {}", d.instance.paused_lanes.join(", "))
@@ -1111,6 +1150,9 @@ mod tests {
             sms_provider: None,
             whatsapp_provider: None,
             paused_lanes: vec!["email".into()],
+            email_fallback_provider: None,
+            email_primary_resting_seconds: None,
+            email_failovers_since_boot: 0,
         };
         let queue = QueueState::default();
         let outcomes = vec![OutcomeRow {
@@ -1170,6 +1212,9 @@ mod tests {
             sms_provider: None,
             whatsapp_provider: None,
             paused_lanes: vec![],
+            email_fallback_provider: Some("smtp".into()),
+            email_primary_resting_seconds: None,
+            email_failovers_since_boot: 0,
         };
         let findings = compute_findings(
             &instance,
