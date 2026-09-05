@@ -1,0 +1,45 @@
+# Gate on every push and pull request. Deploys are NOT done here: each
+# company's Dokploy pulls `main` itself (docs/DEPLOYMENTS.md).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: notifyd
+          POSTGRES_PASSWORD: notifyd
+          POSTGRES_DB: notifyd_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U notifyd"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://notifyd:notifyd@localhost:5432/notifyd_test
+      JWT_SECRET: ci-only-secret-0123456789abcdef
+      ADMIN_API_KEY: ci-only-admin
+      EMAIL_PROVIDER: log
+      EMAIL_FROM: ci@example.invalid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked
+      - run: cargo test --locked
+      - name: Image builds and embeds the commit
+        run: |
+          docker build -t notifyd:ci .
+          docker run --rm --entrypoint sh notifyd:ci -c 'test -x /usr/local/bin/notifyd && ls migrations | wc -l'

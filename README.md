@@ -10,7 +10,8 @@
 
 <p align="center">
   <a href="https://github.com/rmzlb/notifyd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
-  <a href="https://hub.docker.com/r/rmzlb/notifyd"><img src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
+  <a href="https://github.com/rmzlb/notifyd/pkgs/container/notifyd"><img src="https://img.shields.io/badge/ghcr.io-rmzlb%2Fnotifyd-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Container image"></a>
+  <a href="https://github.com/rmzlb/notifyd/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rmzlb/notifyd/ci.yml?branch=main&style=flat-square&label=ci" alt="CI"></a>
   <img src="https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/image-42_MB-green?style=flat-square" alt="Image size">
   <img src="https://img.shields.io/badge/RSS-13_MB_idle-green?style=flat-square" alt="Memory">
@@ -140,6 +141,8 @@ Or describe notifyd as a tool:
 ## Quick Start
 
 ### Docker (recommended)
+
+Prebuilt image (linux/amd64 + linux/arm64, 42 MB): `ghcr.io/rmzlb/notifyd`.
 
 ```bash
 git clone https://github.com/rmzlb/notifyd.git && cd notifyd
