@@ -25,6 +25,8 @@ pub async fn run(state: Arc<AppState>, mut shutdown: watch::Receiver<bool>) {
 
     let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
     cleanup_interval.tick().await; // skip first immediate tick
+    let mut reaper_interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    reaper_interval.tick().await;
 
     loop {
         tokio::select! {
@@ -43,6 +45,11 @@ pub async fn run(state: Arc<AppState>, mut shutdown: watch::Receiver<bool>) {
             _ = cleanup_interval.tick() => {
                 if let Err(e) = cleanup_old_jobs(&state).await {
                     error!("Job cleanup error: {}", e);
+                }
+            }
+            _ = reaper_interval.tick() => {
+                if let Err(e) = requeue_stuck_jobs(&state).await {
+                    error!("Stuck job reaper error: {}", e);
                 }
             }
         }
@@ -88,7 +95,9 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
     info!("Processing {} jobs", jobs.len());
 
     for job in &jobs {
-        sqlx::query("UPDATE jobs SET status='processing', attempts=attempts+1 WHERE id=$1")
+        sqlx::query(
+            "UPDATE jobs SET status='processing', attempts=attempts+1, claimed_at=now() WHERE id=$1",
+        )
             .bind(job.id)
             .execute(&mut *tx)
             .await?;
@@ -532,6 +541,38 @@ async fn build_send_request(
         from_name,
         metadata,
     })
+}
+
+/// A job claimed more than `STUCK_AFTER` ago and still `processing` was in
+/// the hands of a worker that died (crash, OOM, hard restart) before it could
+/// record an outcome. Put it back in the queue; the attempt it consumed
+/// stays consumed, so a job that crashes the worker every time still ends
+/// `failed` instead of looping forever.
+pub const STUCK_AFTER: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+async fn requeue_stuck_jobs(state: &Arc<AppState>) -> Result<()> {
+    let requeued = sqlx::query(
+        r#"
+        UPDATE jobs
+        SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'retry' END,
+            next_retry_at = now(),
+            error = COALESCE(error, '') || ' [requeued: worker lost the job while processing]'
+        WHERE status = 'processing'
+          AND claimed_at IS NOT NULL
+          AND claimed_at < now() - make_interval(secs => $1)
+        "#,
+    )
+    .bind(STUCK_AFTER.as_secs_f64())
+    .execute(&state.pool)
+    .await?;
+    if requeued.rows_affected() > 0 {
+        warn!(
+            "Reaper: {} job(s) stuck in processing were re-queued",
+            requeued.rows_affected()
+        );
+        metrics::record_outcome("all", "reaper", "requeued");
+    }
+    Ok(())
 }
 
 /// Cleanup old jobs periodically

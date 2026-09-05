@@ -217,6 +217,10 @@ pub struct BatchRequest {
     /// Same values as on `/v1/send`. A fan-out is marketing by default:
     /// `bulk` (80) unless the caller says otherwise.
     pub priority: Option<Value>,
+    /// Dedupes the whole fan-out: the key is declined per subscriber and
+    /// channel (`<key>-<subscriber>-<channel>`), so replaying the call
+    /// creates no second job for anyone already queued or sent.
+    pub idempotency_key: Option<String>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -581,10 +585,24 @@ pub async fn batch_notification(
     });
 
     let mut total = 0usize;
+    let mut deduplicated = 0usize;
     for subscriber_id in &req.subscribers {
         for channel in &channels {
-            sqlx::query(
-                "INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+            let idem_key = req
+                .idempotency_key
+                .as_ref()
+                .map(|k| format!("{}-{}-{}", k, subscriber_id, channel));
+            // Same rule as /v1/send: a key held by a live or succeeded job
+            // returns it untouched (partial unique index, migration 014).
+            let inserted = sqlx::query(
+                r#"
+                INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts, idempotency_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (project_id, idempotency_key)
+                    WHERE idempotency_key IS NOT NULL
+                      AND status NOT IN ('failed', 'cancelled')
+                    DO NOTHING
+                "#,
             )
             .bind(&project.id)
             .bind(channel)
@@ -595,16 +613,22 @@ pub async fn batch_notification(
             .bind(scheduled_at)
             .bind(priority)
             .bind(state.config.worker.max_attempts)
+            .bind(idem_key.as_deref())
             .execute(&state.pool)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
-            total += 1;
+            if inserted.rows_affected() == 1 {
+                total += 1;
+            } else {
+                deduplicated += 1;
+            }
         }
     }
 
     Ok(Json(json!({
         "success": true,
         "jobs_created": total,
+        "jobs_deduplicated": deduplicated,
         "subscribers": req.subscribers.len(),
         "channels": channels,
     })))

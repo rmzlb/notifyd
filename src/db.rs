@@ -26,10 +26,12 @@ pub struct Job {
     /// Provider that accepted the message and its own message id.
     pub provider: Option<String>,
     pub provider_message_id: Option<String>,
+    /// When the worker claimed the job (see the stuck-job reaper).
+    pub claimed_at: Option<DateTime<Utc>>,
 }
 
 /// Column list shared by every `SELECT … FROM jobs` that loads a [`Job`].
-pub const JOB_COLUMNS: &str = "id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error, priority, provider, provider_message_id";
+pub const JOB_COLUMNS: &str = "id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error, priority, provider, provider_message_id, claimed_at";
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct InboxMessage {

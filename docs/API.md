@@ -243,6 +243,10 @@ The worker classifies every provider answer:
 | other `4xx`, invalid recipient, unverified sender, integrity violation | `failed` at once | retrying the same request would give the same answer |
 | recipient on the suppression list | `failed` at once | the provider is never contacted |
 
+A job left in `processing` for more than 10 minutes (worker crash, OOM, hard
+restart) is re-queued by the reaper with its attempt consumed, so nothing is
+lost silently and nothing loops forever.
+
 `email_envelope` is the exact recipient envelope persisted before provider
 handoff. It lets clients distinguish a recipient still awaiting an event from
 an address that was never included in the accepted send. It is `null` for
@@ -306,6 +310,11 @@ let res = client
 
 Fan-out to many subscribers. Jobs default to priority `bulk` (80): a campaign
 never delays transactional traffic. Pass `"priority"` to override.
+
+`idempotency_key` (optional) dedupes the whole fan-out: the key is declined per
+subscriber and channel, so replaying the same call after a timeout creates no
+second job for anyone already queued or sent. The response reports
+`jobs_created` and `jobs_deduplicated`.
 
 Send the same notification to multiple subscribers.
 

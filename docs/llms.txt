@@ -51,6 +51,8 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 - 5xx / timeout / network: retry with backoff 30s, 2min, 10min, 30min, 2h (+-20% jitter), failed after max_attempts (5)
 - other 4xx, invalid recipient, suppression list: failed immediately
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
+Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
+POST /v1/batch accepts idempotency_key (declined per subscriber and channel) and reports jobs_deduplicated.
 
 ---
 
