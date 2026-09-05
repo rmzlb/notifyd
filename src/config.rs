@@ -431,7 +431,12 @@ impl Config {
                     .unwrap_or_else(|_| "change-me-in-production".to_string()),
             },
             database: DatabaseConfig {
-                url: std::env::var("DATABASE_URL").expect("DATABASE_URL required"),
+                url: std::env::var("DATABASE_URL").map_err(|_| {
+                    anyhow::anyhow!(
+                        "DATABASE_URL is required (postgres://user:password@host:5432/notifyd), \
+                         or point NOTIFYD_CONFIG at a notifyd.toml"
+                    )
+                })?,
                 max_connections: env_parse("DATABASE_MAX_CONNECTIONS", default_max_connections()),
             },
             worker: WorkerConfig {

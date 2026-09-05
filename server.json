@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.rmzlb/notifyd",
   "title": "notifyd",
-  "description": "Operate a self-hosted notifyd notification service: digest of what needs attention, jobs, retries, suppressions, project settings, test sends.",
+  "description": "Operate a self-hosted notifyd instance: digest, jobs, retries, suppressions, projects, test sends.",
   "repository": {
     "url": "https://github.com/rmzlb/notifyd",
     "source": "github"

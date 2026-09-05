@@ -1,5 +1,6 @@
 # Publish server.json to the official MCP registry (registry.modelcontextprotocol.io).
-# Manual: run it AFTER the release workflow has pushed the image and the GHCR
+# Manual: reads server.json from the branch it runs on and pins version and
+# image to the given tag. Run it AFTER the release workflow has pushed the image and the GHCR
 # package has been made public (the registry fetches the image manifest to
 # check the io.modelcontextprotocol.server.name label).
 name: mcp-registry
@@ -20,8 +21,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag }}
       - name: Pin server.json to the release
         run: |
           v="${{ inputs.tag }}"; v="${v#v}"
