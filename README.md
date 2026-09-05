@@ -12,7 +12,9 @@
   <a href="https://github.com/rmzlb/notifyd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <a href="https://hub.docker.com/r/rmzlb/notifyd"><img src="https://img.shields.io/badge/docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker"></a>
   <img src="https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust" alt="Rust">
-  <img src="https://img.shields.io/badge/~3700_lines-green?style=flat-square" alt="Lines of code">
+  <img src="https://img.shields.io/badge/image-42_MB-green?style=flat-square" alt="Image size">
+  <img src="https://img.shields.io/badge/RSS-13_MB_idle-green?style=flat-square" alt="Memory">
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=flat-square" alt="MCP server"></a>
 </p>
 
 <p align="center">
@@ -20,6 +22,7 @@
   <a href="docs/API.md">API Reference</a> •
   <a href="docs/SETUP.md">Setup Guide</a> •
   <a href="docs/ARCHITECTURE.md">Architecture</a> •
+  <a href="docs/BENCHMARKS.md">Benchmarks</a> •
   <a href="docs/llms.txt">LLM Docs</a> •
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -93,28 +96,34 @@ Or describe notifyd as a tool:
 
 ## vs. The Alternatives
 
-| | **Novu** | **Knock** | **notifyd** |
+| | **Novu** | **Knock / Courier / SuprSend** | **notifyd** |
 |---|---|---|---|
-| **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only |
+| **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only, one 42 MB image |
 | **Setup** | 30+ min | Signup + dashboard | `docker compose up` (2 min) |
 | **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
-| **Memory** | ~800MB+ | N/A | ~15MB |
-| **Agent-friendly** | SDK-heavy | Dashboard-first | REST-first, `llms.txt` included |
-| **Realtime** | WebSocket | WebSocket | SSE (simpler, works everywhere) |
-| **Self-hosted** | ✅ (heavy) | ❌ | ✅ (one container) |
-| **Queue** | Redis + BullMQ | Managed | Postgres `SKIP LOCKED` |
-| **Cost** | Free tier / paid | $0.01/notification | Free forever |
+| **Memory** | several hundred MB | N/A | 13 MB idle, 23 MB draining 100k jobs |
+| **Throughput** | — | quota-bound | 44k jobs/s enqueued, 3.5k jobs/s drained ([benchmarks](docs/BENCHMARKS.md)) |
+| **Provider 429** | job fails | managed | lane paused, `Retry-After` honoured, failover provider |
+| **Priorities / send windows** | ❌ | ✅ | ✅ critical → bulk lanes, per-subscriber timezone windows |
+| **Ops for agents** | React dashboard | dashboard + API | `GET /v1/admin/digest`, MCP server, Agent Skills, Prometheus |
+| **Realtime** | WebSocket | WebSocket | SSE (native `EventSource`, multi-replica via Postgres `NOTIFY`) |
+| **Self-hosted** | ✅ (heavy) | ❌ | ✅ (one container per company) |
+| **Queue** | Redis + BullMQ | Managed | Postgres `SKIP LOCKED`, stuck-job reaper |
+| **Cost** | Free tier / paid | per notification | Free forever, MIT |
 
 ---
 
 ## Features
 
-- **📧 Email** — via Resend (plug your API key)
+- **📧 Email** — Resend, Cloudflare Email Service, AgentMail or any SMTP, with an optional failover provider
 - **📱 SMS** — Twilio or Telnyx (swap in config, zero code change)
 - **🔔 Push** — FCM (Firebase Cloud Messaging)
 - **💬 In-app inbox** — REST + realtime SSE stream
 - **⏰ Scheduling** — `scheduled_at` on any notification
-- **🔄 Retry** — exponential backoff (30s → 2min → 10min)
+- **🔄 Retry** — backoff 30s → 2m → 10m → 30m → 2h with jitter, provider `Retry-After` honoured
+- **🚥 Priorities** — critical / normal / bulk lanes, a 429 pauses only the lane that hit it
+- **🕰️ Send windows** — per-project quiet hours in each subscriber's timezone
+- **📭 Unsubscribe** — `List-Unsubscribe` one-click on every marketing email, suppression scopes
 - **🔑 Idempotency** — safe agent retries
 - **📋 Templates** — `{{variable}}` substitution, stored per project
 - **🏢 Multi-project** — one instance, many projects, isolated by API key
@@ -122,7 +131,8 @@ Or describe notifyd as a tool:
 - **👤 Preferences** — per-subscriber opt-in/opt-out
 - **🔍 Audit log** — every mutation logged
 - **🚦 Rate limiting** — per-project sliding window
-- **📊 Metrics** — `/v1/metrics` for monitoring
+- **📊 Metrics** — `/v1/metrics`, `/v1/metrics/prometheus`, per-template metrics
+- **🧭 Digest + MCP** — `GET /v1/admin/digest` and `POST /mcp` so an agent operates the instance
 - **🪝 Webhooks** — delivery events to your endpoints
 
 ---
@@ -323,14 +333,14 @@ notifyd/
 │   ├── middleware.rs          # Rate limiter + audit
 │   ├── api/                  # 13 route modules
 │   └── connectors/           # Email, SMS, Push, In-App
-├── migrations/               # 4 SQL migrations (auto-run)
+├── migrations/               # SQL migrations (auto-run)
 ├── Dockerfile                # Multi-stage + cargo-chef
 ├── docker-compose.yml        # notifyd + Postgres
 ├── notifyd.toml.example      # Config reference
 └── docs/                     # API ref, setup, architecture, llms.txt
 ```
 
-~3,700 lines of Rust. Every file < 400 lines.
+~12,000 lines of Rust, no `unsafe`. 10.8 MB binary, 42 MB image, 13 MB RSS at idle.
 
 ---
 
@@ -341,6 +351,7 @@ notifyd/
 | 📦 **[Setup Guide](docs/SETUP.md)** | Local dev, Docker, production deploy |
 | 🔌 **[API Reference](docs/API.md)** | Every endpoint with curl/TS/Rust examples |
 | 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue design, SSE internals, connectors |
+| 📈 **[Benchmarks](docs/BENCHMARKS.md)** | Footprint, throughput, how to reproduce |
 | 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
 | 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, how an agent runs an instance |
 | 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook, inventory |
