@@ -272,6 +272,13 @@ MCP tools so Claude Code, Claude Desktop or Cursor can run the instance:
 
 → [docs/AGENT.md](docs/AGENT.md)
 
+Agent Skills for Claude Code, Cursor and friends live in [`skills/`](skills/):
+`notifyd-operate`, `notifyd-integrate`, `notifyd-deploy`.
+
+```bash
+npx skills add rmzlb/notifyd
+```
+
 ## Configuration
 
 Single TOML file. Minimal setup:

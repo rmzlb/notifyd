@@ -328,8 +328,11 @@ GET /v1/admin/digest?window=1h|6h|24h|7d|30d&format=json|markdown -> findings (c
 GET /v1/admin/jobs?project_id&status&channel&recipient&since&limit ; POST /v1/admin/jobs/:id/retry ; POST /v1/admin/jobs/:id/cancel
 PATCH /v1/admin/projects/:id {name?, channels?, from_email?, from_name?, rate_limit_per_min?}
 GET|POST /v1/admin/suppressions ; DELETE /v1/admin/suppressions/:id ; project-scoped: POST /v1/jobs/:id/retry, POST /v1/suppressions {email}
-MCP: POST /mcp (Streamable HTTP, Authorization: Bearer <ADMIN_API_KEY>), tools digest, list_jobs, get_job, retry_job, cancel_job,
+GET /v1/admin/metrics/templates?window&bucket=1h|1d&project_id -> funnel per template (sent, failed, delivered, bounced, complained, opened, clicked)
+Keys: ADMIN_API_KEY (all) ; READONLY_API_KEY (GET endpoints, metrics, read-only MCP tools).
+MCP: POST /mcp (Streamable HTTP, Authorization: Bearer <key>), tools digest, template_metrics, list_jobs, get_job, retry_job, cancel_job,
 list_projects, update_project, list_suppressions, add_suppression, release_suppression, send_test. Client config in docs/AGENT.md.
+Agent Skills: npx skills add rmzlb/notifyd (notifyd-operate, notifyd-integrate, notifyd-deploy).
 
 [connectors.sms]
 provider = "twilio"          # or "telnyx"

@@ -38,11 +38,27 @@ Claude Code (`.mcp.json` in the project, or `~/.claude.json`):
 One entry per company instance (`notifyd-craie`, `notifyd-sqare`…). The key
 is read from the environment, never written in the file.
 
+## Two keys
+
+`ADMIN_API_KEY` does everything. `READONLY_API_KEY` (optional) sees the
+digest, the listings, the metrics and only the read-only MCP tools: hand it
+to a support agent or a dashboard. With it, mutating tools answer
+`isError: true` with a sentence saying the admin key is needed. `tools/list`
+is filtered accordingly (`cacheScope: private`).
+
+## Skills
+
+`npx skills add rmzlb/notifyd` installs three Agent Skills:
+`notifyd-operate` (run an instance: digest → investigate → fix → prove),
+`notifyd-integrate` (send from an application correctly: idempotency,
+priority, tags, send windows) and `notifyd-deploy` (stand up an instance).
+
 ## Tools
 
 | Tool | Use it when |
 |---|---|
 | `digest` | "How are notifications doing?" Findings first, ranked `critical` → `warning` → `info`, each with the action to take. Then queue, outcomes per channel/provider, failure reasons, retries waiting, latency p50/p95, deliverability, projects. `window` 1h…30d, `format` markdown or json. |
+| `template_metrics` | Delivery funnel per template over time (sent, failed, delivered, bounced, complained, opened, clicked), `bucket` 1h or 1d. Which template drives the bounces. |
 | `list_jobs` | Investigate: by status, channel, project, recipient, since. Recipients are masked. |
 | `get_job` | One job: attempts, provider, provider message id, delivery events, error. |
 | `retry_job` | After fixing a cause. Re-queues a `failed`/`cancelled` job with a fresh attempt budget. |

@@ -737,6 +737,91 @@ fn truncate(text: String, max: usize) -> String {
     }
 }
 
+// ─── Template metrics ───────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct TemplateBucket {
+    pub template: String,
+    pub bucket: DateTime<Utc>,
+    pub sent: i64,
+    pub failed: i64,
+    pub delivered: i64,
+    pub bounced: i64,
+    pub complained: i64,
+    pub opened: i64,
+    pub clicked: i64,
+}
+
+/// Delivery funnel per template over time. The template key is, in order,
+/// `template_id`, a `template` tag, a `category` tag, else `untemplated`.
+/// Delivery/open/click come from provider events joined by job id, so they
+/// exist only where webhook ingestion is on.
+pub async fn template_metrics(
+    state: &Arc<AppState>,
+    window: Duration,
+    bucket: &str,
+    project_id: Option<&str>,
+) -> Result<Vec<TemplateBucket>> {
+    let trunc = match bucket {
+        "1h" | "hour" => "hour",
+        "1d" | "day" => "day",
+        other => return Err(anyhow!("bucket must be 1h or 1d (got {other})")),
+    };
+    let since = Utc::now() - window;
+    let rows = sqlx::query(&format!(
+        r#"
+        WITH j AS (
+            SELECT id, status,
+                   date_trunc('{trunc}', COALESCE(sent_at, created_at)) AS bucket,
+                   COALESCE(
+                       template_id,
+                       (SELECT t->>'value' FROM jsonb_array_elements(COALESCE(payload->'tags','[]'::jsonb)) t WHERE t->>'name' = 'template' LIMIT 1),
+                       (SELECT t->>'value' FROM jsonb_array_elements(COALESCE(payload->'tags','[]'::jsonb)) t WHERE t->>'name' = 'category' LIMIT 1),
+                       'untemplated'
+                   ) AS template
+            FROM jobs
+            WHERE channel = 'email'
+              AND status IN ('sent','failed')
+              AND COALESCE(sent_at, created_at) >= $1
+              AND ($2::text IS NULL OR project_id = $2)
+        ),
+        e AS (
+            SELECT job_id, event_type FROM provider_events
+            WHERE job_id IS NOT NULL AND received_at >= $1
+        )
+        SELECT j.template, j.bucket,
+               COUNT(*) FILTER (WHERE j.status = 'sent') AS sent,
+               COUNT(*) FILTER (WHERE j.status = 'failed') AS failed,
+               COUNT(DISTINCT e.job_id) FILTER (WHERE e.event_type = 'email.delivered') AS delivered,
+               COUNT(DISTINCT e.job_id) FILTER (WHERE e.event_type = 'email.bounced') AS bounced,
+               COUNT(DISTINCT e.job_id) FILTER (WHERE e.event_type = 'email.complained') AS complained,
+               COUNT(DISTINCT e.job_id) FILTER (WHERE e.event_type = 'email.opened') AS opened,
+               COUNT(DISTINCT e.job_id) FILTER (WHERE e.event_type = 'email.clicked') AS clicked
+        FROM j LEFT JOIN e ON e.job_id = j.id
+        GROUP BY j.template, j.bucket
+        ORDER BY j.template, j.bucket
+        "#
+    ))
+    .bind(since)
+    .bind(project_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| TemplateBucket {
+            template: r.get("template"),
+            bucket: r.get("bucket"),
+            sent: r.get("sent"),
+            failed: r.get("failed"),
+            delivered: r.get("delivered"),
+            bounced: r.get("bounced"),
+            complained: r.get("complained"),
+            opened: r.get("opened"),
+            clicked: r.get("clicked"),
+        })
+        .collect())
+}
+
 // ─── Jobs ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Deserialize)]

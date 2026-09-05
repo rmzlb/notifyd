@@ -25,6 +25,8 @@ services:
       DATABASE_URL: postgres://notifyd:${POSTGRES_PASSWORD:-notifyd}@notifyd-db:5432/notifyd
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (random 32+ chars, used to sign subscriber JWTs)}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (random 32+ chars, gates /v1/admin/*)}
+      # Optional read-only operator key: digest, listings, metrics, read-only MCP tools.
+      READONLY_API_KEY: ${READONLY_API_KEY:-}
 
       # Email connector ----------------------------------------------------
       # EMAIL_PROVIDER: resend (default when RESEND_API_KEY is set) | agentmail

@@ -1,4 +1,4 @@
-use crate::api::projects::require_admin;
+use crate::api::projects::require_reader;
 use crate::AppState;
 use axum::{
     extract::State,
@@ -26,7 +26,7 @@ pub async fn metrics(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&headers)?;
+    require_reader(&headers)?;
 
     let jobs_pending: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'pending'")
@@ -89,7 +89,7 @@ pub async fn metrics_prometheus(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    require_admin(&headers)?;
+    require_reader(&headers)?;
     let body = crate::metrics::render(&state.pool).await;
     Ok((
         [(

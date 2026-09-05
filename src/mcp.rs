@@ -93,6 +93,20 @@ pub fn tools() -> Value {
             }
         },
         {
+            "name": "template_metrics",
+            "annotations": read_only(),
+            "outputSchema": {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
+            "description": "Delivery funnel per email template over time: sent, failed, delivered, bounced, complained, opened, clicked per bucket. Template = template_id, else the `template` or `category` tag, else `untemplated`. Delivery events exist only where provider webhooks are ingested.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window": {"type": "string", "enum": ["1h", "6h", "24h", "7d", "30d"]},
+                    "bucket": {"type": "string", "enum": ["1h", "1d"]},
+                    "project_id": {"type": "string"}
+                }
+            }
+        },
+        {
             "name": "list_jobs",
             "annotations": read_only(),
             "outputSchema": {"type": "object", "properties": {"jobs": {"type": "array"}, "count": {"type": "integer"}}, "required": ["jobs", "count"]},
@@ -207,8 +221,33 @@ pub fn tools() -> Value {
     ])
 }
 
-fn authorized(headers: &HeaderMap) -> bool {
-    crate::api::projects::require_admin(headers).is_ok()
+use crate::api::projects::Operator;
+
+/// Tools a read-only operator may call: those annotated `readOnlyHint`.
+fn tool_is_read_only(tool: &Value) -> bool {
+    tool["annotations"]["readOnlyHint"]
+        .as_bool()
+        .unwrap_or(false)
+}
+
+/// The catalogue a given operator sees.
+pub fn tools_for(operator: Operator) -> Value {
+    match operator {
+        Operator::Admin => tools(),
+        Operator::ReadOnly => Value::Array(
+            tools()
+                .as_array()
+                .map(|t| t.iter().filter(|t| tool_is_read_only(t)).cloned().collect())
+                .unwrap_or_default(),
+        ),
+    }
+}
+
+fn tool_allowed(operator: Operator, name: &str) -> bool {
+    tools_for(operator)
+        .as_array()
+        .map(|t| t.iter().any(|t| t["name"] == name))
+        .unwrap_or(false)
 }
 
 fn rpc_error(id: Value, code: i64, message: impl Into<String>) -> Value {
@@ -267,6 +306,21 @@ pub async fn call_tool(state: &Arc<AppState>, name: &str, args: &Value) -> Value
                     Ok((text, Some(structured)))
                 }
             },
+        },
+        "template_metrics" => match ops::parse_window(arg_str(args, "window")) {
+            Err(e) => Err(e.to_string()),
+            Ok(window) => ops::template_metrics(
+                state,
+                window,
+                arg_str(args, "bucket").unwrap_or("1d"),
+                arg_str(args, "project_id"),
+            )
+            .await
+            .map(|rows| {
+                let v = json!({ "rows": rows });
+                (pretty(&v), Some(v))
+            })
+            .map_err(|e| e.to_string()),
         },
         "list_jobs" => {
             let filter: ops::JobFilter = match serde_json::from_value(args.clone()) {
@@ -553,7 +607,12 @@ fn cacheable(mut result: Value) -> Value {
 
 /// Dispatch one JSON-RPC message. `None` for notifications (no response).
 /// Modern requests must already have passed `validate_modern`.
-pub async fn handle_message(state: &Arc<AppState>, message: &Value, era: Era) -> Option<Value> {
+pub async fn handle_message(
+    state: &Arc<AppState>,
+    message: &Value,
+    era: Era,
+    operator: Operator,
+) -> Option<Value> {
     let id = message.get("id").cloned()?; // notifications and client responses: nothing to answer
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
@@ -599,7 +658,14 @@ pub async fn handle_message(state: &Arc<AppState>, message: &Value, era: Era) ->
             )
         }
         ("ping", Era::Legacy) => rpc_result(id, json!({})),
-        ("tools/list", _) => rpc_result(id, envelope(cacheable(json!({ "tools": tools() })))),
+        ("tools/list", _) => {
+            let mut result = cacheable(json!({ "tools": tools_for(operator) }));
+            if operator == Operator::ReadOnly {
+                // The list depends on the key: not shareable across principals.
+                result["cacheScope"] = json!("private");
+            }
+            rpc_result(id, envelope(result))
+        }
         ("tools/call", _) => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params
@@ -610,8 +676,23 @@ pub async fn handle_message(state: &Arc<AppState>, message: &Value, era: Era) ->
                 rpc_error(id, -32602, "params.name is required")
             } else {
                 let started = std::time::Instant::now();
-                let result = call_tool(state, name, &args).await;
-                audit_tool_call(state, name, &args, &result, started.elapsed());
+                let result = if tool_allowed(operator, name) {
+                    call_tool(state, name, &args).await
+                } else if operator == Operator::ReadOnly
+                    && tools()
+                        .as_array()
+                        .map(|t| t.iter().any(|t| t["name"] == name))
+                        .unwrap_or(false)
+                {
+                    text_result(
+                        format!("`{name}` changes state; this key is read-only. Ask an operator with the admin key."),
+                        None,
+                        true,
+                    )
+                } else {
+                    call_tool(state, name, &args).await
+                };
+                audit_tool_call(state, operator, name, &args, &result, started.elapsed());
                 rpc_result(id, envelope(result))
             }
         }
@@ -625,6 +706,7 @@ pub async fn handle_message(state: &Arc<AppState>, message: &Value, era: Era) ->
 /// values, which may hold addresses), outcome and latency.
 fn audit_tool_call(
     state: &Arc<AppState>,
+    operator: Operator,
     name: &str,
     args: &Value,
     result: &Value,
@@ -632,6 +714,10 @@ fn audit_tool_call(
 ) {
     let pool = state.pool.clone();
     let action = format!("mcp.{name}");
+    let actor = match operator {
+        Operator::Admin => "mcp",
+        Operator::ReadOnly => "mcp:readonly",
+    };
     let is_error = result
         .get("isError")
         .and_then(Value::as_bool)
@@ -643,7 +729,7 @@ fn audit_tool_call(
     let detail = json!({ "args": arg_keys, "is_error": is_error, "ms": took.as_millis() as u64 })
         .to_string();
     tokio::spawn(async move {
-        crate::middleware::audit(&pool, "admin", "mcp", &action, Some(&detail), None).await;
+        crate::middleware::audit(&pool, "admin", actor, &action, Some(&detail), None).await;
     });
 }
 
@@ -675,13 +761,17 @@ pub async fn post(
         )
             .into_response();
     }
-    if !authorized(&headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "admin key required (Authorization: Bearer …)" })),
-        )
-            .into_response();
-    }
+    let operator =
+        match crate::api::projects::operator(&headers) {
+            Ok(op) => op,
+            Err(_) => return (
+                StatusCode::UNAUTHORIZED,
+                Json(
+                    json!({ "error": "admin or read-only key required (Authorization: Bearer …)" }),
+                ),
+            )
+                .into_response(),
+        };
     if !state
         .rate_limiter
         .check("mcp:admin", TOOL_CALLS_PER_MIN)
@@ -751,7 +841,7 @@ pub async fn post(
         }
     }
 
-    match handle_message(&state, &message, era).await {
+    match handle_message(&state, &message, era, operator).await {
         Some(response) => {
             let mut res = Json(response).into_response();
             if era == Era::Modern {
@@ -829,6 +919,41 @@ mod tests {
             .collect();
         let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
         assert_eq!(names.len(), unique.len(), "tool names must be unique");
+    }
+
+    #[test]
+    fn read_only_operator_sees_only_read_only_tools() {
+        let all = tools().as_array().unwrap().len();
+        let ro = tools_for(Operator::ReadOnly);
+        let ro_names: Vec<&str> = ro
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(ro_names.len() < all);
+        for n in [
+            "digest",
+            "list_jobs",
+            "get_job",
+            "list_projects",
+            "list_suppressions",
+            "template_metrics",
+        ] {
+            assert!(ro_names.contains(&n), "{n} should be read-only");
+        }
+        for n in [
+            "retry_job",
+            "cancel_job",
+            "update_project",
+            "add_suppression",
+            "release_suppression",
+            "send_test",
+        ] {
+            assert!(!ro_names.contains(&n), "{n} must not be read-only");
+            assert!(!tool_allowed(Operator::ReadOnly, n));
+            assert!(tool_allowed(Operator::Admin, n));
+        }
     }
 
     #[test]

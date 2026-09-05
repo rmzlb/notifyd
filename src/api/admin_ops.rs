@@ -2,7 +2,7 @@
 //! script drives. Admin key for `/v1/admin/*`; project key for the
 //! project-scoped variants (`/v1/jobs/:id/retry`, `/v1/suppressions`).
 
-use crate::api::projects::require_admin;
+use crate::api::projects::{require_admin, require_reader};
 use crate::api::send::extract_project;
 use crate::{ops, AppState};
 use axum::{
@@ -46,7 +46,7 @@ pub async fn digest(
     headers: HeaderMap,
     Query(q): Query<DigestQuery>,
 ) -> Result<Response, ApiError> {
-    require_admin(&headers)?;
+    require_reader(&headers)?;
     let window = ops::parse_window(q.window.as_deref()).map_err(bad_request)?;
     let digest = ops::digest(&state, window).await.map_err(internal)?;
     if q.format.as_deref() == Some("markdown") {
@@ -65,7 +65,7 @@ pub async fn list_jobs(
     headers: HeaderMap,
     Query(filter): Query<ops::JobFilter>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&headers)?;
+    require_reader(&headers)?;
     let jobs = ops::list_jobs(&state, &filter).await.map_err(internal)?;
     Ok(Json(json!({ "jobs": jobs, "count": jobs.len() })))
 }
@@ -151,7 +151,7 @@ pub async fn admin_list_suppressions(
     headers: HeaderMap,
     Query(q): Query<SuppressionListQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&headers)?;
+    require_reader(&headers)?;
     let items = ops::list_suppressions(&state, q.project_id.as_deref(), q.limit.unwrap_or(100))
         .await
         .map_err(internal)?;
@@ -243,4 +243,33 @@ pub async fn project_add_suppression(
         )
     })?;
     Ok(Json(json!({ "success": true, "suppression": item })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TemplateMetricsQuery {
+    pub window: Option<String>,
+    /// `1h` or `1d` (default)
+    pub bucket: Option<String>,
+    pub project_id: Option<String>,
+}
+
+/// GET /v1/admin/metrics/templates?window=7d&bucket=1d&project_id=
+pub async fn template_metrics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<TemplateMetricsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    require_reader(&headers)?;
+    let window = ops::parse_window(q.window.as_deref()).map_err(bad_request)?;
+    let rows = ops::template_metrics(
+        &state,
+        window,
+        q.bucket.as_deref().unwrap_or("1d"),
+        q.project_id.as_deref(),
+    )
+    .await
+    .map_err(bad_request)?;
+    Ok(Json(
+        json!({ "window": q.window.as_deref().unwrap_or("24h"), "bucket": q.bucket.as_deref().unwrap_or("1d"), "rows": rows }),
+    ))
 }

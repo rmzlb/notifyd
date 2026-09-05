@@ -8,20 +8,20 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// Admin auth: requires ADMIN_API_KEY env var
-/// BUG FIX #2: Uses constant-time comparison to prevent timing attacks
-pub fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
-    let admin_key = std::env::var("ADMIN_API_KEY").unwrap_or_default();
-    if admin_key.is_empty() {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "ADMIN_API_KEY not configured"})),
-        ));
-    }
+/// Who holds the operator surface. `ADMIN_API_KEY` has every right;
+/// `READONLY_API_KEY` (optional) may look but not touch: digest, listings,
+/// metrics, read-only MCP tools. Give the latter to support agents and
+/// dashboards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operator {
+    Admin,
+    ReadOnly,
+}
 
+fn presented_key(headers: &HeaderMap) -> &str {
     // `x-api-key` or `Authorization: Bearer …` (Prometheus scrapers only
     // speak the latter).
-    let provided = headers
+    headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .or_else(|| {
@@ -31,16 +31,49 @@ pub fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>
                 .and_then(|v| v.strip_prefix("Bearer "))
         })
         .map(str::trim)
-        .unwrap_or("");
+        .unwrap_or("")
+}
 
-    if !constant_time_eq(provided.as_bytes(), admin_key.as_bytes()) {
+/// Identify the operator behind the request, or 401.
+pub fn operator(headers: &HeaderMap) -> Result<Operator, (StatusCode, Json<Value>)> {
+    let admin_key = std::env::var("ADMIN_API_KEY").unwrap_or_default();
+    if admin_key.is_empty() {
         return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Admin access required"})),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "ADMIN_API_KEY not configured"})),
         ));
     }
+    let provided = presented_key(headers);
+    if !provided.is_empty() && constant_time_eq(provided.as_bytes(), admin_key.as_bytes()) {
+        return Ok(Operator::Admin);
+    }
+    let readonly = std::env::var("READONLY_API_KEY").unwrap_or_default();
+    if !readonly.is_empty()
+        && !provided.is_empty()
+        && constant_time_eq(provided.as_bytes(), readonly.as_bytes())
+    {
+        return Ok(Operator::ReadOnly);
+    }
+    Err((
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": "Admin access required"})),
+    ))
+}
 
-    Ok(())
+/// Admin auth: full rights only.
+pub fn require_admin(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
+    match operator(headers)? {
+        Operator::Admin => Ok(()),
+        Operator::ReadOnly => Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Read-only key: this action needs the admin key"})),
+        )),
+    }
+}
+
+/// Admin or read-only key: for endpoints that only read.
+pub fn require_reader(headers: &HeaderMap) -> Result<(), (StatusCode, Json<Value>)> {
+    operator(headers).map(|_| ())
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -129,7 +162,7 @@ pub async fn list_projects(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&headers)?;
+    require_reader(&headers)?;
 
     let rows: Vec<(String, String, Option<Vec<String>>, Option<i32>, Option<chrono::DateTime<chrono::Utc>>, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT id, name, channels, rate_limit_per_min, created_at, from_email, from_name FROM projects ORDER BY created_at"

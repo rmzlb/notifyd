@@ -150,6 +150,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/admin/audit", get(projects::audit_log))
         // Operator surface (digest, jobs, suppressions, project patch)
         .route("/admin/digest", get(admin_ops::digest))
+        .route("/admin/metrics/templates", get(admin_ops::template_metrics))
         .route("/admin/jobs", get(admin_ops::list_jobs))
         .route("/admin/jobs/:id/retry", post(admin_ops::admin_retry_job))
         .route("/admin/jobs/:id/cancel", post(admin_ops::admin_cancel_job))

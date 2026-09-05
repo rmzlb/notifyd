@@ -79,6 +79,12 @@ links this instance hosts: the one-click unsubscribe endpoint `/u/<token>` on
 bulk email. Without it, bulk email leaves without `List-Unsubscribe` headers
 and the digest says so.
 
+## Operator keys
+
+`ADMIN_API_KEY` (required) opens `/v1/admin/*` and the MCP endpoint with
+every tool. `READONLY_API_KEY` (optional) opens the `GET` endpoints, the
+metrics and the read-only MCP tools only.
+
 ## Worker knobs
 
 | Variable | Default | Meaning |

@@ -521,11 +521,14 @@ Hierarchy: workflow-specific > channel-wide > global.
 
 ### Admin: Operator surface
 
-Everything an operator (or an agent, see `docs/AGENT.md`) needs. Admin key.
+Everything an operator (or an agent, see `docs/AGENT.md`) needs. Admin key;
+the read-only key (`READONLY_API_KEY`) may call the `GET` endpoints of this
+table, `/v1/metrics*` and `GET /v1/admin/projects`.
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /v1/admin/digest?window=24h&format=json\|markdown` | Findings ranked by severity with the action to take, queue, outcomes, failure reasons, retries waiting, latency, deliverability, projects. `window`: 1h, 6h, 24h, 7d, 30d. |
+| `GET /v1/admin/metrics/templates?window=7d&bucket=1d&project_id=` | Delivery funnel per template and time bucket: sent, failed, delivered, bounced, complained, opened, clicked. Template = `template_id`, else `template` tag, else `category` tag, else `untemplated`. |
 | `GET /v1/admin/jobs?project_id=&status=&channel=&recipient=&since=&limit=` | Search jobs across projects (recipients masked, default last 7 days, 50 rows, max 500). |
 | `POST /v1/admin/jobs/:id/retry` | Re-queue a `failed`/`cancelled` job with a fresh attempt budget. |
 | `POST /v1/admin/jobs/:id/cancel` | Cancel a `pending`/`retry` job. |
