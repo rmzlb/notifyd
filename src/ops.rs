@@ -900,7 +900,7 @@ pub async fn enqueue_test(
 
 pub async fn list_projects(state: &Arc<AppState>) -> Result<Vec<Value>> {
     let rows = sqlx::query(
-        "SELECT id, name, channels, from_email, from_name, rate_limit_per_min, created_at FROM projects ORDER BY id",
+        "SELECT id, name, channels, from_email, from_name, rate_limit_per_min, settings, created_at FROM projects ORDER BY id",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -914,6 +914,7 @@ pub async fn list_projects(state: &Arc<AppState>) -> Result<Vec<Value>> {
                 "from_email": r.get::<Option<String>, _>("from_email"),
                 "from_name": r.get::<Option<String>, _>("from_name"),
                 "rate_limit_per_min": r.get::<i32, _>("rate_limit_per_min"),
+                "send_window": r.get::<Option<Value>, _>("settings").and_then(|s| s.get("send_window").cloned()),
                 "created_at": r.get::<Option<DateTime<Utc>>, _>("created_at"),
             })
         })
@@ -1125,6 +1126,9 @@ pub struct ProjectPatch {
     pub from_email: Option<String>,
     pub from_name: Option<String>,
     pub rate_limit_per_min: Option<i32>,
+    /// Daily send window for bulk email, `{start, end, tz?, days?,
+    /// applies_to?}`; `null` removes it. Stored in `settings.send_window`.
+    pub send_window: Option<Value>,
 }
 
 /// Update a project's settings without touching its keys.
@@ -1151,6 +1155,15 @@ pub async fn update_project(
         .map(|e| e.trim().to_string())
         .filter(|e| !e.is_empty());
     let clear_from_email = matches!(patch.from_email.as_deref().map(str::trim), Some(""));
+    // send_window: validate before storing; null clears; absent leaves as is.
+    let (set_window, window_value) = match &patch.send_window {
+        None => (false, Value::Null),
+        Some(Value::Null) => (true, Value::Null),
+        Some(v) => {
+            crate::send_window::SendWindow::parse(v)?;
+            (true, v.clone())
+        }
+    };
     let row = sqlx::query(
         r#"
         UPDATE projects
@@ -1159,9 +1172,14 @@ pub async fn update_project(
             from_email = CASE WHEN $7 THEN NULL ELSE COALESCE($4, from_email) END,
             from_name = COALESCE($5, from_name),
             rate_limit_per_min = COALESCE($6, rate_limit_per_min),
+            settings = CASE
+                WHEN NOT $8 THEN settings
+                WHEN $9::jsonb IS NULL OR $9::jsonb = 'null'::jsonb THEN COALESCE(settings, '{}'::jsonb) - 'send_window'
+                ELSE COALESCE(settings, '{}'::jsonb) || jsonb_build_object('send_window', $9::jsonb)
+            END,
             updated_at = now()
         WHERE id = $1
-        RETURNING id, name, channels, from_email, from_name, rate_limit_per_min
+        RETURNING id, name, channels, from_email, from_name, rate_limit_per_min, settings
         "#,
     )
     .bind(project_id)
@@ -1171,6 +1189,8 @@ pub async fn update_project(
     .bind(&patch.from_name)
     .bind(patch.rate_limit_per_min)
     .bind(clear_from_email)
+    .bind(set_window)
+    .bind(window_value)
     .fetch_optional(&state.pool)
     .await?;
     match row {
@@ -1181,6 +1201,7 @@ pub async fn update_project(
             "from_email": r.get::<Option<String>, _>("from_email"),
             "from_name": r.get::<Option<String>, _>("from_name"),
             "rate_limit_per_min": r.get::<i32, _>("rate_limit_per_min"),
+            "send_window": r.get::<Option<Value>, _>("settings").and_then(|s| s.get("send_window").cloned()),
         })),
         None => Err(anyhow!("project {project_id} not found")),
     }

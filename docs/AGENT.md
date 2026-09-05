@@ -47,7 +47,7 @@ is read from the environment, never written in the file.
 | `get_job` | One job: attempts, provider, provider message id, delivery events, error. |
 | `retry_job` | After fixing a cause. Re-queues a `failed`/`cancelled` job with a fresh attempt budget. |
 | `cancel_job` | Stop a pending or retrying job. |
-| `list_projects`, `update_project` | Sender identity (`from_email`, `from_name`), channels, inbound rate limit. Keys are never touched. |
+| `list_projects`, `update_project` | Sender identity (`from_email`, `from_name`), channels, inbound rate limit, daily `send_window` for bulk email in the recipients' timezone. Keys are never touched. |
 | `list_suppressions`, `add_suppression`, `release_suppression` | The do-not-send list: bounces, complaints and commercial unsubscribes land there automatically; block (`scope` all or marketing) or release an address by hand. |
 | `send_test` | Prove a channel end to end: enqueues a high-priority `category=test` message and returns the job id. |
 

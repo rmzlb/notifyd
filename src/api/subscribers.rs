@@ -17,6 +17,8 @@ pub struct UpsertSubscriber {
     pub last_name: Option<String>,
     pub locale: Option<String>,
     pub data: Option<Value>,
+    /// IANA timezone (e.g. Europe/Paris) used by send windows.
+    pub timezone: Option<String>,
 }
 
 pub async fn upsert_subscriber(
@@ -28,8 +30,8 @@ pub async fn upsert_subscriber(
 
     sqlx::query(
         r#"
-        INSERT INTO subscribers (id, project_id, email, phone, first_name, last_name, locale, data)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO subscribers (id, project_id, email, phone, first_name, last_name, locale, data, timezone)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (project_id, id) DO UPDATE SET
             email = COALESCE(EXCLUDED.email, subscribers.email),
             phone = COALESCE(EXCLUDED.phone, subscribers.phone),
@@ -37,6 +39,7 @@ pub async fn upsert_subscriber(
             last_name = COALESCE(EXCLUDED.last_name, subscribers.last_name),
             locale = COALESCE(EXCLUDED.locale, subscribers.locale),
             data = subscribers.data || EXCLUDED.data,
+            timezone = COALESCE(EXCLUDED.timezone, subscribers.timezone),
             updated_at = now()
         "#,
     )
@@ -48,6 +51,7 @@ pub async fn upsert_subscriber(
     .bind(req.last_name.as_deref())
     .bind(req.locale.as_deref().unwrap_or("fr"))
     .bind(req.data.as_ref().unwrap_or(&json!({})))
+    .bind(req.timezone.as_deref().map(str::trim).filter(|t| !t.is_empty()))
     .execute(&state.pool)
     .await
     .map_err(|e| {

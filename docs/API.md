@@ -179,6 +179,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `priority` | `string \| int` | ❌ | Queue lane: `critical` (10), `high` (30), `normal` (50, default), `low` (70), `bulk` (80) or `0–100`. Lower goes first. An email tagged `{"name":"category","value":"campaign"\|"marketing"\|"newsletter"}` defaults to `bulk`. |
 | `tags` | `object[]` | ❌ | Email only. Provider tags `[{ "name", "value" }]`; also drives the default priority (see above). |
 | `email_headers` | `object` | ❌ | Email only. Custom MIME headers such as `List-Unsubscribe`. |
+| `send_window` | `object \| false` | ❌ | `{ "start": "09:00", "end": "20:00", "tz": "Europe/Paris", "days": [1..7], "applies_to": "marketing" \| "all" }`. Bulk email waits for the recipient's daytime (`subscribers.timezone`, else `tz`). Overrides the project's `settings.send_window`; `false` bypasses it. |
 
 **Response:**
 
@@ -312,7 +313,8 @@ let res = client
 Fan-out to many subscribers. Jobs default to priority `bulk` (80): a campaign
 never delays transactional traffic. Pass `"priority"` to override.
 
-`idempotency_key` (optional) dedupes the whole fan-out: the key is declined per
+`send_window` works as on `/v1/send`; each recipient is scheduled in its own
+timezone. `idempotency_key` (optional) dedupes the whole fan-out: the key is declined per
 subscriber and channel, so replaying the same call after a timeout creates no
 second job for anyone already queued or sent. The response reports
 `jobs_created` and `jobs_deduplicated`.
@@ -527,7 +529,7 @@ Everything an operator (or an agent, see `docs/AGENT.md`) needs. Admin key.
 | `GET /v1/admin/jobs?project_id=&status=&channel=&recipient=&since=&limit=` | Search jobs across projects (recipients masked, default last 7 days, 50 rows, max 500). |
 | `POST /v1/admin/jobs/:id/retry` | Re-queue a `failed`/`cancelled` job with a fresh attempt budget. |
 | `POST /v1/admin/jobs/:id/cancel` | Cancel a `pending`/`retry` job. |
-| `PATCH /v1/admin/projects/:id` | `{ name?, channels?, from_email?, from_name?, rate_limit_per_min? }` — keys untouched; empty `from_email` clears it. |
+| `PATCH /v1/admin/projects/:id` | `{ name?, channels?, from_email?, from_name?, rate_limit_per_min?, send_window? }` — keys untouched; empty `from_email` clears it; `send_window` (object or `null`) is the project's daily window for bulk email. |
 | `GET /v1/admin/suppressions?project_id=&limit=` | Active suppressions, masked. |
 | `POST /v1/admin/suppressions` | `{ project_id, email, detail? }` — manual block. |
 | `DELETE /v1/admin/suppressions/:id` | Release a suppression. |

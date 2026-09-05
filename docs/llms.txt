@@ -39,7 +39,8 @@ Body:
   "tags": [{"name": "category", "value": "transactional"}],  // email; category=campaign|marketing|newsletter defaults priority to bulk
   "email_headers": {"List-Unsubscribe": "<https://...>"},    // email, custom MIME headers
   "attachments": [{"filename": "f.pdf", "content": "<base64>", "content_type": "application/pdf"}],
-  "cc": ["copy@example.com"], "reply_to": "support@example.com"
+  "cc": ["copy@example.com"], "reply_to": "support@example.com",
+  "send_window": {"start":"09:00","end":"20:00","tz":"Europe/Paris","days":[1,2,3,4,5]}  // bulk waits for recipient daytime; false bypasses the project window
 }
 
 Channels: "email", "sms", "whatsapp", "in_app", "push"
@@ -54,6 +55,8 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
 POST /v1/batch accepts idempotency_key (declined per subscriber and channel) and reports jobs_deduplicated.
+Send windows: project settings.send_window (PATCH /v1/admin/projects/:id {send_window}) or per request; applies to marketing email
+(priority>=80 / campaign tag) unless applies_to=all; recipient timezone from subscribers.timezone (POST /v1/subscribers {timezone}).
 Bulk email (priority>=80 or tag category=campaign|marketing|newsletter) gets List-Unsubscribe + one-click headers pointing at PUBLIC_URL/u/<token>;
 POST /u/:token records a marketing-scoped suppression (transactional email still goes). Suppressions have scope all|marketing.
 

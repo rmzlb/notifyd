@@ -143,6 +143,72 @@ pub struct SendRequest {
     /// default), `"low"` (70), `"bulk"` (80) or a number 0–100. Lower goes
     /// first. Transactional traffic keeps the default; marketing uses `bulk`.
     pub priority: Option<Value>,
+    /// Send window override: `{start, end, tz?, days?, applies_to?}` or
+    /// `false` to bypass the project's window for this request.
+    pub send_window: Option<Value>,
+}
+
+/// Effective send window for a request: the request's own object wins,
+/// `false` disables, otherwise the project's `settings.send_window`.
+pub async fn effective_send_window(
+    state: &Arc<AppState>,
+    project_id: &str,
+    requested: Option<&Value>,
+) -> Result<Option<crate::send_window::SendWindow>, String> {
+    match requested {
+        Some(Value::Bool(false)) => return Ok(None),
+        Some(v) if v.is_object() => {
+            return crate::send_window::SendWindow::parse(v)
+                .map(Some)
+                .map_err(|e| e.to_string())
+        }
+        Some(Value::Null) | None => {}
+        Some(_) => return Err("send_window must be an object or false".to_string()),
+    }
+    let settings: Option<Value> = sqlx::query_scalar("SELECT settings FROM projects WHERE id = $1")
+        .bind(project_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    match settings.as_ref().and_then(|s| s.get("send_window")) {
+        Some(v) if v.is_object() => crate::send_window::SendWindow::parse(v)
+            .map(Some)
+            .map_err(|e| format!("project send_window is invalid: {e}")),
+        _ => Ok(None),
+    }
+}
+
+/// Recipient timezone from the subscriber record, when the job names one.
+pub async fn subscriber_timezone(
+    state: &Arc<AppState>,
+    project_id: &str,
+    subscriber_id: Option<&str>,
+) -> Option<String> {
+    let id = subscriber_id?;
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT timezone FROM subscribers WHERE project_id = $1 AND id = $2",
+    )
+    .bind(project_id)
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+}
+
+/// Apply the window to a job's schedule. Marketing jobs always obey it;
+/// other jobs only when the window says `applies_to: all`.
+pub fn windowed_schedule(
+    window: Option<&crate::send_window::SendWindow>,
+    scheduled_at: DateTime<Utc>,
+    marketing: bool,
+    recipient_tz: Option<&str>,
+) -> DateTime<Utc> {
+    match window {
+        Some(w) if marketing || w.applies_to_all => w.next_allowed(scheduled_at, recipient_tz),
+        _ => scheduled_at,
+    }
 }
 
 /// Resolve the `priority` request field to the 0–100 column value.
@@ -221,6 +287,8 @@ pub struct BatchRequest {
     /// channel (`<key>-<subscriber>-<channel>`), so replaying the call
     /// creates no second job for anyone already queued or sent.
     pub idempotency_key: Option<String>,
+    /// Send window override, see `/v1/send`.
+    pub send_window: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -274,7 +342,6 @@ pub async fn send_notification(
         )
     })?;
 
-    let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
     let priority = resolve_priority(
         req.priority.as_ref(),
         default_priority_from_tags(req.tags.as_ref()),
@@ -285,6 +352,23 @@ pub async fn send_notification(
             Json(json!({ "error": error })),
         )
     })?;
+    let window = effective_send_window(&state, &project.id, req.send_window.as_ref())
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    let recipient_tz = subscriber_timezone(&state, &project.id, req.subscriber_id.as_deref()).await;
+    let marketing =
+        priority >= PRIORITY_BULK || default_priority_from_tags(req.tags.as_ref()) == PRIORITY_BULK;
+    let scheduled_at = windowed_schedule(
+        window.as_ref(),
+        req.scheduled_at.unwrap_or_else(Utc::now),
+        marketing,
+        recipient_tz.as_deref(),
+    );
 
     let mut payload = json!({
         "subject": req.subject,
@@ -567,13 +651,22 @@ pub async fn batch_notification(
             .collect()
     });
 
-    let scheduled_at = req.scheduled_at.unwrap_or_else(Utc::now);
+    let requested_at = req.scheduled_at.unwrap_or_else(Utc::now);
     let priority = resolve_priority(req.priority.as_ref(), PRIORITY_BULK).map_err(|error| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({ "error": error })),
         )
     })?;
+    let window = effective_send_window(&state, &project.id, req.send_window.as_ref())
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    let marketing = priority >= PRIORITY_BULK;
 
     let payload = json!({
         "subject": req.subject,
@@ -587,6 +680,18 @@ pub async fn batch_notification(
     let mut total = 0usize;
     let mut deduplicated = 0usize;
     for subscriber_id in &req.subscribers {
+        // Each recipient gets its own daytime.
+        let recipient_tz = if window.is_some() {
+            subscriber_timezone(&state, &project.id, Some(subscriber_id)).await
+        } else {
+            None
+        };
+        let scheduled_at = windowed_schedule(
+            window.as_ref(),
+            requested_at,
+            marketing,
+            recipient_tz.as_deref(),
+        );
         for channel in &channels {
             let idem_key = req
                 .idempotency_key

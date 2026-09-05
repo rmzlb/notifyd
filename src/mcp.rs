@@ -141,7 +141,7 @@ pub fn tools() -> Value {
             "name": "update_project",
             "annotations": idempotent_write(),
             "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "from_email": {"type": ["string", "null"]}, "from_name": {"type": ["string", "null"]}}, "required": ["id"]},
-            "description": "Change a project's name, channels, sender (from_email/from_name; empty from_email clears it) or inbound rate limit. Keys are never touched.",
+            "description": "Change a project's name, channels, sender (from_email/from_name; empty from_email clears it), inbound rate limit, or daily send window for bulk email (recipients' local time; null removes it). Keys are never touched.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -150,7 +150,18 @@ pub fn tools() -> Value {
                     "channels": {"type": "array", "items": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push"]}},
                     "from_email": {"type": "string"},
                     "from_name": {"type": "string"},
-                    "rate_limit_per_min": {"type": "integer", "minimum": 1}
+                    "rate_limit_per_min": {"type": "integer", "minimum": 1},
+                    "send_window": {
+                        "description": "Bulk email waits for this daily window in the recipient's timezone (subscribers.timezone) or tz. Example {\"start\":\"09:00\",\"end\":\"20:00\",\"tz\":\"Europe/Paris\",\"days\":[1,2,3,4,5]}. null removes it.",
+                        "type": ["object", "null"],
+                        "properties": {
+                            "start": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$"},
+                            "end": {"type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$"},
+                            "tz": {"type": "string"},
+                            "days": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 7}},
+                            "applies_to": {"type": "string", "enum": ["marketing", "all"]}
+                        }
+                    }
                 },
                 "required": ["id"]
             }

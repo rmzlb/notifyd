@@ -38,6 +38,7 @@ jsonwebtoken = "9"
 # UUID + time
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 
 # Config
 toml = "0.8"

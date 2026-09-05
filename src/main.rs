@@ -10,6 +10,7 @@ mod middleware;
 mod ops;
 mod pacing;
 mod pii;
+mod send_window;
 mod sse;
 mod templates;
 mod unsubscribe;
