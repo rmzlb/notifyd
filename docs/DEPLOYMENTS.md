@@ -22,7 +22,7 @@ No secret value is ever written here, only variable names.
 |---|---|---|---|---|
 | CRAIE | CRAIE's own server (own Dokploy) | compose from this repo, autodeploy `main` | `notifyd.craie.ctrlnz.com` | Dedicated instance, redeploys within ~5 min of a push to `main`. |
 | sqare + helmai | square | compose `novu/notifyd-stack` | `notifyd.ctrlnz.com` | Shared by two companies. Global sender is Helmai; the `sqare` project has its own `from_email`. Contains a **stale `craie` project** (created 2026-06, no key hash, zero jobs): delete it. An orphan Application `notifyd/notifyd` (2026-03) exists on the same server; its autodeploy is now off, delete it. |
-| Philoé | philoe | compose `notifyd` (to create) | internal `http://notifyd:3400`; public `notifyd-os.philoeparis.com` only for the admin in-app inbox (SSE from the browser) | See "Creating an instance". |
+| Philoé | philoe | compose `notifyd` (git source, autodeploy `main` via a GitHub webhook on this repo) | internal `http://notifyd:3400`; public `https://api-os.philoeparis.com/notifyd` (path route on the API host, `stripPath`) for the admin in-app inbox | Created 2026-09-05. Path route instead of a dedicated hostname because no Cloudflare DNS token was available; switch to `notifyd-os.philoeparis.com` when one exists. Project `philoe`, `from_email` in `philoeparis.fr`. |
 
 All instances use the same Resend team today (every company domain is
 verified there). A per-company Resend team would need a per-instance
@@ -62,6 +62,18 @@ serves which company.
 5. Check: `GET /v1/health` returns `status: ok`, the current `commit`, and a
    fresh `built_at_epoch`; `GET /v1/admin/projects` lists the project with its
    `from_email`.
+
+## Two things every new instance needs
+
+- **Delete the seeded `craie` project.** Migration `005_craie_project.sql` inserts a
+  `craie` project (random plaintext key, no hash, so it cannot authenticate) and
+  CRAIE templates into every fresh database. On any instance that is not CRAIE's,
+  `DELETE /v1/admin/projects/craie` right after the first boot. The `craie`
+  project seen on the square instance is this seed, not a CRAIE integration.
+- **Autodeploy without the GitHub App.** A compose with a `git` source needs a
+  push webhook on this repository pointing at
+  `<dokploy>/api/deploy/compose/<refreshToken>` (the token is on the compose
+  record). Dokploy only deploys when the pushed branch matches the configured one.
 
 ## Rules that keep N instances safe
 
