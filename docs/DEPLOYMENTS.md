@@ -16,13 +16,17 @@ No secret value is ever written here, only variable names.
   pinned Dockerfile makes the resulting binaries identical. `/v1/health`
   exposes `commit` and `built_at_epoch` so drift between instances is visible.
 
-## Inventory
+## Inventory (verified 2026-09-05)
 
 | Company | Server (Dokploy alias) | Dokploy service | Public URL | Notes |
 |---|---|---|---|---|
-| sqare + helmai (+ craie project) | square | compose `novu/notifyd-stack` | `notifyd.ctrlnz.com` | Historical shared instance. Global sender is Helmai. The `craie` project has no `from_email`: fix or migrate CRAIE to its own stack. An orphan Application `notifyd/notifyd` (2026-03) on the same server still auto-deploys from this repo and serves nothing: delete it. |
-| Philoé | philoe | compose `notifyd` (to create) | internal `http://notifyd:3400`; public URL only for the admin in-app inbox (SSE from the browser) | See "Creating an instance". |
-| CRAIE | leftcurve | none yet | — | Currently uses the shared instance over the public internet. |
+| CRAIE | CRAIE's own server (own Dokploy) | compose from this repo, autodeploy `main` | `notifyd.craie.ctrlnz.com` | Dedicated instance, redeploys within ~5 min of a push to `main`. |
+| sqare + helmai | square | compose `novu/notifyd-stack` | `notifyd.ctrlnz.com` | Shared by two companies. Global sender is Helmai; the `sqare` project has its own `from_email`. Contains a **stale `craie` project** (created 2026-06, no key hash, zero jobs): delete it. An orphan Application `notifyd/notifyd` (2026-03) exists on the same server; its autodeploy is now off, delete it. |
+| Philoé | philoe | compose `notifyd` (to create) | internal `http://notifyd:3400`; public `notifyd-os.philoeparis.com` only for the admin in-app inbox (SSE from the browser) | See "Creating an instance". |
+
+All instances use the same Resend team today (every company domain is
+verified there). A per-company Resend team would need a per-instance
+`RESEND_API_KEY`, which this layout already allows.
 
 Keep this table current: it is the only place that says which instance
 serves which company.
