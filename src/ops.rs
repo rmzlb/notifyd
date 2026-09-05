@@ -62,6 +62,8 @@ pub struct InstanceInfo {
     /// failover breaker is open.
     pub email_primary_resting_seconds: Option<u64>,
     pub email_failovers_since_boot: u64,
+    /// `PUBLIC_URL`, base of the unsubscribe links on bulk email.
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -386,6 +388,7 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
             .map(|c| c.provider.clone()),
         email_primary_resting_seconds: state.email_breaker.open_for().map(|d| d.as_secs()),
         email_failovers_since_boot: state.email_breaker.trips(),
+        public_url: crate::unsubscribe::public_url(),
     };
 
     let findings = compute_findings(
@@ -452,7 +455,7 @@ fn compute_findings(
             action: "Nothing lost. Check the primary provider's status page; if it repeats, lower EMAIL_RATE_PER_SEC or move the primary role to the other provider.".into(),
         });
     }
-    if instance.email_provider.is_some() && crate::unsubscribe::public_url().is_none() {
+    if instance.email_provider.is_some() && instance.public_url.is_none() {
         findings.push(Finding {
             severity: "warning",
             message: "PUBLIC_URL is not set: bulk email leaves without List-Unsubscribe headers.".into(),
@@ -1208,6 +1211,7 @@ mod tests {
             email_fallback_provider: None,
             email_primary_resting_seconds: None,
             email_failovers_since_boot: 0,
+            public_url: None,
         };
         let queue = QueueState::default();
         let outcomes = vec![OutcomeRow {
@@ -1270,6 +1274,7 @@ mod tests {
             email_fallback_provider: Some("smtp".into()),
             email_primary_resting_seconds: None,
             email_failovers_since_boot: 0,
+            public_url: Some("https://n.example.com".into()),
         };
         let findings = compute_findings(
             &instance,
