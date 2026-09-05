@@ -18,20 +18,45 @@
         "url": "http://localhost:3400/mcp"
       },
       "environmentVariables": [
-        { "name": "DATABASE_URL", "description": "PostgreSQL connection string", "isRequired": true, "isSecret": true },
-        { "name": "JWT_SECRET", "description": "Secret for subscriber tokens", "isRequired": true, "isSecret": true },
-        { "name": "ADMIN_API_KEY", "description": "Operator key; also the Bearer token for /mcp", "isRequired": true, "isSecret": true },
-        { "name": "EMAIL_PROVIDER", "description": "resend | cloudflare | smtp | agentmail | log", "isRequired": false, "isSecret": false },
-        { "name": "EMAIL_FROM", "description": "Default sender address", "isRequired": false, "isSecret": false }
+        {
+          "name": "DATABASE_URL",
+          "description": "PostgreSQL connection string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "JWT_SECRET",
+          "description": "Secret for subscriber tokens",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "ADMIN_API_KEY",
+          "description": "Operator key; also the Bearer token for /mcp",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "EMAIL_PROVIDER",
+          "description": "resend | cloudflare | smtp | agentmail | log",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "EMAIL_FROM",
+          "description": "Default sender address",
+          "isRequired": false,
+          "isSecret": false
+        }
       ]
     }
   ],
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://{host}/mcp",
+      "url": "https://{notifyd_host}/mcp",
       "variables": {
-        "host": {
+        "notifyd_host": {
           "description": "Hostname of your notifyd instance (one instance per company)",
           "isRequired": true
         }
