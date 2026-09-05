@@ -516,6 +516,31 @@ Hierarchy: workflow-specific > channel-wide > global.
 
 ---
 
+### Admin: Operator surface
+
+Everything an operator (or an agent, see `docs/AGENT.md`) needs. Admin key.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/admin/digest?window=24h&format=json\|markdown` | Findings ranked by severity with the action to take, queue, outcomes, failure reasons, retries waiting, latency, deliverability, projects. `window`: 1h, 6h, 24h, 7d, 30d. |
+| `GET /v1/admin/jobs?project_id=&status=&channel=&recipient=&since=&limit=` | Search jobs across projects (recipients masked, default last 7 days, 50 rows, max 500). |
+| `POST /v1/admin/jobs/:id/retry` | Re-queue a `failed`/`cancelled` job with a fresh attempt budget. |
+| `POST /v1/admin/jobs/:id/cancel` | Cancel a `pending`/`retry` job. |
+| `PATCH /v1/admin/projects/:id` | `{ name?, channels?, from_email?, from_name?, rate_limit_per_min? }` — keys untouched; empty `from_email` clears it. |
+| `GET /v1/admin/suppressions?project_id=&limit=` | Active suppressions, masked. |
+| `POST /v1/admin/suppressions` | `{ project_id, email, detail? }` — manual block. |
+| `DELETE /v1/admin/suppressions/:id` | Release a suppression. |
+
+Project keys have the scoped equivalents `POST /v1/jobs/:id/retry` and
+`POST /v1/suppressions` (`{ email, detail? }`).
+
+### MCP endpoint
+
+`POST /mcp` — Model Context Protocol, Streamable HTTP, stateless; admin key as
+`Authorization: Bearer`. Tools: `digest`, `list_jobs`, `get_job`, `retry_job`,
+`cancel_job`, `list_projects`, `update_project`, `list_suppressions`,
+`add_suppression`, `release_suppression`, `send_test`. See `docs/AGENT.md`.
+
 ### Admin: Projects
 
 **Create a project:**

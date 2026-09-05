@@ -165,6 +165,7 @@ We maintain three layers of documentation:
 | `docs/ARCHITECTURE.md` | Contributors | Design decisions, internals |
 | `docs/DEPLOYMENTS.md` | Operators | One instance per company, inventory, creation runbook, safety rules |
 | `docs/CONNECTORS.md` | Operators, contributors | Providers per channel, variables, how to add one |
+| `docs/AGENT.md` | Operators, agents | Digest semantics, MCP tools, operating runbook |
 
 When changing the API, update **all three**: API.md, llms.txt, and README if relevant.
 

@@ -1,3 +1,4 @@
+pub mod admin_ops;
 pub mod auth;
 pub mod health;
 pub mod inbox;
@@ -25,7 +26,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .with_state(state.clone());
 
-    Router::new().nest("/v1", api_routes(state)).merge(provider)
+    // Model Context Protocol endpoint for agents (admin key).
+    let mcp = Router::new()
+        .route(
+            "/mcp",
+            axum::routing::post(crate::mcp::post).get(crate::mcp::get),
+        )
+        .with_state(state.clone());
+
+    Router::new()
+        .nest("/v1", api_routes(state))
+        .merge(provider)
+        .merge(mcp)
 }
 
 fn api_routes(state: Arc<AppState>) -> Router {
@@ -106,7 +118,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
         // Deliverability (suppression list)
         .route(
             "/suppressions",
-            get(crate::deliverability::list_suppressions),
+            get(crate::deliverability::list_suppressions).post(admin_ops::project_add_suppression),
         )
         .route(
             "/suppressions/:id",
@@ -122,8 +134,25 @@ fn api_routes(state: Arc<AppState>) -> Router {
             "/admin/projects/:id/revoke-secondary",
             post(projects::revoke_secondary),
         )
-        .route("/admin/projects/:id", delete(projects::delete_project))
+        .route(
+            "/admin/projects/:id",
+            delete(projects::delete_project).patch(admin_ops::patch_project),
+        )
         .route("/admin/audit", get(projects::audit_log))
+        // Operator surface (digest, jobs, suppressions, project patch)
+        .route("/admin/digest", get(admin_ops::digest))
+        .route("/admin/jobs", get(admin_ops::list_jobs))
+        .route("/admin/jobs/:id/retry", post(admin_ops::admin_retry_job))
+        .route("/admin/jobs/:id/cancel", post(admin_ops::admin_cancel_job))
+        .route(
+            "/admin/suppressions",
+            get(admin_ops::admin_list_suppressions).post(admin_ops::admin_add_suppression),
+        )
+        .route(
+            "/admin/suppressions/:id",
+            delete(admin_ops::admin_release_suppression),
+        )
+        .route("/jobs/:id/retry", post(admin_ops::project_retry_job))
         // Webhooks
         .route(
             "/admin/webhooks",

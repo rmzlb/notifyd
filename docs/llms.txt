@@ -317,6 +317,14 @@ SMS_PROVIDER (telnyx|twilio) + SMS_FROM + TELNYX_API_KEY | TWILIO_ACCOUNT_SID + 
 WORKER_MAX_ATTEMPTS, EMAIL_RATE_PER_SEC, SMS_RATE_PER_SEC, WHATSAPP_RATE_PER_SEC, PUSH_RATE_PER_SEC, RATE_LIMIT_PAUSE_SECS.
 Metrics: GET /v1/metrics (JSON) and GET /v1/metrics/prometheus (text), admin key as x-api-key or Bearer.
 
+OPERATOR SURFACE (admin key):
+GET /v1/admin/digest?window=1h|6h|24h|7d|30d&format=json|markdown -> findings (critical/warning/info + action), queue, outcomes, failures, retries, latency, deliverability, projects
+GET /v1/admin/jobs?project_id&status&channel&recipient&since&limit ; POST /v1/admin/jobs/:id/retry ; POST /v1/admin/jobs/:id/cancel
+PATCH /v1/admin/projects/:id {name?, channels?, from_email?, from_name?, rate_limit_per_min?}
+GET|POST /v1/admin/suppressions ; DELETE /v1/admin/suppressions/:id ; project-scoped: POST /v1/jobs/:id/retry, POST /v1/suppressions {email}
+MCP: POST /mcp (Streamable HTTP, Authorization: Bearer <ADMIN_API_KEY>), tools digest, list_jobs, get_job, retry_job, cancel_job,
+list_projects, update_project, list_suppressions, add_suppression, release_suppression, send_test. Client config in docs/AGENT.md.
+
 [connectors.sms]
 provider = "twilio"          # or "telnyx"
 account_sid = "ACxxx"

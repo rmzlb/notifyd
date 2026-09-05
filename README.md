@@ -259,6 +259,19 @@ State persisted in Postgres — survives restarts. No in-memory state to lose.
 
 ---
 
+## Built for agents, not dashboards
+
+No admin UI. `GET /v1/admin/digest` tells you, in one call, what deserves
+attention and what to do about it; `POST /mcp` exposes the same operations as
+MCP tools so Claude Code, Claude Desktop or Cursor can run the instance:
+
+```json
+{ "mcpServers": { "notifyd": { "type": "http", "url": "https://notifyd.example.com/mcp",
+  "headers": { "Authorization": "Bearer ${NOTIFYD_ADMIN_API_KEY}" } } } }
+```
+
+→ [docs/AGENT.md](docs/AGENT.md)
+
 ## Configuration
 
 Single TOML file. Minimal setup:
@@ -322,6 +335,7 @@ notifyd/
 | 🔌 **[API Reference](docs/API.md)** | Every endpoint with curl/TS/Rust examples |
 | 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue design, SSE internals, connectors |
 | 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
+| 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, how an agent runs an instance |
 | 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook, inventory |
 | 🤖 **[LLM Docs](docs/llms.txt)** | Full API in plain text — feed to your agent |
 
