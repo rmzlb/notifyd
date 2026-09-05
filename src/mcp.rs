@@ -1,12 +1,19 @@
-//! Model Context Protocol server, Streamable HTTP transport, stateless.
+//! Model Context Protocol server, Streamable HTTP transport, stateless,
+//! **dual-era**: it speaks the current revision (2026-07-28: no
+//! `initialize`, no session, `server/discover`, `_meta` on every request,
+//! `Mcp-Method`/`Mcp-Name` headers, `resultType`, cache hints) and the
+//! legacy revisions (2024-11-05 → 2025-11-25: `initialize` handshake) on
+//! the same `POST /mcp`. A request is modern when it carries
+//! `params._meta["io.modelcontextprotocol/protocolVersion"]`; otherwise it
+//! is legacy. Clients that probe modern-first and fall back to `initialize`
+//! (Claude Code v2) get a clean answer either way.
 //!
-//! `POST /mcp` with `Authorization: Bearer <ADMIN_API_KEY>` (or `x-api-key`).
-//! Each request is one JSON-RPC 2.0 message; the response is a single JSON
-//! document (no server-initiated stream, so `GET /mcp` answers 405 and
-//! `Mcp-Session-Id` is never issued). Notifications are acknowledged with
-//! 202 and no body. Methods: `initialize`, `ping`, `tools/list`,
-//! `tools/call`. Every tool wraps a function of `ops`, so the MCP surface
-//! and the REST admin API cannot drift apart.
+//! Auth: `Authorization: Bearer <ADMIN_API_KEY>` (or `x-api-key`). `Origin`
+//! is validated against `CORS_ORIGINS` (403 otherwise). One JSON-RPC message
+//! per POST: batches were removed from the protocol in 2025-06-18 and are
+//! rejected. Notifications → 202 with no body. `GET /mcp` → 405. Every tool
+//! wraps a function of `ops`, so the MCP surface and the REST admin API
+//! cannot drift apart; every `tools/call` is rate limited and audited.
 
 use crate::{ops, AppState};
 use axum::{
@@ -19,14 +26,63 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
-pub const PROTOCOL_VERSION: &str = "2025-06-18";
-const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+/// Newest revision we implement; also the answer to a legacy `initialize`
+/// that asks for something we do not know.
+pub const CURRENT_VERSION: &str = "2026-07-28";
+pub const LEGACY_DEFAULT_VERSION: &str = "2025-06-18";
+pub const SUPPORTED_VERSIONS: &[&str] = &[
+    "2026-07-28",
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
+const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+/// `tools/list` and `server/discover` are identical for every admin key.
+const LIST_TTL_MS: u64 = 300_000;
+/// Tool calls per minute for the (single) admin principal.
+const TOOL_CALLS_PER_MIN: u32 = 600;
+
+const INSTRUCTIONS: &str = "notifyd is a self-hosted notification queue (email, SMS, WhatsApp, in-app, push). Start with `digest` to see the state of this instance; its findings say what to do. Use list_jobs/get_job to investigate, retry_job after fixing a cause, update_project to set a sender, send_test to prove a channel. Read-only tools carry readOnlyHint; retry_job and send_test enqueue real messages.";
+
+fn server_info() -> Value {
+    json!({ "name": "notifyd", "version": env!("CARGO_PKG_VERSION") })
+}
+
+fn capabilities() -> Value {
+    json!({ "tools": { "listChanged": false } })
+}
+
+/// Annotations shared by every read-only tool: no side effect, our own
+/// database, safe to call without confirmation.
+fn read_only() -> Value {
+    json!({ "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false })
+}
+
+/// Additive, repeatable mutation (same arguments → same end state).
+fn idempotent_write() -> Value {
+    json!({ "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false })
+}
+
+/// Mutation that changes what recipients receive or stops something.
+fn destructive_write() -> Value {
+    json!({ "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false })
+}
+
+/// Enqueues a real message to a real recipient.
+fn sends_message() -> Value {
+    json!({ "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true })
+}
 
 /// Tool catalogue: name, description, JSON Schema of the arguments.
 pub fn tools() -> Value {
     json!([
         {
             "name": "digest",
+            "annotations": read_only(),
+            "outputSchema": {"type": "object", "properties": {"findings": {"type": "array"}, "queue": {"type": "object"}, "outcomes": {"type": "array"}, "projects": {"type": "array"}}, "required": ["findings", "queue"]},
             "description": "Health and activity digest of this notifyd instance: findings ranked by severity (with the action to take), queue depth, outcomes per channel/provider, failure reasons, retries waiting, latency, deliverability, projects. Call this first when asked how notifications are doing.",
             "inputSchema": {
                 "type": "object",
@@ -38,6 +94,8 @@ pub fn tools() -> Value {
         },
         {
             "name": "list_jobs",
+            "annotations": read_only(),
+            "outputSchema": {"type": "object", "properties": {"jobs": {"type": "array"}, "count": {"type": "integer"}}, "required": ["jobs", "count"]},
             "description": "Search notification jobs across projects. Recipients are masked. Default: last 7 days, 50 most recent.",
             "inputSchema": {
                 "type": "object",
@@ -53,26 +111,36 @@ pub fn tools() -> Value {
         },
         {
             "name": "get_job",
+            "annotations": read_only(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "status": {"type": "string"}, "provider": {"type": ["string", "null"]}, "provider_message_id": {"type": ["string", "null"]}}, "required": ["id", "status"]},
             "description": "One job with its attempts, provider, provider message id and delivery events.",
             "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "format": "uuid"}}, "required": ["id"]}
         },
         {
             "name": "retry_job",
+            "annotations": sends_message(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "project_id": {"type": "string"}, "channel": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]},
             "description": "Re-queue a failed or cancelled job with a fresh attempt budget. Fix the cause first: a permanent error (bad address, unverified sender) will fail again.",
             "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "format": "uuid"}}, "required": ["id"]}
         },
         {
             "name": "cancel_job",
+            "annotations": destructive_write(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "project_id": {"type": "string"}, "channel": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]},
             "description": "Cancel a job that is still pending or waiting for a retry.",
             "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "format": "uuid"}}, "required": ["id"]}
         },
         {
             "name": "list_projects",
+            "annotations": read_only(),
+            "outputSchema": {"type": "object", "properties": {"projects": {"type": "array"}}, "required": ["projects"]},
             "description": "Projects on this instance with channels, sender identity and inbound rate limit.",
-            "inputSchema": {"type": "object", "properties": {}}
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
         },
         {
             "name": "update_project",
+            "annotations": idempotent_write(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "from_email": {"type": ["string", "null"]}, "from_name": {"type": ["string", "null"]}}, "required": ["id"]},
             "description": "Change a project's name, channels, sender (from_email/from_name; empty from_email clears it) or inbound rate limit. Keys are never touched.",
             "inputSchema": {
                 "type": "object",
@@ -89,21 +157,29 @@ pub fn tools() -> Value {
         },
         {
             "name": "list_suppressions",
+            "annotations": read_only(),
+            "outputSchema": {"type": "object", "properties": {"suppressions": {"type": "array"}, "count": {"type": "integer"}}, "required": ["suppressions", "count"]},
             "description": "Active email suppressions (bounced, complained or manually blocked addresses), masked.",
             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}}
         },
         {
             "name": "add_suppression",
+            "annotations": destructive_write(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "project_id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["id"]},
             "description": "Block an address for a project: no email will be sent to it until released.",
             "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}, "email": {"type": "string"}, "detail": {"type": "string"}}, "required": ["project_id", "email"]}
         },
         {
             "name": "release_suppression",
+            "annotations": destructive_write(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "released": {"type": "boolean"}}, "required": ["id", "released"]},
             "description": "Release a suppression so the address can receive email again.",
             "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "format": "uuid"}}, "required": ["id"]}
         },
         {
             "name": "send_test",
+            "annotations": sends_message(),
+            "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "project_id": {"type": "string"}, "channel": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]},
             "description": "Enqueue a high-priority test message tagged category=test on a channel of a project, to prove the pipeline end to end. Returns the job id to follow with get_job.",
             "inputSchema": {
                 "type": "object",
@@ -292,44 +368,218 @@ pub async fn call_tool(state: &Arc<AppState>, name: &str, args: &Value) -> Value
     }
 }
 
+/// Which revision a message speaks. Modern requests carry the protocol
+/// version in `params._meta`; `server/discover` only exists in the modern
+/// protocol. Everything else is legacy.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Era {
+    Modern,
+    Legacy,
+}
+
+pub fn detect_era(message: &Value) -> Era {
+    let has_meta_version = message
+        .pointer(&format!(
+            "/params/_meta/{}",
+            META_PROTOCOL_VERSION.replace('/', "~1")
+        ))
+        .is_some();
+    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    if has_meta_version || method == "server/discover" {
+        Era::Modern
+    } else {
+        Era::Legacy
+    }
+}
+
+/// HTTP status + JSON-RPC error for a rejected request.
+#[derive(Debug)]
+pub struct Rejected(pub StatusCode, pub Value);
+
+/// Validate a modern request against its transport headers (SEP-2243) and
+/// `_meta` (SEP-2575). Returns the negotiated protocol version.
+pub fn validate_modern(headers: &HeaderMap, message: &Value) -> Result<String, Rejected> {
+    let id = message.get("id").cloned().unwrap_or(Value::Null);
+    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    let meta = message
+        .pointer("/params/_meta")
+        .cloned()
+        .unwrap_or(Value::Null);
+
+    let version = meta
+        .get(META_PROTOCOL_VERSION)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if version.is_empty() {
+        return Err(Rejected(
+            StatusCode::BAD_REQUEST,
+            rpc_error(
+                id,
+                -32602,
+                format!("params._meta.{META_PROTOCOL_VERSION} is required"),
+            ),
+        ));
+    }
+    if !SUPPORTED_VERSIONS.contains(&version.as_str()) {
+        return Err(Rejected(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": {
+                    "code": -32022,
+                    "message": format!("unsupported protocol version {version}"),
+                    "data": { "supported": SUPPORTED_VERSIONS, "requested": version }
+                }
+            }),
+        ));
+    }
+    if meta.get(META_CLIENT_CAPABILITIES).is_none() {
+        return Err(Rejected(
+            StatusCode::BAD_REQUEST,
+            rpc_error(
+                id,
+                -32602,
+                format!("params._meta.{META_CLIENT_CAPABILITIES} is required"),
+            ),
+        ));
+    }
+    if let Some(header_version) = header_str(headers, "mcp-protocol-version") {
+        if header_version != version {
+            return Err(Rejected(
+                StatusCode::BAD_REQUEST,
+                rpc_error(
+                    id,
+                    -32020,
+                    "MCP-Protocol-Version header does not match params._meta",
+                ),
+            ));
+        }
+    }
+    match header_str(headers, "mcp-method") {
+        Some(h) if h == method => {}
+        Some(_) => {
+            return Err(Rejected(
+                StatusCode::BAD_REQUEST,
+                rpc_error(
+                    id,
+                    -32020,
+                    "Mcp-Method header does not match the request method",
+                ),
+            ))
+        }
+        None => {
+            return Err(Rejected(
+                StatusCode::BAD_REQUEST,
+                rpc_error(id, -32020, "Mcp-Method header is required"),
+            ))
+        }
+    }
+    if method == "tools/call" {
+        let name = message
+            .pointer("/params/name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        match header_str(headers, "mcp-name") {
+            Some(h) if h == name => {}
+            _ => {
+                return Err(Rejected(
+                    StatusCode::BAD_REQUEST,
+                    rpc_error(
+                        id,
+                        -32020,
+                        "Mcp-Name header must equal params.name on tools/call",
+                    ),
+                ))
+            }
+        }
+    }
+    Ok(version)
+}
+
+/// Header value, decoding the `=?base64?…?=` sentinel the transport uses for
+/// values that are not plain ASCII (SEP-2243).
+fn header_str(headers: &HeaderMap, name: &str) -> Option<String> {
+    let raw = headers.get(name)?.to_str().ok()?.trim();
+    if let Some(inner) = raw
+        .strip_prefix("=?base64?")
+        .and_then(|r| r.strip_suffix("?="))
+    {
+        use base64::Engine;
+        return base64::engine::general_purpose::STANDARD
+            .decode(inner)
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok());
+    }
+    Some(raw.to_string())
+}
+
+fn with_modern_envelope(mut result: Value) -> Value {
+    if let Some(obj) = result.as_object_mut() {
+        obj.entry("resultType").or_insert(json!("complete"));
+        obj.insert("_meta".into(), json!({ META_SERVER_INFO: server_info() }));
+    }
+    result
+}
+
+fn cacheable(mut result: Value) -> Value {
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("ttlMs".into(), json!(LIST_TTL_MS));
+        obj.insert("cacheScope".into(), json!("public"));
+    }
+    result
+}
+
 /// Dispatch one JSON-RPC message. `None` for notifications (no response).
-pub async fn handle_message(state: &Arc<AppState>, message: &Value) -> Option<Value> {
-    let id = message.get("id").cloned();
+/// Modern requests must already have passed `validate_modern`.
+pub async fn handle_message(state: &Arc<AppState>, message: &Value, era: Era) -> Option<Value> {
+    let id = message.get("id").cloned()?; // notifications and client responses: nothing to answer
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
 
-    // Notifications and client responses carry no id: nothing to answer.
-    let Some(id) = id else {
-        return None;
-    };
     if message.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Some(rpc_error(id, -32600, "jsonrpc must be \"2.0\""));
     }
 
-    Some(match method {
-        "initialize" => {
+    let envelope = |result: Value| match era {
+        Era::Modern => with_modern_envelope(result),
+        Era::Legacy => result,
+    };
+
+    Some(match (method, era) {
+        ("server/discover", Era::Modern) => rpc_result(
+            id,
+            envelope(cacheable(json!({
+                "supportedVersions": SUPPORTED_VERSIONS,
+                "capabilities": capabilities(),
+                "instructions": INSTRUCTIONS,
+            }))),
+        ),
+        ("initialize", Era::Legacy) => {
             let requested = params
                 .get("protocolVersion")
                 .and_then(Value::as_str)
-                .unwrap_or(PROTOCOL_VERSION);
-            let version = if SUPPORTED_VERSIONS.contains(&requested) {
+                .unwrap_or(LEGACY_DEFAULT_VERSION);
+            // A legacy handshake never negotiates the stateless revision.
+            let version = if SUPPORTED_VERSIONS.contains(&requested) && requested != CURRENT_VERSION
+            {
                 requested
             } else {
-                PROTOCOL_VERSION
+                LEGACY_DEFAULT_VERSION
             };
             rpc_result(
                 id,
                 json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": { "name": "notifyd", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "notifyd is a self-hosted notification queue (email, SMS, WhatsApp, in-app, push). Start with `digest` to see the state of this instance; its findings say what to do. Use list_jobs/get_job to investigate, retry_job after fixing a cause, update_project to set a sender, send_test to prove a channel."
+                    "capabilities": capabilities(),
+                    "serverInfo": server_info(),
+                    "instructions": INSTRUCTIONS,
                 }),
             )
         }
-        "ping" => rpc_result(id, json!({})),
-        "tools/list" => rpc_result(id, json!({ "tools": tools() })),
-        "tools/call" => {
+        ("ping", Era::Legacy) => rpc_result(id, json!({})),
+        ("tools/list", _) => rpc_result(id, envelope(cacheable(json!({ "tools": tools() })))),
+        ("tools/call", _) => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params
                 .get("arguments")
@@ -338,13 +588,57 @@ pub async fn handle_message(state: &Arc<AppState>, message: &Value) -> Option<Va
             if name.is_empty() {
                 rpc_error(id, -32602, "params.name is required")
             } else {
-                rpc_result(id, call_tool(state, name, &args).await)
+                let started = std::time::Instant::now();
+                let result = call_tool(state, name, &args).await;
+                audit_tool_call(state, name, &args, &result, started.elapsed());
+                rpc_result(id, envelope(result))
             }
         }
-        "resources/list" => rpc_result(id, json!({ "resources": [] })),
-        "prompts/list" => rpc_result(id, json!({ "prompts": [] })),
+        ("resources/list", _) => rpc_result(id, envelope(cacheable(json!({ "resources": [] })))),
+        ("prompts/list", _) => rpc_result(id, envelope(cacheable(json!({ "prompts": [] })))),
         _ => rpc_error(id, -32601, format!("method not found: {method}")),
     })
+}
+
+/// Every tool call lands in the audit log: name, argument keys (never the
+/// values, which may hold addresses), outcome and latency.
+fn audit_tool_call(
+    state: &Arc<AppState>,
+    name: &str,
+    args: &Value,
+    result: &Value,
+    took: std::time::Duration,
+) {
+    let pool = state.pool.clone();
+    let action = format!("mcp.{name}");
+    let is_error = result
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let arg_keys: Vec<String> = args
+        .as_object()
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default();
+    let detail = json!({ "args": arg_keys, "is_error": is_error, "ms": took.as_millis() as u64 })
+        .to_string();
+    tokio::spawn(async move {
+        crate::middleware::audit(&pool, "admin", "mcp", &action, Some(&detail), None).await;
+    });
+}
+
+/// `Origin` present → must be one of `CORS_ORIGINS`, else 403 (DNS
+/// rebinding defence, MUST in the transport spec). No header (CLI, SDK,
+/// server-side agent) is fine.
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    std::env::var("CORS_ORIGINS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .any(|allowed| allowed.eq_ignore_ascii_case(origin.trim_end_matches('/')))
 }
 
 /// POST /mcp
@@ -353,6 +647,13 @@ pub async fn post(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
+    if !origin_allowed(&headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(rpc_error(Value::Null, -32600, "Origin not allowed")),
+        )
+            .into_response();
+    }
     if !authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -360,7 +661,22 @@ pub async fn post(
         )
             .into_response();
     }
-    let parsed: Value = match serde_json::from_slice(&body) {
+    if !state
+        .rate_limiter
+        .check("mcp:admin", TOOL_CALLS_PER_MIN)
+        .await
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(rpc_error(
+                Value::Null,
+                -32000,
+                "rate limit exceeded, retry in a minute",
+            )),
+        )
+            .into_response();
+    }
+    let message: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
             return (
@@ -370,28 +686,75 @@ pub async fn post(
                 .into_response()
         }
     };
-    match parsed {
-        Value::Array(messages) => {
-            let mut responses = Vec::new();
-            for message in &messages {
-                if let Some(r) = handle_message(&state, message).await {
-                    responses.push(r);
-                }
-            }
-            if responses.is_empty() {
-                StatusCode::ACCEPTED.into_response()
-            } else {
-                Json(Value::Array(responses)).into_response()
-            }
+    if message.is_array() {
+        // Batching left the protocol in 2025-06-18.
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(rpc_error(
+                Value::Null,
+                -32600,
+                "one JSON-RPC message per request; batches are not supported",
+            )),
+        )
+            .into_response();
+    }
+    if !message.is_object() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(rpc_error(Value::Null, -32600, "expected a JSON-RPC object")),
+        )
+            .into_response();
+    }
+
+    let era = detect_era(&message);
+    if era == Era::Modern {
+        if let Err(Rejected(status, error)) = validate_modern(&headers, &message) {
+            return (status, Json(error)).into_response();
         }
-        message => match handle_message(&state, &message).await {
-            Some(response) => Json(response).into_response(),
-            None => StatusCode::ACCEPTED.into_response(),
-        },
+        // Modern: unknown methods are 404 (+ -32601 in the body).
+        let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+        let known = matches!(
+            method,
+            "server/discover" | "tools/list" | "tools/call" | "resources/list" | "prompts/list"
+        );
+        if !known && message.get("id").is_some() {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(rpc_error(
+                    message["id"].clone(),
+                    -32601,
+                    format!("method not found: {method}"),
+                )),
+            )
+                .into_response();
+        }
+    }
+
+    match handle_message(&state, &message, era).await {
+        Some(response) => {
+            let mut res = Json(response).into_response();
+            if era == Era::Modern {
+                res.headers_mut().insert(
+                    "mcp-protocol-version",
+                    message
+                        .pointer(&format!(
+                            "/params/_meta/{}",
+                            META_PROTOCOL_VERSION.replace('/', "~1")
+                        ))
+                        .and_then(Value::as_str)
+                        .unwrap_or(CURRENT_VERSION)
+                        .parse()
+                        .expect("header value"),
+                );
+            }
+            res
+        }
+        None => StatusCode::ACCEPTED.into_response(),
     }
 }
 
-/// GET /mcp — no server-initiated stream on this transport.
+/// GET /mcp — no server-initiated stream on this transport (modern clients
+/// use `subscriptions/listen`, which this server does not offer).
 pub async fn get() -> Response {
     StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
@@ -424,5 +787,120 @@ mod tests {
         let r = text_result("boom".into(), None, true);
         assert_eq!(r["isError"], true);
         assert_eq!(r["content"][0]["text"], "boom");
+    }
+
+    #[test]
+    fn every_tool_declares_annotations_and_output_schema() {
+        for tool in tools().as_array().unwrap() {
+            let a = &tool["annotations"];
+            assert!(a["readOnlyHint"].is_boolean(), "{}", tool["name"]);
+            assert!(a["destructiveHint"].is_boolean(), "{}", tool["name"]);
+            assert!(a["idempotentHint"].is_boolean(), "{}", tool["name"]);
+            assert!(a["openWorldHint"].is_boolean(), "{}", tool["name"]);
+            assert_eq!(tool["outputSchema"]["type"], "object", "{}", tool["name"]);
+        }
+        let list = tools();
+        let names: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+        assert_eq!(names.len(), unique.len(), "tool names must be unique");
+    }
+
+    #[test]
+    fn era_detection() {
+        assert_eq!(
+            detect_era(
+                &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})
+            ),
+            Era::Legacy
+        );
+        assert_eq!(
+            detect_era(
+                &json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}})
+            ),
+            Era::Modern
+        );
+        assert_eq!(
+            detect_era(&json!({"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}})),
+            Era::Modern
+        );
+    }
+
+    fn modern_headers(method: &str, name: Option<&str>) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("mcp-method", method.parse().unwrap());
+        h.insert("mcp-protocol-version", "2026-07-28".parse().unwrap());
+        if let Some(n) = name {
+            h.insert("mcp-name", n.parse().unwrap());
+        }
+        h
+    }
+
+    fn modern_message(method: &str, params: Value) -> Value {
+        let mut p = params;
+        p["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        });
+        json!({"jsonrpc":"2.0","id":7,"method":method,"params":p})
+    }
+
+    #[test]
+    fn modern_validation_accepts_well_formed_requests() {
+        let m = modern_message("tools/call", json!({"name":"digest","arguments":{}}));
+        assert_eq!(
+            validate_modern(&modern_headers("tools/call", Some("digest")), &m).unwrap(),
+            "2026-07-28"
+        );
+    }
+
+    #[test]
+    fn modern_validation_rejects_header_mismatch_and_bad_versions() {
+        let m = modern_message("tools/call", json!({"name":"digest","arguments":{}}));
+        let Rejected(status, err) =
+            validate_modern(&modern_headers("tools/list", Some("digest")), &m).unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(err["error"]["code"], -32020);
+        let Rejected(_, err) =
+            validate_modern(&modern_headers("tools/call", Some("other")), &m).unwrap_err();
+        assert_eq!(err["error"]["code"], -32020);
+        let mut old = m.clone();
+        old["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = json!("1999-01-01");
+        let mut h = modern_headers("tools/call", Some("digest"));
+        h.insert("mcp-protocol-version", "1999-01-01".parse().unwrap());
+        let Rejected(_, err) = validate_modern(&h, &old).unwrap_err();
+        assert_eq!(err["error"]["code"], -32022);
+        assert!(err["error"]["data"]["supported"].as_array().unwrap().len() >= 3);
+        let mut no_caps = m.clone();
+        no_caps["params"]["_meta"]
+            .as_object_mut()
+            .unwrap()
+            .remove("io.modelcontextprotocol/clientCapabilities");
+        let Rejected(_, err) =
+            validate_modern(&modern_headers("tools/call", Some("digest")), &no_caps).unwrap_err();
+        assert_eq!(err["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn base64_header_sentinel_is_decoded() {
+        let mut h = HeaderMap::new();
+        h.insert("mcp-name", "=?base64?ZGlnZXN0?=".parse().unwrap());
+        assert_eq!(header_str(&h, "mcp-name").as_deref(), Some("digest"));
+    }
+
+    #[test]
+    fn modern_envelope_adds_result_type_and_server_info() {
+        let r = with_modern_envelope(cacheable(json!({"tools": []})));
+        assert_eq!(r["resultType"], "complete");
+        assert_eq!(
+            r["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "notifyd"
+        );
+        assert_eq!(r["ttlMs"], 300000);
+        assert_eq!(r["cacheScope"], "public");
     }
 }

@@ -536,10 +536,14 @@ Project keys have the scoped equivalents `POST /v1/jobs/:id/retry` and
 
 ### MCP endpoint
 
-`POST /mcp` — Model Context Protocol, Streamable HTTP, stateless; admin key as
-`Authorization: Bearer`. Tools: `digest`, `list_jobs`, `get_job`, `retry_job`,
-`cancel_job`, `list_projects`, `update_project`, `list_suppressions`,
-`add_suppression`, `release_suppression`, `send_test`. See `docs/AGENT.md`.
+`POST /mcp` — Model Context Protocol, Streamable HTTP, stateless, dual-era
+(2026-07-28 with `server/discover` and `_meta`, plus the legacy `initialize`
+handshake); admin key as `Authorization: Bearer`. `Origin`, when present,
+must be in `CORS_ORIGINS` (403). One JSON-RPC message per request (batches
+→ 400). Tools with annotations and `outputSchema`: `digest`, `list_jobs`,
+`get_job`, `retry_job`, `cancel_job`, `list_projects`, `update_project`,
+`list_suppressions`, `add_suppression`, `release_suppression`, `send_test`.
+See `docs/AGENT.md`.
 
 ### Admin: Projects
 

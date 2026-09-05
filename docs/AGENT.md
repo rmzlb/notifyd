@@ -10,6 +10,17 @@ read a digest, investigate, fix, prove.
 Endpoint: `POST https://<your-notifyd>/mcp`, Streamable HTTP, stateless.
 Authentication: the instance `ADMIN_API_KEY` as a bearer token.
 
+The server speaks the current MCP revision (**2026-07-28**: `server/discover`,
+`_meta` on every request, `Mcp-Method`/`Mcp-Name` headers, `resultType`,
+cache hints) and the legacy `initialize` handshake (2024-11-05 → 2025-11-25)
+on the same endpoint, so both new and old clients work. Every tool carries
+annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+`openWorldHint`) and an `outputSchema`; clients use the read-only hint to
+skip confirmations on `digest`, `list_jobs`, `get_job`, `list_projects`,
+`list_suppressions`. `retry_job` and `send_test` are flagged as sending real
+messages. Tool calls are rate limited (600/min) and written to the audit log
+(tool name, argument keys, outcome, latency; never argument values).
+
 Claude Code (`.mcp.json` in the project, or `~/.claude.json`):
 
 ```json
