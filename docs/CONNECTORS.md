@@ -72,6 +72,13 @@ browsers over SSE (`GET /v1/inbox/:subscriber_id/stream`). Live events fan
 out through Postgres `NOTIFY`, so any number of replicas may serve the
 stream. An unknown subscriber is a permanent error.
 
+## Public URL
+
+`PUBLIC_URL` (e.g. `https://api-os.philoeparis.com/notifyd`) is the base of the
+links this instance hosts: the one-click unsubscribe endpoint `/u/<token>` on
+bulk email. Without it, bulk email leaves without `List-Unsubscribe` headers
+and the digest says so.
+
 ## Worker knobs
 
 | Variable | Default | Meaning |

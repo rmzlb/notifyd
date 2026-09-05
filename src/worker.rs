@@ -591,13 +591,53 @@ async fn build_send_request(
     }
 
     if job.channel == "email" {
-        // Suppressed address (bounce/complaint): fail before the provider.
-        if let Some(reason) =
-            crate::deliverability::active_suppression(&state.pool, &job.project_id, &job.recipient)
-                .await
-                .map_err(|e| ProviderError::transient("database", e.to_string()))?
+        let marketing = is_marketing_email(job);
+
+        // Suppressed address: fail before the provider. A commercial
+        // unsubscribe only stops marketing; bounces and complaints stop all.
+        if let Some(reason) = crate::deliverability::active_suppression(
+            &state.pool,
+            &job.project_id,
+            &job.recipient,
+            marketing,
+        )
+        .await
+        .map_err(|e| ProviderError::transient("database", e.to_string()))?
         {
             return Err(ProviderError::suppressed(reason));
+        }
+
+        // Bulk email leaves with List-Unsubscribe + one-click (RFC 8058),
+        // unless the caller already set its own. Needs PUBLIC_URL to build
+        // the link this instance hosts.
+        if marketing {
+            if let Some(public_url) = crate::unsubscribe::public_url() {
+                if let Some(obj) = metadata.as_object_mut() {
+                    let headers = obj
+                        .entry("email_headers")
+                        .or_insert_with(|| Value::Object(Default::default()));
+                    if let Some(h) = headers.as_object_mut() {
+                        let already = h.keys().any(|k| k.eq_ignore_ascii_case("List-Unsubscribe"));
+                        if !already {
+                            let generated = crate::unsubscribe::headers_for(
+                                &state.config.server.jwt_secret,
+                                &public_url,
+                                &job.project_id,
+                                &job.recipient,
+                            );
+                            if let Some(g) = generated.as_object() {
+                                for (k, v) in g {
+                                    h.insert(k.clone(), v.clone());
+                                }
+                            }
+                            info!(
+                                "Job {}: List-Unsubscribe headers added (bulk email)",
+                                job.id
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         // Tag the outgoing email with its job id: Resend echoes tags back in
@@ -877,6 +917,27 @@ struct PushTokenRow {
     endpoint: Option<String>,
     p256dh: Option<String>,
     auth: Option<String>,
+}
+
+/// Marketing email: bulk priority, or a `category` tag naming a campaign.
+/// Drives the unsubscribe headers and which suppressions apply.
+pub fn is_marketing_email(job: &Job) -> bool {
+    if job.priority >= crate::api::send::PRIORITY_BULK {
+        return true;
+    }
+    job.payload
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter().any(|t| {
+                t.get("name").and_then(Value::as_str) == Some("category")
+                    && matches!(
+                        t.get("value").and_then(Value::as_str),
+                        Some("campaign") | Some("marketing") | Some("newsletter") | Some("bulk")
+                    )
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// True when an email job carries a non-empty `attachments` array in its

@@ -54,6 +54,8 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
 POST /v1/batch accepts idempotency_key (declined per subscriber and channel) and reports jobs_deduplicated.
+Bulk email (priority>=80 or tag category=campaign|marketing|newsletter) gets List-Unsubscribe + one-click headers pointing at PUBLIC_URL/u/<token>;
+POST /u/:token records a marketing-scoped suppression (transactional email still goes). Suppressions have scope all|marketing.
 
 ---
 

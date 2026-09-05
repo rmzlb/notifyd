@@ -166,8 +166,8 @@ pub fn tools() -> Value {
             "name": "add_suppression",
             "annotations": destructive_write(),
             "outputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "project_id": {"type": "string"}, "reason": {"type": "string"}}, "required": ["id"]},
-            "description": "Block an address for a project: no email will be sent to it until released.",
-            "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}, "email": {"type": "string"}, "detail": {"type": "string"}}, "required": ["project_id", "email"]}
+            "description": "Block an address for a project. scope=all (default): no email at all. scope=marketing: bulk/campaign email stops, transactional email (orders, security) still goes — this is what a commercial unsubscribe does.",
+            "inputSchema": {"type": "object", "properties": {"project_id": {"type": "string"}, "email": {"type": "string"}, "detail": {"type": "string"}, "scope": {"type": "string", "enum": ["all", "marketing"]}}, "required": ["project_id", "email"]}
         },
         {
             "name": "release_suppression",
@@ -324,10 +324,20 @@ pub async fn call_tool(state: &Arc<AppState>, name: &str, args: &Value) -> Value
         .map_err(|e| e.to_string()),
         "add_suppression" => match (arg_str(args, "project_id"), arg_str(args, "email")) {
             (Some(project), Some(email)) => {
-                ops::add_suppression(state, project, email, arg_str(args, "detail"), "mcp")
+                match ops::SuppressionScope::parse(arg_str(args, "scope")) {
+                    Err(e) => Err(e.to_string()),
+                    Ok(scope) => ops::add_suppression(
+                        state,
+                        project,
+                        email,
+                        arg_str(args, "detail"),
+                        "mcp",
+                        scope,
+                    )
                     .await
                     .map(|v| ("Address suppressed.".to_string(), Some(v)))
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string()),
+                }
             }
             _ => Err("project_id and email are required".to_string()),
         },

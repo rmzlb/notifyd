@@ -41,6 +41,8 @@ services:
       SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
       EMAIL_FROM: ${EMAIL_FROM:-notifications@example.com}
       EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-}
+      # Public base URL of this instance: List-Unsubscribe links on bulk email.
+      PUBLIC_URL: ${PUBLIC_URL:-}
       # Second provider used when the primary answers 429/5xx (same sender).
       EMAIL_FALLBACK_PROVIDER: ${EMAIL_FALLBACK_PROVIDER:-}
       EMAIL_FAILOVER_COOLDOWN_SECS: ${EMAIL_FAILOVER_COOLDOWN_SECS:-60}

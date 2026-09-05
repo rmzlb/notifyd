@@ -12,6 +12,7 @@ mod pacing;
 mod pii;
 mod sse;
 mod templates;
+mod unsubscribe;
 mod webhooks;
 mod worker;
 mod workflow_engine;

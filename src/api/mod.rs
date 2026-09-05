@@ -26,6 +26,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .with_state(state.clone());
 
+    // Commercial unsubscribe links (RFC 8058 one-click), signed tokens.
+    let unsubscribe = Router::new()
+        .route(
+            "/u/:token",
+            axum::routing::get(crate::unsubscribe::get).post(crate::unsubscribe::post),
+        )
+        .with_state(state.clone());
+
     // Model Context Protocol endpoint for agents (admin key).
     let mcp = Router::new()
         .route(
@@ -37,6 +45,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .nest("/v1", api_routes(state))
         .merge(provider)
+        .merge(unsubscribe)
         .merge(mcp)
 }
 

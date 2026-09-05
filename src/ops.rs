@@ -127,6 +127,8 @@ pub struct Deliverability {
     pub complained: i64,
     pub suppressions_added: i64,
     pub suppressions_active: i64,
+    /// Commercial unsubscribes (marketing scope) in the window.
+    pub unsubscribes: i64,
     /// `None` when there is no deliverability event in the window (no webhook
     /// ingestion on this instance, or no traffic).
     pub bounce_rate_percent: Option<f64>,
@@ -303,6 +305,12 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
         sqlx::query_scalar("SELECT COUNT(*) FROM email_suppressions WHERE released_at IS NULL")
             .fetch_one(pool)
             .await?;
+    deliverability.unsubscribes = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM email_suppressions WHERE reason = 'unsubscribe' AND created_at >= $1",
+    )
+    .bind(since)
+    .fetch_one(pool)
+    .await?;
     let observed = deliverability.delivered + deliverability.bounced;
     deliverability.bounce_rate_percent = (observed > 0)
         .then(|| (deliverability.bounced as f64 / observed as f64 * 100.0 * 100.0).round() / 100.0);
@@ -442,6 +450,13 @@ fn compute_findings(
                 instance.email_fallback_provider.as_deref().unwrap_or("?")
             ),
             action: "Nothing lost. Check the primary provider's status page; if it repeats, lower EMAIL_RATE_PER_SEC or move the primary role to the other provider.".into(),
+        });
+    }
+    if instance.email_provider.is_some() && crate::unsubscribe::public_url().is_none() {
+        findings.push(Finding {
+            severity: "warning",
+            message: "PUBLIC_URL is not set: bulk email leaves without List-Unsubscribe headers.".into(),
+            action: "Set PUBLIC_URL to this instance's public base URL; Gmail and Yahoo require one-click unsubscribe on bulk senders.".into(),
         });
     }
     if instance.email_fallback_provider.is_none() && instance.email_provider.is_some() {
@@ -670,10 +685,11 @@ pub fn render_markdown(d: &Digest) -> String {
         }
     }
     out.push_str(&format!(
-        "\n## Deliverability\n\ndelivered {}, bounced {}, complained {}, bounce rate {}, suppressions added {} (active {})\n",
+        "\n## Deliverability\n\ndelivered {}, bounced {}, complained {}, unsubscribed {}, bounce rate {}, suppressions added {} (active {})\n",
         d.deliverability.delivered,
         d.deliverability.bounced,
         d.deliverability.complained,
+        d.deliverability.unsubscribes,
         d.deliverability
             .bounce_rate_percent
             .map(|r| format!("{r:.2} %"))
@@ -969,36 +985,74 @@ pub async fn cancel_job(
 
 // ─── Suppressions ───────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SuppressionScope {
+    /// Nothing is sent to the address (bounce, complaint, manual block).
+    All,
+    /// Bulk email stops, transactional email still goes (commercial unsubscribe).
+    Marketing,
+}
+
+impl SuppressionScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Marketing => "marketing",
+        }
+    }
+    pub fn parse(raw: Option<&str>) -> Result<Self> {
+        match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            None | Some("") | Some("all") => Ok(Self::All),
+            Some("marketing") => Ok(Self::Marketing),
+            Some(other) => Err(anyhow!("scope must be all or marketing (got {other})")),
+        }
+    }
+}
+
 pub async fn add_suppression(
     state: &Arc<AppState>,
     project_id: &str,
     email: &str,
     detail: Option<&str>,
     actor: &str,
+    scope: SuppressionScope,
 ) -> Result<Value> {
     let email = email.trim().to_lowercase();
     if !email.contains('@') {
         return Err(anyhow!("invalid email address"));
     }
+    let reason = match scope {
+        SuppressionScope::All => "manual",
+        SuppressionScope::Marketing => "unsubscribe",
+    };
+    // One active row per address: a wider scope wins over a narrower one,
+    // a repeated unsubscribe is a no-op.
     let id: Uuid = sqlx::query_scalar(
         r#"
-        INSERT INTO email_suppressions (project_id, email, reason, detail)
-        VALUES ($1, $2, 'manual', $3)
+        INSERT INTO email_suppressions (project_id, email, reason, detail, scope)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (project_id, lower(email)) WHERE released_at IS NULL
-        DO UPDATE SET detail = EXCLUDED.detail
+        DO UPDATE SET
+            detail = EXCLUDED.detail,
+            scope = CASE WHEN email_suppressions.scope = 'all' THEN 'all' ELSE EXCLUDED.scope END,
+            reason = CASE WHEN email_suppressions.scope = 'all' THEN email_suppressions.reason ELSE EXCLUDED.reason END
         RETURNING id
         "#,
     )
     .bind(project_id)
     .bind(&email)
+    .bind(reason)
     .bind(detail.map(|d| format!("{d} (by {actor})")))
+    .bind(scope.as_str())
     .fetch_one(&state.pool)
     .await?;
     Ok(json!({
         "id": id,
         "project_id": project_id,
         "email": crate::pii::mask_email(&email),
-        "reason": "manual",
+        "reason": reason,
+        "scope": scope.as_str(),
     }))
 }
 
@@ -1009,7 +1063,7 @@ pub async fn list_suppressions(
 ) -> Result<Vec<Value>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, project_id, email, reason, detail, created_at
+        SELECT id, project_id, email, reason, detail, scope, created_at
         FROM email_suppressions
         WHERE released_at IS NULL AND ($1::text IS NULL OR project_id = $1)
         ORDER BY created_at DESC LIMIT $2
@@ -1027,6 +1081,7 @@ pub async fn list_suppressions(
                 "project_id": r.get::<String, _>("project_id"),
                 "email": crate::pii::mask_email(&r.get::<String, _>("email")),
                 "reason": r.get::<String, _>("reason"),
+                "scope": r.get::<String, _>("scope"),
                 "detail": r.get::<Option<String>, _>("detail"),
                 "created_at": r.get::<DateTime<Utc>, _>("created_at"),
             })

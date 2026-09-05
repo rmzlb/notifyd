@@ -163,6 +163,8 @@ pub struct AdminSuppressionBody {
     pub project_id: String,
     pub email: String,
     pub detail: Option<String>,
+    /// `all` (default) or `marketing`.
+    pub scope: Option<String>,
 }
 
 /// POST /v1/admin/suppressions
@@ -172,12 +174,14 @@ pub async fn admin_add_suppression(
     Json(body): Json<AdminSuppressionBody>,
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&headers)?;
+    let scope = ops::SuppressionScope::parse(body.scope.as_deref()).map_err(bad_request)?;
     let item = ops::add_suppression(
         &state,
         &body.project_id,
         &body.email,
         body.detail.as_deref(),
         "admin",
+        scope,
     )
     .await
     .map_err(|e| {
@@ -211,6 +215,8 @@ pub async fn admin_release_suppression(
 pub struct ProjectSuppressionBody {
     pub email: String,
     pub detail: Option<String>,
+    /// `all` (default) or `marketing`.
+    pub scope: Option<String>,
 }
 
 /// POST /v1/suppressions — project key.
@@ -220,12 +226,14 @@ pub async fn project_add_suppression(
     Json(body): Json<ProjectSuppressionBody>,
 ) -> Result<Json<Value>, ApiError> {
     let project = extract_project(&state, &headers).await?;
+    let scope = ops::SuppressionScope::parse(body.scope.as_deref()).map_err(bad_request)?;
     let item = ops::add_suppression(
         &state,
         &project.id,
         &body.email,
         body.detail.as_deref(),
         &format!("project:{}", project.id),
+        scope,
     )
     .await
     .map_err(|e| {

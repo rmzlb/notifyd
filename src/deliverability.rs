@@ -55,13 +55,20 @@ pub async fn active_suppression(
     pool: &PgPool,
     project_id: &str,
     email: &str,
+    marketing: bool,
 ) -> Result<Option<String>> {
+    // A marketing-scoped suppression (commercial unsubscribe) only stops
+    // bulk email; 'all' stops everything.
     let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT reason, created_at FROM email_suppressions
-         WHERE project_id = $1 AND lower(email) = lower($2) AND released_at IS NULL",
+         WHERE project_id = $1 AND lower(email) = lower($2) AND released_at IS NULL
+           AND (scope = 'all' OR $3)
+         ORDER BY CASE WHEN scope = 'all' THEN 0 ELSE 1 END
+         LIMIT 1",
     )
     .bind(project_id)
     .bind(email)
+    .bind(marketing)
     .fetch_optional(pool)
     .await?;
 

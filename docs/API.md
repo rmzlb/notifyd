@@ -681,6 +681,25 @@ Events map back to jobs through the `notifyd_job_id` tag that the worker adds
 to every outgoing email. Projects subscribed to outbound webhooks also receive
 `job.bounced` / `job.complained`.
 
+### Commercial unsubscribe (bulk email)
+
+Every email that is `bulk` (priority ≥ 80, or tagged `category=campaign|marketing|newsletter`)
+leaves with `List-Unsubscribe: <PUBLIC_URL/u/<token>>` and
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), unless the
+caller set its own `List-Unsubscribe` header. Requires `PUBLIC_URL` on the
+instance. The token is an HMAC (`JWT_SECRET`) over project, address and a
+400-day expiry: nothing to store, nothing to guess.
+
+- `GET /u/:token` shows a confirmation page with one button (a GET never
+  changes state: mail scanners follow links).
+- `POST /u/:token` records the unsubscribe: a suppression with
+  `reason = unsubscribe`, `scope = marketing`. Bulk email to the address
+  stops; transactional email (orders, security codes) still goes.
+
+Suppressions carry a `scope`: `all` (bounce, complaint, manual block: nothing
+is sent) or `marketing`. `POST /v1/suppressions` and
+`POST /v1/admin/suppressions` accept `"scope": "all" | "marketing"`.
+
 ### Suppression list
 
 An **active suppression** (project + address) makes the worker fail every email
