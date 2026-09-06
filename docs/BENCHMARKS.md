@@ -62,8 +62,8 @@ entirely for projects without a webhook.
   fully queued in Postgres before the API answers. The drain is then bound by
   your provider's quota, not by notifyd: with Resend's default 2 requests/s
   × 100 recipients, 100 000 emails leave in roughly 8–9 minutes, priority
-  lanes keep transactional mail ahead of the bulk, and a 429 pauses the
-  bulk lane only.
+  the claim order keeps transactional mail ahead of the bulk, and a 429
+  pauses the email channel for `Retry-After` without consuming an attempt.
 - One instance per company (see `docs/DEPLOYMENTS.md`) costs one 42 MB
   container and one Postgres database. Three companies = three containers,
   well under 100 MB of RAM in total.
@@ -80,7 +80,7 @@ without a benchmark is the shape of each system:
 |---|---|---|---|
 | Runtime | 1 container, Postgres | API, worker, WebSocket and web containers, MongoDB, Redis | hosted SaaS |
 | Queue durability | Postgres row per job, `SKIP LOCKED` | Redis / BullMQ | managed |
-| Provider 429 | pauses the lane, retries with `Retry-After` | job fails (one attempt) | managed |
+| Provider 429 | pauses the channel for `Retry-After`, retries without consuming an attempt | job fails (one attempt) | managed |
 | Ops surface | REST digest, MCP tools, Prometheus | React dashboard | dashboard + API |
 
 If you run Novu (or anything else) through the protocol below on the same

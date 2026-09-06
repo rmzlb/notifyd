@@ -83,44 +83,56 @@ const Send: React.FC = () => {
   );
 };
 
-type Job = { lane: "critical" | "normal" | "bulk"; label: string; t: number };
+type Lane = { name: "critical" | "normal" | "bulk"; color: string; prio: string };
 const Lanes: React.FC = () => {
   const frame = useCurrentFrame();
-  const lanes: { name: Job["lane"]; color: string; prio: string }[] = [
+  const lanes: Lane[] = [
     { name: "critical", color: C.red, prio: "10" }, { name: "normal", color: C.blue, prio: "50" }, { name: "bulk", color: C.purple, prio: "80" },
   ];
-  // provider 429 hits bulk at 5.2 s, lane paused until 8.6 s
-  const paused = frame >= S(5.2) && frame < S(8.6);
+  // provider 429 on the email channel at 5.2 s, channel paused until 8.0 s
+  const paused = frame >= S(5.2) && frame < S(8.0);
   const before = interpolate(frame, [S(1.5), S(5.2)], [0, 2150], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const after = frame >= S(8.6) ? interpolate(frame, [S(8.6), S(10)], [0, 900], { extrapolateRight: "clamp" }) : 0;
   const bulkCount = Math.min(5000, Math.floor(before + after));
-  const criticalFlash = frame >= S(6.2) && frame < S(7.8);
+  const resetQueued = frame >= S(6.4) && frame < S(8.0);
+  const resetSent = frame >= S(8.0) && frame < S(9.6);
+  const stateFor = (l: Lane): { text: string; color: string; width: string } => {
+    if (l.name === "bulk") return paused
+      ? { text: "waiting: email channel paused", color: C.muted, width: `${(bulkCount / 5000) * 100}%` }
+      : { text: `${bulkCount.toLocaleString("en")} / 5,000 of campaign "autumn-serums" sent`, color: C.muted, width: `${(bulkCount / 5000) * 100}%` };
+    if (l.name === "critical") return resetQueued
+      ? { text: "password reset for cust-9917 queued — head of the line", color: C.yellow, width: "12%" }
+      : resetSent ? { text: "channel resumed → password reset delivered first, 0.4 s", color: C.green, width: "100%" } : { text: "idle", color: C.muted, width: "0%" };
+    return { text: paused ? "waiting: email channel paused" : "order updates, 3 in flight", color: C.muted, width: "38%" };
+  };
   return (
     <Pad>
       <Appear><Title small>2 · A real delivery engine, not a loop over an array</Title></Appear>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ border: `2px solid ${paused ? C.red : C.line}`, borderRadius: 16, padding: "12px 14px", background: paused ? "#1a1114" : "transparent", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: mono, fontSize: 19, color: paused ? C.red : C.muted, padding: "0 6px" }}>
+          <span>channel <b style={{ color: C.text }}>email</b> · provider resend · 8 msg/s token bucket</span>
+          <span>{paused ? "PAUSED · 429 Too Many Requests · Retry-After: 30s · attempt not consumed" : "flowing"}</span>
+        </div>
         {lanes.map((l, i) => {
-          const isBulk = l.name === "bulk";
-          const state = isBulk ? (paused ? "paused · provider 429 · Retry-After 30s" : `${bulkCount.toLocaleString("en")} / 5,000 of campaign "autumn-serums" sent`)
-            : l.name === "critical" ? (criticalFlash ? "password reset for cust-9917 → delivered in 0.4 s" : "idle") : "order updates, 3 in flight";
+          const st = stateFor(l);
           return (
             <Appear key={l.name} delay={8 + i * 6}>
-              <div style={{ display: "flex", alignItems: "center", gap: 18, border: `2px solid ${isBulk && paused ? C.red : C.line}`, borderRadius: 14, padding: "14px 20px", background: C.panel }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 18, border: `2px solid ${C.line}`, borderRadius: 14, padding: "12px 20px", background: C.panel }}>
                 <div style={{ width: 150, fontFamily: mono, fontSize: 22, color: l.color, fontWeight: 700 }}>{l.name} <M>·{l.prio}</M></div>
                 <div style={{ flex: 1, height: 14, background: "#0b0d11", borderRadius: 7, overflow: "hidden" }}>
-                  <div style={{ width: isBulk ? `${(bulkCount / 5000) * 100}%` : l.name === "critical" ? (criticalFlash ? "100%" : "0%") : "38%", height: "100%", background: isBulk && paused ? C.red : l.color, transition: "width 0.2s" }} />
+                  <div style={{ width: st.width, height: "100%", background: paused ? C.line : l.color }} />
                 </div>
-                <div style={{ width: 460, fontSize: 20, color: isBulk && paused ? C.red : criticalFlash && l.name === "critical" ? C.green : C.muted }}>{state}</div>
+                <div style={{ width: 480, fontSize: 19, color: st.color }}>{st.text}</div>
               </div>
             </Appear>
           );
         })}
       </div>
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <Appear delay={S(3)}><Chip>token-bucket pacing per channel</Chip></Appear>
-        <Appear delay={S(5.4)}><Chip color={C.red}>429 pauses <b>only</b> the lane that hit it</Chip></Appear>
-        <Appear delay={S(6.4)}><Chip color={C.green}>critical never waits behind a campaign</Chip></Appear>
-        <Appear delay={S(8.8)}><Chip>backoff 30s → 2h with jitter · failover provider</Chip></Appear>
+        <Appear delay={S(3)}><Chip>claim order: <Y>priority ASC, scheduled_at ASC</Y></Chip></Appear>
+        <Appear delay={S(5.4)}><Chip color={C.red}>429 pauses the channel for Retry-After — a fallback provider is tried first</Chip></Appear>
+        <Appear delay={S(8.2)}><Chip color={C.green}>on resume, critical leaves before the campaign</Chip></Appear>
+        <Appear delay={S(9)}><Chip>backoff 30s → 2h with jitter · stuck-job reaper</Chip></Appear>
       </div>
     </Pad>
   );

@@ -41,7 +41,7 @@ Claude Code: `.mcp.json` →
      (5 attempts over ~2 h 40) or failed over to the fallback provider. Retry
      only if the provider is back.
 3. For a queue finding ("oldest job waiting"): check `retries_waiting` and
-   `paused_lanes` in the digest. A paused lane means a 429 from the provider;
+   `paused_lanes` in the digest (one entry per channel). A paused channel means a 429 from the provider;
    it clears itself. A stuck queue with nothing paused means the worker is
    down: escalate to the operator, you cannot restart it.
 4. For deliverability findings (bounce rate, complaints): `template_metrics`

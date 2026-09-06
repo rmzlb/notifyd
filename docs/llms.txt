@@ -49,7 +49,7 @@ Response: {"success": true, "jobs": [{"id": "uuid", "channel": "email", "status"
 Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed.
 - provider accepted: sent, provider + provider_message_id stored
 - 429 / 5xx / network with EMAIL_FALLBACK_PROVIDER: sent through the fallback immediately, primary rests EMAIL_FAILOVER_COOLDOWN_SECS (60)
-- 429: retry WITHOUT consuming an attempt; the channel lane pauses for Retry-After
+- 429: retry WITHOUT consuming an attempt; the whole channel pauses for Retry-After (priorities order the resume, they do not bypass the pause)
 - 5xx / timeout / network: retry with backoff 30s, 2min, 10min, 30min, 2h (+-20% jitter), failed after max_attempts (5)
 - other 4xx, invalid recipient, suppression list: failed immediately
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.

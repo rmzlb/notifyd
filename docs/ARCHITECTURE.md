@@ -51,7 +51,7 @@ Redis + BullMQ is the standard for job queues. But for a notification service do
 SELECT * FROM jobs
 WHERE status IN ('pending', 'retry')
   AND scheduled_at <= now()
-  AND NOT (channel = ANY($paused_lanes))   -- lanes a provider asked us to pause (429)
+  AND NOT (channel = ANY($paused_channels)) -- channels a provider asked us to pause (429)
 ORDER BY priority ASC, scheduled_at ASC    -- 10 critical … 50 normal … 80 bulk
 LIMIT 50
 FOR UPDATE SKIP LOCKED
@@ -59,8 +59,13 @@ FOR UPDATE SKIP LOCKED
 
 Before every provider request the worker takes a token from the channel's
 bucket (`EMAIL_RATE_PER_SEC`…, one token per call, a batch call counts once).
-A `429` pauses the lane for `Retry-After` and re-queues the job without
-consuming an attempt; the other lanes keep flowing.
+A `429` pauses the channel for `Retry-After` and re-queues the job without
+consuming an attempt; the other channels keep flowing. Priorities do not
+bypass the pause: the provider limit is per account, so a `critical` email
+would be refused too. What priorities guarantee is the order at claim time,
+so when the channel resumes, `critical` leaves before `bulk`. With a
+fallback provider configured the breaker tries it first, and the pause only
+happens if both refuse.
 
 This gives us:
 - **At-most-once processing** per poll cycle
@@ -76,7 +81,7 @@ Every connector answers with a `Delivery` or a typed `ProviderError`
 | Kind | What the worker does |
 |---|---|
 | accepted | `sent`, `provider` + `provider_message_id` stored on the job |
-| `RateLimited` (429) | `retry` without consuming an attempt; lane paused for `Retry-After` (default 2 s) |
+| `RateLimited` (429) | `retry` without consuming an attempt; channel paused for `Retry-After` (default 2 s) |
 | `Transient` (5xx, timeout, network, SMTP 4xx) | backoff below |
 | `Permanent` (other 4xx, invalid recipient, unverified sender, SMTP 5xx, integrity violation) | `failed` at once |
 | `Suppressed` (bounce/complaint list) | `failed` at once, provider never contacted |

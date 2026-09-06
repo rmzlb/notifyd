@@ -54,7 +54,7 @@ your agent            ──POST /mcp─────▶ notifyd ──▶ digest
 Three instances run in production today, one per company, operated this way.
 
 <p align="center">
-  <a href="https://github.com/rmzlb/notifyd/releases/download/v0.2.1/notifyd-explainer.mp4"><img src="docs/assets/notifyd-explainer.gif" alt="60-second explainer: one send call, priority lanes under a provider 429, an agent operating the instance over MCP" width="880"></a><br>
+  <a href="https://github.com/rmzlb/notifyd/releases/download/v0.2.1/notifyd-explainer.mp4"><img src="docs/assets/notifyd-explainer.gif" alt="60-second explainer: one send call, priority order under a provider 429, an agent operating the instance over MCP" width="880"></a><br>
   <sub>60 s explainer, invented data. <a href="https://github.com/rmzlb/notifyd/releases/download/v0.2.1/notifyd-explainer.mp4">MP4</a> · <a href="docs/video/">Remotion source</a></sub>
 </p>
 
@@ -161,7 +161,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 
 **Delivery engine**
 - **Priorities** — `critical`, `normal`, `bulk` lanes; `/v1/batch` and campaign tags land in `bulk`
-- **Pacing** — token bucket per channel (`EMAIL_RATE_PER_SEC`), a provider 429 pauses only the lane that hit it and honours `Retry-After`
+- **Pacing** — token bucket per channel (`EMAIL_RATE_PER_SEC`); a provider 429 pauses that channel for `Retry-After` without consuming an attempt, other channels keep flowing, and when it resumes the claim order puts `critical` first
 - **Retries** — 30 s → 2 m → 10 m → 30 m → 2 h with jitter, 4xx fail fast, rejected batches fall back item by item
 - **Failover** — second email provider with a circuit breaker (`EMAIL_FALLBACK_PROVIDER`)
 - **Send windows** — quiet hours per project, evaluated in each subscriber's timezone
@@ -274,7 +274,7 @@ Inbox endpoints also accept a subscriber JWT.
 | **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
 | **Memory** | not measured by us | N/A | 13 MB idle, 23 MB draining 100k jobs ([method](docs/BENCHMARKS.md)) |
 | **Throughput** | — | quota-bound | 44k jobs/s enqueued, 3.5k jobs/s drained ([benchmarks](docs/BENCHMARKS.md)) |
-| **Provider 429** | job fails | managed | lane paused, `Retry-After` honoured, failover provider |
+| **Provider 429** | job fails | managed | channel paused for `Retry-After`, attempt not consumed, failover provider tried first |
 | **Priorities / send windows** | ❌ | ✅ | ✅ critical → bulk lanes, per-subscriber timezone windows |
 | **Ops surface** | React dashboard | dashboard + API | digest endpoint, MCP server, Agent Skills, Prometheus |
 | **Realtime** | WebSocket | WebSocket | SSE, native `EventSource`, multi-replica |
@@ -349,7 +349,7 @@ Required: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`. Then one provider:
 ```
                  ┌──────────────────────── notifyd (one binary) ───────────────────────┐
  HTTP /v1, /mcp ─▶ axum API ─▶ jobs table ─▶ worker: claim (SKIP LOCKED, by priority) │
-                 │                              ├─ pacer per channel, lane pause on 429  │
+                 │                              ├─ pacer per channel, channel pause on 429│
                  │                              ├─ connectors (email/sms/whatsapp/push/in-app)
                  │                              ├─ failover breaker, retries, reaper      │
                  │                              └─ webhooks, metrics, audit               │
@@ -364,7 +364,7 @@ src/
 ├── api/              # routes: send, batch, jobs, inbox, subscribers, templates, workflows, webhooks, admin ops, health
 ├── connectors/       # email (resend, cloudflare, smtp, agentmail, log), sms, whatsapp, push, in_app
 ├── worker.rs         # claim by priority, batch context, finalize, retries, failover
-├── pacing.rs         # token buckets and lane pauses
+├── pacing.rs         # token buckets and channel pauses
 ├── failover.rs       # provider circuit breaker
 ├── ops.rs            # digest, findings, operator actions
 ├── mcp.rs            # MCP server (tools, annotations, audit)
@@ -400,9 +400,10 @@ in release notes; the queue schema is migrated automatically.
 | 🔌 **[API reference](docs/API.md)** | Every endpoint with curl / TypeScript / Rust examples |
 | 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, read-only key, how an agent runs an instance |
 | 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
-| 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue, lanes, SSE, connectors |
+| 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue, priorities, pacing, SSE, connectors |
 | 📈 **[Benchmarks](docs/BENCHMARKS.md)** | Footprint, throughput, how to reproduce |
 | 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook |
+| 📝 **[Writing](https://rmzlb.github.io/notifyd/)** | [A notification queue on PostgreSQL alone: what `SKIP LOCKED` does not give you](docs/articles/postgres-queue-what-skip-locked-does-not-give-you.md) |
 | 📣 **[Visibility](docs/VISIBILITY.md)** | Registries and launch channels |
 | 🤖 **[llms.txt](docs/llms.txt)** | The API in plain text for agents |
 
