@@ -53,6 +53,11 @@ your agent            ──POST /mcp─────▶ notifyd ──▶ digest
 
 Three instances run in production today, one per company, operated this way.
 
+<p align="center">
+  <a href="https://github.com/rmzlb/notifyd/releases/download/v0.2.1/notifyd-explainer.mp4"><img src="docs/assets/notifyd-explainer.gif" alt="60-second explainer: one send call, priority lanes under a provider 429, an agent operating the instance over MCP" width="880"></a><br>
+  <sub>60 s explainer, invented data. <a href="https://github.com/rmzlb/notifyd/releases/download/v0.2.1/notifyd-explainer.mp4">MP4</a> · <a href="docs/video/">Remotion source</a></sub>
+</p>
+
 ---
 
 ## Send in one call

@@ -1,3 +1,5 @@
 /target
 /node_modules
 .DS_Store
+docs/video/node_modules/
+docs/video/out/

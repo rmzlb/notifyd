@@ -1,0 +1,16 @@
+{
+  "name": "notifyd-video",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "render": "remotion render src/index.ts Explainer out/notifyd-explainer.mp4 --codec h264 --crf 20",
+    "gif": "ffmpeg -y -i out/notifyd-explainer.mp4 -vf \"fps=10,scale=880:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=96[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4\" ../assets/notifyd-explainer.gif"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.521",
+    "react": "^19",
+    "react-dom": "^19",
+    "remotion": "^4.0.521"
+  },
+  "devDependencies": { "@types/react": "^19" }
+}
