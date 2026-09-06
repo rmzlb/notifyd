@@ -30,7 +30,10 @@ acting, they move.
 | PR punkpeye/awesome-mcp-servers | open, #13725 |
 | mcpservers.org (free submission, Communication) | submitted, review within 12 h |
 | selfh.st, Self-Host Weekly "Project Launch" | submitted |
-| Social preview image | rendered, to upload (UI only) |
+| Social preview image | uploaded |
+| Technical article + GitHub Pages site | published: https://rmzlb.github.io/notifyd/ |
+| Explainer video (Remotion) | GIF in README, MP4 on release v0.2.1 |
+| Release binaries, installer, Nix flake | v0.2.1 |
 | crates.io `notifyd` 0.2.0 | published (`cargo install notifyd`), lib.rs indexes it automatically |
 | GitHub MCP Registry inclusion mail | sent to partnerships@github.com |
 | Announcement on X (@Rmzlb) | posted |

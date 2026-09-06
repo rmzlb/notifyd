@@ -1,7 +1,7 @@
 title: notifyd
 description: Agent-first notification service. One Rust binary, Postgres only. Email, SMS, WhatsApp, push, in-app inbox, MCP server built in.
 theme: jekyll-theme-minimal
-logo: /notifyd/assets/notifyd-logo.svg
+logo: /assets/notifyd-logo.svg
 show_downloads: false
 exclude:
   - video/node_modules
