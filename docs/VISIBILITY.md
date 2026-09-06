@@ -29,8 +29,10 @@ acting, they move.
 | mcpservers.org (free submission, Communication) | submitted, review within 12 h |
 | selfh.st, Self-Host Weekly "Project Launch" | submitted |
 | Social preview image | rendered, to upload (UI only) |
-| crates.io publish | waiting for a crates.io token (`cargo login`) |
-| GitHub MCP Registry inclusion mail, Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
+| crates.io `notifyd` 0.2.0 | published (`cargo install notifyd`), lib.rs indexes it automatically |
+| GitHub MCP Registry inclusion mail | sent to partnerships@github.com |
+| Announcement on X (@Rmzlb) | posted |
+| Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
 | Glama "Add Server" | needs a GitHub login in a browser |
 | awesome-selfhosted | eligible from 2027-01-06 (4 months after the first release) |
 | awesome-rust | eligible at 50 stars or 2 000 crate downloads |

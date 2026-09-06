@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/image-42_MB-green?style=flat-square" alt="Image size">
   <img src="https://img.shields.io/badge/RSS-13_MB_idle-green?style=flat-square" alt="Memory">
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=flat-square" alt="MCP server"></a>
+  <a href="https://crates.io/crates/notifyd"><img src="https://img.shields.io/crates/v/notifyd?style=flat-square&logo=rust" alt="crates.io"></a>
   <a href="https://skills.sh/rmzlb/notifyd"><img src="https://skills.sh/b/rmzlb/notifyd" alt="Agent Skills"></a>
 </p>
 
@@ -152,6 +153,13 @@ cp notifyd.toml.example notifyd.toml
 
 docker compose up -d
 # → notifyd running on http://localhost:3400
+```
+
+### From crates.io
+
+```bash
+cargo install notifyd
+DATABASE_URL=postgres://notifyd:pass@localhost:5432/notifyd JWT_SECRET=... ADMIN_API_KEY=... notifyd
 ```
 
 ### From source
