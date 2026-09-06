@@ -252,9 +252,14 @@ notifyd is designed for running one instance across multiple projects (apps).
 
 Zero-downtime key rotation:
 
-1. `POST /v1/admin/projects/:id/rotate-key` — generates new key, old key still valid (24h grace)
+1. `POST /v1/admin/projects/:id/rotate-key` — issues a new key; the previous one keeps working as the secondary key until you revoke it
 2. Update your app to use the new key
-3. `POST /v1/admin/projects/:id/revoke-secondary` — revoke old key
+3. `POST /v1/admin/projects/:id/revoke-secondary` — revoke the old key
+
+Keys are shown once, in the response that issued them. The database holds
+only their SHA-256 hashes (`api_key_hash`, `secondary_api_key_hash`,
+migration 020); a database dump does not leak project keys. Projects declared
+in `notifyd.toml` are compared in constant time from the config file.
 
 ---
 

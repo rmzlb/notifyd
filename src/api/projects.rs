@@ -120,22 +120,18 @@ pub async fn create_project(
         .unwrap_or_else(|| vec!["email".into(), "in_app".into()]);
     let channels_arr: Vec<&str> = channels.iter().map(|s| s.as_str()).collect();
 
-    sqlx::query(
+    // Only the hash is stored. An existing id is not silently updated: that
+    // would answer with a key that does not authenticate (the stored hash
+    // is untouched). Settings change through PATCH, keys through rotate-key.
+    let inserted: Option<(String,)> = sqlx::query_as(
         r#"
-        INSERT INTO projects (id, api_key, api_key_hash, name, channels, rate_limit_per_min, settings, from_email, from_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (id) DO UPDATE SET
-            name = EXCLUDED.name,
-            channels = EXCLUDED.channels,
-            rate_limit_per_min = EXCLUDED.rate_limit_per_min,
-            settings = EXCLUDED.settings,
-            from_email = EXCLUDED.from_email,
-            from_name = EXCLUDED.from_name,
-            updated_at = now()
-        "#
+        INSERT INTO projects (id, api_key_hash, name, channels, rate_limit_per_min, settings, from_email, from_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
+        "#,
     )
     .bind(&req.id)
-    .bind(&api_key)
     .bind(&api_key_hash)
     .bind(&req.name)
     .bind(&channels_arr)
@@ -143,9 +139,19 @@ pub async fn create_project(
     .bind(req.settings.as_ref().unwrap_or(&json!({})))
     .bind(&req.from_email)
     .bind(&req.from_name)
-    .execute(&state.pool)
+    .fetch_optional(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+
+    if inserted.is_none() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({
+                "error": format!("project `{}` already exists", req.id),
+                "hint": "PATCH /v1/admin/projects/:id changes settings; POST /v1/admin/projects/:id/rotate-key issues a new key"
+            })),
+        ));
+    }
 
     Ok(Json(json!({
         "success": true,
@@ -209,10 +215,9 @@ pub async fn rotate_key(
 
     // Move current key to secondary (grace period for migration)
     sqlx::query(
-        "UPDATE projects SET secondary_api_key = api_key, secondary_api_key_hash = api_key_hash, api_key = $2, api_key_hash = $3, updated_at = now() WHERE id = $1"
+        "UPDATE projects SET secondary_api_key_hash = api_key_hash, api_key_hash = $2, updated_at = now() WHERE id = $1"
     )
     .bind(&id)
-    .bind(&new_key)
     .bind(&new_hash)
     .execute(&state.pool)
     .await
@@ -234,9 +239,18 @@ pub async fn revoke_secondary(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&headers)?;
 
-    sqlx::query("UPDATE projects SET secondary_api_key = NULL, secondary_api_key_hash = NULL, updated_at = now() WHERE id = $1")
-        .bind(&id).execute(&state.pool).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
+    sqlx::query(
+        "UPDATE projects SET secondary_api_key_hash = NULL, updated_at = now() WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, {
+            tracing::error!("DB error: {}", e);
+            Json(json!({"error": "Internal server error"}))
+        })
+    })?;
 
     Ok(Json(
         json!({"success": true, "message": "Secondary key revoked"}),

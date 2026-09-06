@@ -558,16 +558,19 @@ See `docs/AGENT.md`.
 ```bash
 curl -X POST http://localhost:3400/v1/admin/projects \
   -H "X-Api-Key: admin_xxx" \
-  -d '{"id": "newapp", "name": "New App", "channels": ["email", "in_app"]}'
+  -d '{"id": "newapp", "name": "New App", "channels": ["email", "in_app"], "from_email": "hello@example.com"}'
+# → {"success": true, "project": {"id": "newapp", "api_key": "sk_newapp_…"}, "warning": "…"}
+# The key is returned once; only its hash is stored. An existing id answers 409:
+# change settings with PATCH, issue a new key with rotate-key.
 ```
 
 **Rotate API key (zero-downtime):**
 
 ```bash
-# 1. Rotate — old key still works for 24h
+# 1. Rotate — the old key keeps working as secondary until revoked
 curl -X POST http://localhost:3400/v1/admin/projects/newapp/rotate-key \
   -H "X-Api-Key: admin_xxx"
-# → {"new_key": "sk_newapp_yyy", "old_key_expires_at": "..."}
+# → {"success": true, "new_api_key": "sk_newapp_yyy", "note": "Old key is still valid as secondary…"}
 
 # 2. Update your app with new key
 

@@ -6,6 +6,12 @@ from `main`, through a Dokploy *Docker Compose* service that points at
 environment of that service; nothing company-specific lives in this repo.
 No secret value is ever written here, only variable names.
 
+
+> **Keys since migration 020.** The database stores only SHA-256 hashes of
+> project keys. A lost key cannot be read back from the database: issue a
+> new one with `POST /v1/admin/projects/:id/rotate-key`, update the
+> application, then `revoke-secondary`.
+
 ## Why per company, not one shared instance
 
 - Each company owns its data (one Postgres), its Resend team, its sender
