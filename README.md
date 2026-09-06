@@ -215,6 +215,7 @@ Prebuilt image, linux/amd64 and linux/arm64: `ghcr.io/rmzlb/notifyd`.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/rmzlb/notifyd/releases/latest/download/notifyd-installer.sh | sh
+brew install rmzlb/tap/notifyd             # macOS and Linux, Homebrew
 cargo binstall notifyd                     # prebuilt from the GitHub release
 cargo install notifyd                      # build from crates.io
 nix run github:rmzlb/notifyd               # flake: packages, devShell, NixOS module
@@ -233,7 +234,7 @@ No provider yet? `EMAIL_PROVIDER=log` prints emails instead of sending them.
 
 ```bash
 curl http://localhost:3400/v1/health
-# → {"status":"ok","db":"ok","version":"0.2.1","commit":"…","uptime_seconds":12}
+# → {"status":"ok","db":"ok","version":"0.2.2","commit":"…","uptime_seconds":12}
 ```
 
 → Full setup, TOML alternative, production notes: [docs/SETUP.md](docs/SETUP.md)

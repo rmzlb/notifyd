@@ -452,7 +452,7 @@ curl http://localhost:3400/v1/health
 {
   "status": "ok",
   "db": "ok",
-  "version": "0.2.1"
+  "version": "0.2.2"
 }
 ```
 
