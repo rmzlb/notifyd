@@ -8,11 +8,11 @@
     "source": "github"
   },
   "websiteUrl": "https://github.com/rmzlb/notifyd",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/rmzlb/notifyd:0.2.0",
+      "identifier": "ghcr.io/rmzlb/notifyd:0.2.1",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:3400/mcp"

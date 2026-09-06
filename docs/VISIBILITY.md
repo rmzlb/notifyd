@@ -14,6 +14,8 @@ acting, they move.
 | `server.json` | repo root | official MCP registry entry (`io.github.rmzlb/notifyd`), OCI package + `{host}` remote |
 | MCP registry publish (manual) | `.github/workflows/mcp-registry.yml` | `mcp-publisher login github-oidc && publish` |
 | Crate metadata | `Cargo.toml` (`readme`, `include`, categories) | `cargo publish` verified with `--dry-run` |
+| Release binaries + installer | `dist-workspace.toml`, `.github/workflows/release.yml` (cargo-dist) | `curl … installer.sh`, `cargo binstall`, Linux/macOS tarballs |
+| Nix flake | `flake.nix` | `nix run`, devShell, NixOS module; built and tested under `nixos/nix` |
 | Reproducible benchmarks | `docs/BENCHMARKS.md` | numbers only for notifyd, method, hardware, date, bias disclaimer |
 | Agent Skills | `skills/` | `npx skills add rmzlb/notifyd`, skills.sh badge |
 | `llms.txt` | `docs/llms.txt` | agent-readable API reference |

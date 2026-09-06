@@ -206,13 +206,21 @@ curl -s -X POST http://localhost:3400/v1/admin/projects \
 
 Prebuilt image, linux/amd64 and linux/arm64: `ghcr.io/rmzlb/notifyd`.
 
-### From crates.io or source
+### Binary, crate, Nix or source
 
 ```bash
-cargo install notifyd                      # or: git clone … && cargo run
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/rmzlb/notifyd/releases/latest/download/notifyd-installer.sh | sh
+cargo binstall notifyd                     # prebuilt from the GitHub release
+cargo install notifyd                      # build from crates.io
+nix run github:rmzlb/notifyd               # flake: packages, devShell, NixOS module
+# then
 DATABASE_URL=postgres://notifyd:pass@localhost:5432/notifyd \
 JWT_SECRET=… ADMIN_API_KEY=… RESEND_API_KEY=… EMAIL_FROM=… notifyd
 ```
+
+Release binaries: Linux x86_64 and aarch64, macOS Intel and Apple Silicon.
+NixOS: `services.notifyd.enable = true;` with an `environmentFile` (see
+`flake.nix`).
 
 No provider yet? `EMAIL_PROVIDER=log` prints emails instead of sending them.
 
@@ -220,7 +228,7 @@ No provider yet? `EMAIL_PROVIDER=log` prints emails instead of sending them.
 
 ```bash
 curl http://localhost:3400/v1/health
-# → {"status":"ok","db":"ok","version":"0.2.0","commit":"…","uptime_seconds":12}
+# → {"status":"ok","db":"ok","version":"0.2.1","commit":"…","uptime_seconds":12}
 ```
 
 → Full setup, TOML alternative, production notes: [docs/SETUP.md](docs/SETUP.md)
@@ -362,6 +370,8 @@ src/
 migrations/           # SQL, applied at start-up
 skills/               # Agent Skills: operate, integrate, deploy
 server.json           # MCP registry entry
+flake.nix             # Nix package, devShell, NixOS module
+dist-workspace.toml   # cargo-dist: release binaries and installer
 ```
 
 ~12 000 lines of Rust, no `unsafe`. 10.8 MB binary, 42 MB image, 13 MB RSS
