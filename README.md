@@ -1,69 +1,64 @@
 <p align="center">
-  <img src="docs/assets/notifyd-logo.svg" alt="notifyd" width="80" />
+  <img src="docs/assets/notifyd-logo.svg" alt="notifyd" width="96" />
 </p>
 
 <h1 align="center">notifyd</h1>
 
 <p align="center">
-  <strong>Agent-first notification service. One Rust binary. Postgres only. No Redis, no Mongo, no nonsense.</strong>
+  <strong>The notification service your agent can send through <em>and</em> run.</strong><br>
+  Email, SMS, WhatsApp, push, in-app inbox. One Rust binary. Postgres only. No dashboard: a digest endpoint and an MCP server instead.
 </p>
 
 <p align="center">
   <a href="https://github.com/rmzlb/notifyd/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/rmzlb/notifyd/pkgs/container/notifyd"><img src="https://img.shields.io/badge/ghcr.io-rmzlb%2Fnotifyd-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Container image"></a>
+  <a href="https://crates.io/crates/notifyd"><img src="https://img.shields.io/crates/v/notifyd?style=flat-square&logo=rust" alt="crates.io"></a>
   <a href="https://github.com/rmzlb/notifyd/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rmzlb/notifyd/ci.yml?branch=main&style=flat-square&label=ci" alt="CI"></a>
-  <img src="https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square&logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/image-42_MB-green?style=flat-square" alt="Image size">
   <img src="https://img.shields.io/badge/RSS-13_MB_idle-green?style=flat-square" alt="Memory">
-  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-server-8A2BE2?style=flat-square" alt="MCP server"></a>
-  <a href="https://crates.io/crates/notifyd"><img src="https://img.shields.io/crates/v/notifyd?style=flat-square&logo=rust" alt="crates.io"></a>
+  <a href="https://registry.modelcontextprotocol.io/v0/servers?search=notifyd"><img src="https://img.shields.io/badge/MCP_registry-io.github.rmzlb%2Fnotifyd-8A2BE2?style=flat-square" alt="MCP registry"></a>
   <a href="https://skills.sh/rmzlb/notifyd"><img src="https://skills.sh/b/rmzlb/notifyd" alt="Agent Skills"></a>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
+  <a href="#let-your-agent-run-it">Agent operations</a> •
   <a href="docs/API.md">API Reference</a> •
-  <a href="docs/SETUP.md">Setup Guide</a> •
   <a href="docs/ARCHITECTURE.md">Architecture</a> •
   <a href="docs/BENCHMARKS.md">Benchmarks</a> •
-  <a href="docs/llms.txt">LLM Docs</a> •
+  <a href="docs/llms.txt">llms.txt</a> •
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
 
-## The Problem
+## What it is
 
-Your AI agent needs to send an email. Or a push notification. Or update an in-app inbox.
+Every product needs to send email, texts and in-app notifications. The usual
+options are a hosted SaaS billed per notification, or a self-hosted stack
+with MongoDB, Redis and four containers behind a React dashboard.
 
-You look at Novu: MongoDB, Redis, 4 containers, a React SDK, 30 minutes of setup. Your agent doesn't care about any of that. It just wants to `POST /v1/send` and move on.
-
-**notifyd** is what that looks like. A single Rust binary. One `POST` call. Your agent sends notifications and gets back to work.
+notifyd is the third option: a **single 10 MB binary** with **PostgreSQL as
+its only dependency**, that sends through the providers you already have
+(Resend, Cloudflare Email Service, any SMTP, AgentMail, Telnyx, Twilio,
+Web Push, FCM), with a real delivery engine (priorities, pacing, retries with
+`Retry-After`, provider failover, send windows, one-click unsubscribe) and
+**no admin UI at all**. Operating it is an API call or an MCP tool, so the
+person on call can be an AI agent.
 
 ```
-Agent ──POST /v1/send──→ notifyd ──→ Email (Resend)
-                                 ──→ SMS (Twilio/Telnyx)
-                                 ──→ Push (FCM)
-                                 ──→ In-App (SSE)
+your app / your agent ──POST /v1/send──▶ notifyd ──▶ email · sms · whatsapp · push · in-app (SSE)
+your agent            ──POST /mcp─────▶ notifyd ──▶ digest · jobs · retries · suppressions · settings
 ```
+
+Three instances run in production today, one per company, operated this way.
 
 ---
 
-## Why Agents Love This
-
-Most notification services were designed for humans clicking buttons in a dashboard. notifyd was designed for agents making API calls.
-
-**Flat REST API** — no SDK needed, no WebSocket handshake, no complex auth flows. `curl` works. Your agent's HTTP client works.
-
-**`docs/llms.txt`** — the entire API reference in plain text, optimized for LLM context windows. Point your agent at it and it can call any endpoint. ([View it](docs/llms.txt))
-
-**Idempotency built-in** — agents retry. That's fine. Pass `idempotency_key` and notifyd deduplicates.
-
-**One binary, one config file** — `docker compose up` and you have a notification service. No infra degree required.
+## Send in one call
 
 ```bash
-# Your agent sends a notification. That's it.
-curl -X POST http://localhost:3400/v1/send \
+curl -X POST https://notifyd.example.com/v1/send \
   -H "X-Api-Key: sk_myapp_xxx" \
   -H "Content-Type: application/json" \
   -d '{
@@ -72,32 +67,192 @@ curl -X POST http://localhost:3400/v1/send \
     "subject": "Your report is ready",
     "body": "Hey {{first_name}}, the analysis you requested is complete.",
     "vars": {"first_name": "Alice"},
+    "priority": "normal",
     "idempotency_key": "report-42-ready"
   }'
 ```
 
-### Connect Your Agent to the Docs
-
-Feed `docs/llms.txt` to any LLM agent and it can operate the full API:
-
-```
-https://raw.githubusercontent.com/rmzlb/notifyd/main/docs/llms.txt
-```
-
-Or describe notifyd as a tool:
-
-```json
-{
-  "name": "send_notification",
-  "description": "Send email/SMS/push/in-app via notifyd",
-  "endpoint": "POST /v1/send",
-  "auth": "X-Api-Key header"
-}
-```
+Flat REST, `curl` is the SDK. Retries are safe (`idempotency_key`), scheduling
+is a field (`scheduled_at`), a marketing campaign is `POST /v1/batch` with
+thousands of subscribers per call and it lands in the bulk lane so it never delays a
+password reset. Follow any send with `GET /v1/jobs/:id`.
 
 ---
 
-## vs. The Alternatives
+## Let your agent run it
+
+Most notification tools were designed for a human clicking through a
+dashboard. notifyd exposes **the operator's job as tools**, with the detail a
+human operator would need:
+
+**1. One call says what needs attention.** `GET /v1/admin/digest` ranks
+findings and tells you the action for each one, in JSON or Markdown:
+
+```markdown
+# notifyd digest — last 1d
+Instance: commit e14e6f3, up 3d, email resend (+ smtp fallback), sms telnyx
+
+## Findings
+- **warning** — Primary email provider `resend` is resting for 47s after refusing messages; `smtp` is delivering.
+  _Nothing lost. Check the primary provider's status page; if it repeats, lower EMAIL_RATE_PER_SEC or move the primary role to the other provider._
+- **warning** — Bounce rate 5.3 % over the window (14 bounced / 263 delivered).
+  _Above 5 % providers throttle or suspend the sender. Clean the recipient list; suppressions are applied automatically._
+- **warning** — 3 job(s) failed in the last 1d (0.1 % of terminal jobs). Top cause: 422 unverified sender domain.
+  _Inspect with list_jobs(status=failed); permanent errors need a fix on the caller side, then retry_job._
+
+## Queue          pending 0, retry 2, processing 0
+## Outcomes       email/resend 4 812 sent, 3 failed · in_app 1 203 sent
+## Latency        email p50 0.6s, p95 2.1s (scheduled → accepted by provider)
+## Deliverability delivered 4 790, bounced 14, complained 0, unsubscribed 9
+```
+
+**2. The same operations as MCP tools.** `POST /mcp` is a Streamable HTTP
+MCP server (current spec revision, legacy `initialize` kept). Add it to Claude
+Code, Claude Desktop, Cursor or your own agent:
+
+```json
+{ "mcpServers": { "notifyd": {
+  "type": "http", "url": "https://notifyd.example.com/mcp",
+  "headers": { "Authorization": "Bearer ${NOTIFYD_ADMIN_API_KEY}" } } } }
+```
+
+| Tool | What the agent can do |
+|---|---|
+| `digest` | Ranked findings with actions, queue, outcomes, latency, deliverability, per project |
+| `list_jobs`, `get_job` | Filter by project, channel, status, recipient, time; see provider, attempts, last error |
+| `retry_job`, `cancel_job` | Act on a stuck or wrong send |
+| `list_projects`, `update_project` | Sender identity (`from_email`, `from_name`), channels, inbound rate limit, bulk `send_window` in the recipients' timezone |
+| `list_suppressions`, `add_suppression`, `release_suppression` | Suppression list with `all` or `marketing` scope |
+| `template_metrics` | Sent, failed, bounced, opened per template |
+| `send_test` | Prove the pipeline end to end on any channel |
+
+Every tool carries `readOnlyHint` / `destructiveHint` annotations and an
+`outputSchema`. A **read-only operator key** (`READONLY_API_KEY`) exposes only
+the read tools, for an agent that reports but must not act. Every MCP call is
+audited.
+
+**3. Everything an agent needs to integrate is in the repo.** `docs/llms.txt`
+is the whole API in plain text for a context window; three **Agent Skills**
+ship in [`skills/`](skills/) (`notifyd-operate`, `notifyd-integrate`,
+`notifyd-deploy`):
+
+```bash
+npx skills add rmzlb/notifyd
+```
+
+Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
+([`server.json`](server.json)). Full operator guide: [docs/AGENT.md](docs/AGENT.md).
+
+---
+
+## Features
+
+**Channels**
+- **Email** — Resend, Cloudflare Email Service, AgentMail, any SMTP (`lettre`), attachments, per-project sender identity
+- **SMS** — Telnyx or Twilio, swap with one variable
+- **WhatsApp** — Telnyx
+- **Push** — Web Push (VAPID) or FCM
+- **In-app inbox** — REST + realtime SSE (`EventSource`), read / archive / star, unread badge, multi-replica through Postgres `NOTIFY`
+
+**Delivery engine**
+- **Priorities** — `critical`, `normal`, `bulk` lanes; `/v1/batch` and campaign tags land in `bulk`
+- **Pacing** — token bucket per channel (`EMAIL_RATE_PER_SEC`), a provider 429 pauses only the lane that hit it and honours `Retry-After`
+- **Retries** — 30 s → 2 m → 10 m → 30 m → 2 h with jitter, 4xx fail fast, rejected batches fall back item by item
+- **Failover** — second email provider with a circuit breaker (`EMAIL_FALLBACK_PROVIDER`)
+- **Send windows** — quiet hours per project, evaluated in each subscriber's timezone
+- **Scheduling, idempotency, stuck-job reaper, batch idempotency**
+
+**Governance**
+- **Unsubscribe** — RFC 8058 `List-Unsubscribe` one-click on every marketing email, suppression scopes `all` / `marketing`
+- **Preferences** — per-subscriber opt-in / opt-out
+- **Multi-project** — one instance, many projects, isolated by API key, key rotation with a grace period
+- **PII masking** in logs, audit log of every mutation, per-project rate limit
+
+**Operations**
+- **Digest**, **MCP server**, **Agent Skills**, **`llms.txt`**
+- **Metrics** — `/v1/metrics`, `/v1/metrics/prometheus`, per-template metrics
+- **Webhooks** — delivery events to your endpoints
+- **Workflows** — event-triggered multi-step sequences, state in Postgres
+- **Templates** — `{{variable}}` substitution, stored per project
+
+---
+
+## Quick Start
+
+### Docker (recommended)
+
+The image reads its configuration from environment variables; no config file
+to mount.
+
+```bash
+git clone https://github.com/rmzlb/notifyd.git && cd notifyd
+cat > .env <<'EOF'
+JWT_SECRET=change-me-32-random-chars-minimum
+ADMIN_API_KEY=change-me-32-random-chars-minimum
+RESEND_API_KEY=re_xxx
+EMAIL_FROM=notifications@yourdomain.com
+EOF
+docker compose up -d          # notifyd + Postgres 16, http://localhost:3400
+```
+
+Create a project and get its API key:
+
+```bash
+curl -s -X POST http://localhost:3400/v1/admin/projects \
+  -H "X-Api-Key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"id":"myapp","name":"My app","channels":["email","in_app"],"from_email":"hello@yourdomain.com"}'
+# → {"project": {"id": "myapp", "api_key": "sk_myapp_…", …}}
+```
+
+Prebuilt image, linux/amd64 and linux/arm64: `ghcr.io/rmzlb/notifyd`.
+
+### From crates.io or source
+
+```bash
+cargo install notifyd                      # or: git clone … && cargo run
+DATABASE_URL=postgres://notifyd:pass@localhost:5432/notifyd \
+JWT_SECRET=… ADMIN_API_KEY=… RESEND_API_KEY=… EMAIL_FROM=… notifyd
+```
+
+No provider yet? `EMAIL_PROVIDER=log` prints emails instead of sending them.
+
+### Verify
+
+```bash
+curl http://localhost:3400/v1/health
+# → {"status":"ok","db":"ok","version":"0.2.0","commit":"…","uptime_seconds":12}
+```
+
+→ Full setup, TOML alternative, production notes: [docs/SETUP.md](docs/SETUP.md)
+
+---
+
+## API at a glance
+
+Project endpoints take `X-Api-Key: sk_<project>_…`; operator endpoints take
+the admin (or read-only) key, as `X-Api-Key` or `Authorization: Bearer`.
+Inbox endpoints also accept a subscriber JWT.
+
+| Method | Endpoint | What it does |
+|--------|----------|--------------|
+| `POST` | `/v1/send` | Send on one or several channels |
+| `POST` | `/v1/batch` | Send to many subscribers (bulk lane, idempotent) |
+| `GET` | `/v1/jobs/:id` | Status, provider, attempts, last error |
+| `GET` | `/v1/inbox/:id` · `/stream` | In-app inbox, SSE realtime stream |
+| `POST` | `/v1/workflows/trigger` | Trigger an event-based workflow |
+| `GET` | `/v1/admin/digest` | What needs attention, with actions |
+| `GET` | `/v1/admin/jobs` · `POST …/:id/retry` | Operator view and actions |
+| `PATCH` | `/v1/admin/projects/:id` | Sender, channels, rate limit, send window |
+| `POST` | `/mcp` | MCP server (Streamable HTTP) |
+| `GET` | `/v1/metrics/prometheus` | Prometheus exposition |
+| `GET` | `/u/:token` | One-click unsubscribe landing |
+
+→ Every endpoint with examples: [docs/API.md](docs/API.md), or feed
+[docs/llms.txt](docs/llms.txt) to your agent.
+
+---
+
+## vs. the alternatives
 
 | | **Novu** | **Knock / Courier / SuprSend** | **notifyd** |
 |---|---|---|---|
@@ -108,253 +263,117 @@ Or describe notifyd as a tool:
 | **Throughput** | — | quota-bound | 44k jobs/s enqueued, 3.5k jobs/s drained ([benchmarks](docs/BENCHMARKS.md)) |
 | **Provider 429** | job fails | managed | lane paused, `Retry-After` honoured, failover provider |
 | **Priorities / send windows** | ❌ | ✅ | ✅ critical → bulk lanes, per-subscriber timezone windows |
-| **Ops for agents** | React dashboard | dashboard + API | `GET /v1/admin/digest`, MCP server, Agent Skills, Prometheus |
-| **Realtime** | WebSocket | WebSocket | SSE (native `EventSource`, multi-replica via Postgres `NOTIFY`) |
-| **Self-hosted** | ✅ (heavy) | ❌ | ✅ (one container per company) |
-| **Queue** | Redis + BullMQ | Managed | Postgres `SKIP LOCKED`, stuck-job reaper |
+| **Ops surface** | React dashboard | dashboard + API | digest endpoint, MCP server, Agent Skills, Prometheus |
+| **Realtime** | WebSocket | WebSocket | SSE, native `EventSource`, multi-replica |
+| **Self-hosted** | ✅ (heavy) | ❌ | ✅ one container per company |
 | **Cost** | Free tier / paid | per notification | Free forever, MIT |
 
----
-
-## Features
-
-- **📧 Email** — Resend, Cloudflare Email Service, AgentMail or any SMTP, with an optional failover provider
-- **📱 SMS** — Twilio or Telnyx (swap in config, zero code change)
-- **🔔 Push** — FCM (Firebase Cloud Messaging)
-- **💬 In-app inbox** — REST + realtime SSE stream
-- **⏰ Scheduling** — `scheduled_at` on any notification
-- **🔄 Retry** — backoff 30s → 2m → 10m → 30m → 2h with jitter, provider `Retry-After` honoured
-- **🚥 Priorities** — critical / normal / bulk lanes, a 429 pauses only the lane that hit it
-- **🕰️ Send windows** — per-project quiet hours in each subscriber's timezone
-- **📭 Unsubscribe** — `List-Unsubscribe` one-click on every marketing email, suppression scopes
-- **🔑 Idempotency** — safe agent retries
-- **📋 Templates** — `{{variable}}` substitution, stored per project
-- **🏢 Multi-project** — one instance, many projects, isolated by API key
-- **⚡ Workflows** — event-triggered multi-step sequences
-- **👤 Preferences** — per-subscriber opt-in/opt-out
-- **🔍 Audit log** — every mutation logged
-- **🚦 Rate limiting** — per-project sliding window
-- **📊 Metrics** — `/v1/metrics`, `/v1/metrics/prometheus`, per-template metrics
-- **🧭 Digest + MCP** — `GET /v1/admin/digest` and `POST /mcp` so an agent operates the instance
-- **🪝 Webhooks** — delivery events to your endpoints
+We only publish numbers we measured on notifyd itself; the rest of the table
+describes shape, not performance. Method, hardware and bias disclaimer in
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ---
 
-## Quick Start
-
-### Docker (recommended)
-
-Prebuilt image (linux/amd64 + linux/arm64, 42 MB): `ghcr.io/rmzlb/notifyd`.
-
-```bash
-git clone https://github.com/rmzlb/notifyd.git && cd notifyd
-cp notifyd.toml.example notifyd.toml
-# Edit notifyd.toml — add your Resend API key at minimum
-
-docker compose up -d
-# → notifyd running on http://localhost:3400
-```
-
-### From crates.io
-
-```bash
-cargo install notifyd
-DATABASE_URL=postgres://notifyd:pass@localhost:5432/notifyd JWT_SECRET=... ADMIN_API_KEY=... notifyd
-```
-
-### From source
-
-```bash
-# Rust 1.75+, PostgreSQL 16+
-git clone https://github.com/rmzlb/notifyd.git && cd notifyd
-cp notifyd.toml.example notifyd.toml
-cargo run
-```
-
-### Verify
-
-```bash
-curl http://localhost:3400/v1/health
-# → {"status":"ok","db":"ok","version":"0.2.0"}
-```
-
-→ Full setup: [docs/SETUP.md](docs/SETUP.md)
-
----
-
-## API at a Glance
-
-Every endpoint uses `X-Api-Key: sk_<project>_xxx`. Inbox endpoints also accept subscriber JWT.
-
-| Method | Endpoint | What it does |
-|--------|----------|--------------|
-| `POST` | `/v1/send` | Send notification (email, SMS, push, in-app) |
-| `POST` | `/v1/batch` | Send to multiple subscribers |
-| `GET` | `/v1/inbox/:id` | List in-app notifications |
-| `GET` | `/v1/inbox/:id/stream` | SSE realtime stream |
-| `POST` | `/v1/workflows/trigger` | Trigger event-based workflow |
-| `GET` | `/v1/health` | Health check |
-| `GET` | `/v1/metrics` | Service metrics |
-
-→ Full reference: [docs/API.md](docs/API.md) — or feed [docs/llms.txt](docs/llms.txt) to your agent.
-
----
-
-## TypeScript SDK
-
-A small official SDK now ships in this repo for backend + frontend apps.
-
-```bash
-pnpm add notifyd-sdk@github:rmzlb/notifyd
-```
+## In-app inbox and TypeScript SDK
 
 ```typescript
-import { createNotifydClient } from 'notifyd-sdk';
+import { createNotifydClient } from 'notifyd-sdk';   // pnpm add notifyd-sdk@github:rmzlb/notifyd
 
-const notifyd = createNotifydClient({
-  url: process.env.NOTIFYD_URL!,
-  apiKey: process.env.NOTIFYD_API_KEY!,
-});
+const notifyd = createNotifydClient({ url: process.env.NOTIFYD_URL!, apiKey: process.env.NOTIFYD_API_KEY! });
+await notifyd.send({ channels: ['email', 'in_app'], subscriberId: 'user-123',
+  subject: 'Your report is ready', body: 'Hey {{first_name}}, the analysis is complete.', vars: { first_name: 'Alice' } });
 
-await notifyd.send({
-  channels: ['email', 'in_app'],
-  subscriberId: 'user-123',
-  subject: 'Your report is ready',
-  body: 'Hey {{first_name}}, the analysis is complete.',
-  vars: { first_name: 'Alice' },
-});
-
-const token = await notifyd.createSubscriberToken({
-  subscriberId: 'user-123',
-  ttlHours: 8,
-});
+// Browser: subscriber token from your backend, then a plain EventSource
+const events = new EventSource(`${url}/v1/inbox/${userId}/stream?token=${jwt}`);
+events.onmessage = (e) => { const d = JSON.parse(e.data);
+  if (d.type === 'new_notification') showToast(d.notification);
+  if (d.type === 'count_update') updateBadge(d.unread_count); };
 ```
-
-It wraps the REST API with typed helpers for send, subscribers, inbox, unread count, mark read, and SSE stream setup.
 
 ---
 
-## In-App Inbox
-
-Complete notification inbox with realtime SSE. No WebSocket library, no Redis pub/sub — just native `EventSource`.
-
-```typescript
-// Connect to realtime stream
-const events = new EventSource(
-  `https://notifyd.example.com/v1/inbox/${userId}/stream?token=${jwt}`
-);
-
-events.onmessage = (e) => {
-  const data = JSON.parse(e.data);
-  if (data.type === 'new_notification') showToast(data.notification);
-  if (data.type === 'count_update') updateBadge(data.unread_count);
-};
-```
-
-Features: read/unread, archive, todo/star, pagination, unread count badge, realtime push.
-
----
-
-## Workflow Engine
-
-Multi-step notification sequences triggered by events:
+## Workflows
 
 ```bash
-curl -X POST http://localhost:3400/v1/workflows \
-  -H "X-Api-Key: sk_myapp_xxx" \
-  -d '{
-    "id": "welcome-series",
-    "trigger_event": "user.signup",
-    "steps": [
-      {"type": "send", "channel": "email", "template": "welcome"},
-      {"type": "delay", "duration": "24h"},
-      {"type": "send", "channel": "email", "template": "getting_started"},
-      {"type": "delay", "duration": "72h"},
-      {"type": "condition", "check": "completed_onboarding", "if_false": [
-        {"type": "send", "channel": "email", "template": "nudge"}
-      ]}
-    ]
-  }'
+curl -X POST http://localhost:3400/v1/workflows -H "X-Api-Key: sk_myapp_xxx" -d '{
+  "id": "welcome-series", "trigger_event": "user.signup",
+  "steps": [
+    {"type": "send", "channel": "email", "template": "welcome"},
+    {"type": "delay", "duration": "24h"},
+    {"type": "condition", "check": "completed_onboarding",
+     "if_false": [{"type": "send", "channel": "email", "template": "nudge"}]}
+  ]}'
 ```
 
-State persisted in Postgres — survives restarts. No in-memory state to lose.
+State lives in Postgres and survives restarts.
 
 ---
-
-## Built for agents, not dashboards
-
-No admin UI. `GET /v1/admin/digest` tells you, in one call, what deserves
-attention and what to do about it; `POST /mcp` exposes the same operations as
-MCP tools so Claude Code, Claude Desktop or Cursor can run the instance:
-
-```json
-{ "mcpServers": { "notifyd": { "type": "http", "url": "https://notifyd.example.com/mcp",
-  "headers": { "Authorization": "Bearer ${NOTIFYD_ADMIN_API_KEY}" } } } }
-```
-
-→ [docs/AGENT.md](docs/AGENT.md)
-
-Agent Skills for Claude Code, Cursor and friends live in [`skills/`](skills/):
-`notifyd-operate`, `notifyd-integrate`, `notifyd-deploy`.
-
-```bash
-npx skills add rmzlb/notifyd
-```
-
-MCP registry name: `mcp-name: io.github.rmzlb/notifyd` (see [`server.json`](server.json)).
 
 ## Configuration
 
-Single TOML file. Minimal setup:
+Environment variables are the primary interface (that is what the image and
+the compose file use); a `notifyd.toml` is accepted for local development.
+Required: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`. Then one provider:
 
-```toml
-[server]
-port = 3400
-jwt_secret = "your-secret-here"
+| Variable | Purpose |
+|---|---|
+| `EMAIL_PROVIDER` | `resend` (default when `RESEND_API_KEY` is set), `cloudflare`, `smtp`, `agentmail`, `log` |
+| `EMAIL_FROM`, `EMAIL_FROM_NAME` | Instance default sender; projects can override |
+| `EMAIL_FALLBACK_PROVIDER` | Second provider on 429 / 5xx |
+| `EMAIL_RATE_PER_SEC` | Outbound pacing per replica |
+| `SMS_PROVIDER`, `SMS_FROM` | `telnyx` or `twilio` with their credentials |
+| `PUBLIC_URL` | Base URL for one-click unsubscribe links |
+| `READONLY_API_KEY` | Optional read-only operator key |
 
-[database]
-url = "postgres://notifyd:pass@localhost:5432/notifyd"
-
-[connectors.email]
-provider = "resend"
-api_key = "re_xxx"
-from = "notifications@yourdomain.com"
-
-[projects.myapp]
-api_key = "sk_myapp_xxx"
-channels = ["email", "in_app"]
-```
-
-→ Full config: [notifyd.toml.example](notifyd.toml.example). Providers and
-their environment variables (Resend, Cloudflare Email Service, any SMTP,
-AgentMail, Telnyx, Twilio, web push): [docs/CONNECTORS.md](docs/CONNECTORS.md).
+→ Every variable, per provider: [docs/CONNECTORS.md](docs/CONNECTORS.md) and
+[docker-compose.yml](docker-compose.yml). TOML reference:
+[notifyd.toml.example](notifyd.toml.example).
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
-notifyd/
-├── src/
-│   ├── main.rs              # Server bootstrap, graceful shutdown
-│   ├── config.rs             # TOML config
-│   ├── db.rs                 # sqlx models
-│   ├── worker.rs             # Background job processor
-│   ├── workflow_engine.rs    # Event-driven workflows
-│   ├── sse.rs                # SSE broadcaster (tokio channels)
-│   ├── templates.rs          # {{var}} engine
-│   ├── pii.rs                # PII masking for logs
-│   ├── middleware.rs          # Rate limiter + audit
-│   ├── api/                  # 13 route modules
-│   └── connectors/           # Email, SMS, Push, In-App
-├── migrations/               # SQL migrations (auto-run)
-├── Dockerfile                # Multi-stage + cargo-chef
-├── docker-compose.yml        # notifyd + Postgres
-├── notifyd.toml.example      # Config reference
-└── docs/                     # API ref, setup, architecture, llms.txt
+                 ┌──────────────────────── notifyd (one binary) ───────────────────────┐
+ HTTP /v1, /mcp ─▶ axum API ─▶ jobs table ─▶ worker: claim (SKIP LOCKED, by priority) │
+                 │                              ├─ pacer per channel, lane pause on 429  │
+                 │                              ├─ connectors (email/sms/whatsapp/push/in-app)
+                 │                              ├─ failover breaker, retries, reaper      │
+                 │                              └─ webhooks, metrics, audit               │
+                 │  SSE hub ◀── Postgres NOTIFY ── (any replica)                          │
+                 └───────────────────────────────┬──────────────────────────────────────┘
+                                                 ▼
+                                           PostgreSQL 16
 ```
 
-~12,000 lines of Rust, no `unsafe`. 10.8 MB binary, 42 MB image, 13 MB RSS at idle.
+```
+src/
+├── api/              # routes: send, batch, jobs, inbox, subscribers, templates, workflows, webhooks, admin ops, health
+├── connectors/       # email (resend, cloudflare, smtp, agentmail, log), sms, whatsapp, push, in_app
+├── worker.rs         # claim by priority, batch context, finalize, retries, failover
+├── pacing.rs         # token buckets and lane pauses
+├── failover.rs       # provider circuit breaker
+├── ops.rs            # digest, findings, operator actions
+├── mcp.rs            # MCP server (tools, annotations, audit)
+├── send_window.rs    # quiet hours in the subscriber's timezone
+├── unsubscribe.rs    # List-Unsubscribe tokens and landing
+├── sse.rs            # inbox stream, Postgres NOTIFY fan-out
+├── workflow_engine.rs, templates.rs, webhooks.rs, deliverability.rs, metrics.rs, pii.rs, middleware.rs
+migrations/           # SQL, applied at start-up
+skills/               # Agent Skills: operate, integrate, deploy
+server.json           # MCP registry entry
+```
+
+~12 000 lines of Rust, no `unsafe`. 10.8 MB binary, 42 MB image, 13 MB RSS
+idle, 23 MB while draining 100 000 jobs. → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+---
+
+## Status
+
+notifyd is a 0.x used in production by its authors. What it does not do yet:
+no dashboard (by design), no A/B testing, no APNs, no inbound email parsing, no multi-tenant billing. Breaking changes are announced
+in release notes; the queue schema is migrated automatically.
 
 ---
 
@@ -362,40 +381,30 @@ notifyd/
 
 | | |
 |---|---|
-| 📦 **[Setup Guide](docs/SETUP.md)** | Local dev, Docker, production deploy |
-| 🔌 **[API Reference](docs/API.md)** | Every endpoint with curl/TS/Rust examples |
-| 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue design, SSE internals, connectors |
-| 📈 **[Benchmarks](docs/BENCHMARKS.md)** | Footprint, throughput, how to reproduce |
-| 📣 **[Visibility](docs/VISIBILITY.md)** | Registries, lists and launch channels, in order |
+| 📦 **[Setup](docs/SETUP.md)** | Local dev, Docker, production |
+| 🔌 **[API reference](docs/API.md)** | Every endpoint with curl / TypeScript / Rust examples |
+| 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, read-only key, how an agent runs an instance |
 | 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
-| 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, how an agent runs an instance |
-| 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook, inventory |
-| 🤖 **[LLM Docs](docs/llms.txt)** | Full API in plain text — feed to your agent |
+| 🏗️ **[Architecture](docs/ARCHITECTURE.md)** | Queue, lanes, SSE, connectors |
+| 📈 **[Benchmarks](docs/BENCHMARKS.md)** | Footprint, throughput, how to reproduce |
+| 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook |
+| 📣 **[Visibility](docs/VISIBILITY.md)** | Registries and launch channels |
+| 🤖 **[llms.txt](docs/llms.txt)** | The API in plain text for agents |
 
 ---
 
 ## Contributing
 
-notifyd is built in **Grenoble, in the French Alps** 🏔️ — but open to contributors from everywhere.
-
-1. Read the [Contributing Guide](CONTRIBUTING.md)
-2. Check [open issues](https://github.com/rmzlb/notifyd/issues) — `good first issue` is a great start
-3. Big features → open an issue first
+Issues and pull requests are welcome; `good first issue` is the place to
+start, and big features begin with an issue. Read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/notifyd.git
-cd notifyd && cp notifyd.toml.example notifyd.toml
-cargo test && cargo run
+git clone https://github.com/YOUR_USERNAME/notifyd.git && cd notifyd
+cargo test && EMAIL_PROVIDER=log DATABASE_URL=… JWT_SECRET=dev ADMIN_API_KEY=dev cargo run
 ```
-
----
 
 ## License
 
-[MIT](LICENSE) — use it however you want.
+[MIT](LICENSE).
 
----
-
-<p align="center">
-  Built with 🦀 in Grenoble, France 🏔️
-</p>
+<p align="center">Built with 🦀 in Grenoble, France 🏔️</p>
