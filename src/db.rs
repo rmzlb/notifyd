@@ -77,6 +77,9 @@ pub struct Template {
     pub topic: Option<String>,
 }
 
+/// Column list shared by every `SELECT … FROM templates` that loads a [`Template`].
+pub const TEMPLATE_COLUMNS: &str = "id, project_id, channel, subject, body, body_html, topic";
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct SubscriberPreference {
     pub project_id: String,

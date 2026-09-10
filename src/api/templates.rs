@@ -97,9 +97,10 @@ pub async fn list_templates(
             )
         })?;
 
-    let templates: Vec<Template> = sqlx::query_as(
-        "SELECT id, project_id, channel, subject, body, body_html, topic FROM templates WHERE project_id=$1 ORDER BY id, channel LIMIT $2 OFFSET $3"
-    )
+    let templates: Vec<Template> = sqlx::query_as(&format!(
+        "SELECT {} FROM templates WHERE project_id=$1 ORDER BY id, channel LIMIT $2 OFFSET $3",
+        crate::db::TEMPLATE_COLUMNS
+    ))
     .bind(&project.id)
     .bind(limit)
     .bind(offset)
@@ -107,7 +108,10 @@ pub async fn list_templates(
     .await
     .map_err(|e| {
         tracing::error!("DB error: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Internal server error"})),
+        )
     })?;
 
     let items: Vec<Value> = templates
@@ -140,16 +144,20 @@ pub async fn get_template(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
 
-    let templates: Vec<Template> = sqlx::query_as(
-        "SELECT id, project_id, channel, subject, body, body_html, topic FROM templates WHERE project_id=$1 AND id=$2"
-    )
+    let templates: Vec<Template> = sqlx::query_as(&format!(
+        "SELECT {} FROM templates WHERE project_id=$1 AND id=$2",
+        crate::db::TEMPLATE_COLUMNS
+    ))
     .bind(&project.id)
     .bind(&id)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
         tracing::error!("DB error: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Internal server error"})))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Internal server error"})),
+        )
     })?;
 
     if templates.is_empty() {

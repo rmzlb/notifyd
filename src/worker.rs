@@ -781,11 +781,15 @@ async fn build_send_request(
     ctx: Option<&EmailContext>,
 ) -> Result<SendRequest, ProviderError> {
     let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
-        let tmpl: Option<crate::db::Template> = sqlx::query_as(
-            "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 AND id=$2 AND channel=$3"
-        )
-        .bind(&job.project_id).bind(tmpl_id).bind(&job.channel)
-        .fetch_optional(&state.pool).await
+        let tmpl: Option<crate::db::Template> = sqlx::query_as(&format!(
+            "SELECT {} FROM templates WHERE project_id=$1 AND id=$2 AND channel=$3",
+            crate::db::TEMPLATE_COLUMNS
+        ))
+        .bind(&job.project_id)
+        .bind(tmpl_id)
+        .bind(&job.channel)
+        .fetch_optional(&state.pool)
+        .await
         .map_err(|e| ProviderError::transient("database", e.to_string()))?;
 
         if let Some(t) = tmpl {
