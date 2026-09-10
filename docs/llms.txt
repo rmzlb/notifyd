@@ -231,6 +231,7 @@ With PUBLIC_URL set, every HTML email gets a 1×1 pixel (GET /t/o/<token>.gif) a
 Hits become provider_events rows (provider "notifyd", email.opened / email.clicked) and set jobs.opened_at /
 jobs.clicked_at (first time); GET /v1/jobs/:id returns both, /v1/admin/metrics/templates counts them with the
 provider webhooks. Unsubscribe links (/u/…), mailto: and template placeholders are never wrapped.
+A click event records the link's host only, never the full URL (sign-in and reset links carry tokens).
 Off switches: PATCH /v1/admin/projects/:id {"settings": {"tracking": false}} or {"tracking": {"opens": false}};
 per request "track": false (a request can only narrow what the project allows). Opens are approximate (image
 proxies and scanners load pixels); clicks are reliable.
