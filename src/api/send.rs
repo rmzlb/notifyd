@@ -155,6 +155,15 @@ pub struct SendRequest {
     /// Push extras: `{"badge", "sound", "thread_id", "category", "collapse_id",
     /// "mutable_content", "background", "ttl_secs", "data"}` (see connectors/apns.rs).
     pub push: Option<Value>,
+    /// Marks a message the subscriber cannot decline: password reset, magic
+    /// link, email verification, order receipt, security alert. Subscription
+    /// preferences (topic, workflow, channel and global opt-outs) are skipped
+    /// at enqueue *and* at send, so an opt-out can never lock somebody out of
+    /// their own account. Suppressions still apply: a hard bounce or a spam
+    /// complaint keeps blocking the address, because that is a deliverability
+    /// signal, not a choice. Never set this on marketing — `/v1/batch` does
+    /// not accept it at all.
+    pub transactional: Option<bool>,
 }
 
 /// Effective send window for a request: the request's own object wins,
@@ -306,6 +315,11 @@ pub struct BatchRequest {
     pub topic: Option<String>,
     /// Tracking override, see `/v1/send`.
     pub track: Option<Value>,
+    /// Rejected here on purpose. A fan-out is marketing by definition, and
+    /// `transactional` disables the opt-out check — accepting it on a batch
+    /// would be a way to mail people who declined. Without this field serde
+    /// would drop it silently and the caller would believe it worked.
+    pub transactional: Option<bool>,
     /// Push extras, see `/v1/send`.
     pub push: Option<Value>,
 }
@@ -441,8 +455,14 @@ pub async fn send_notification(
     })?;
     // Opt-outs are honoured at enqueue: no job is created for a channel the
     // subscriber declined (the worker re-checks, so a change of mind between
-    // enqueue and send still counts).
+    // enqueue and send still counts). A transactional message skips the
+    // preference check entirely: an opt-out must not be able to withhold a
+    // password reset or an order receipt.
+    let transactional = req.transactional.unwrap_or(false);
     let channels: Vec<String> = match req.subscriber_id.as_deref() {
+        // Undeclinable: skip the preference lookup entirely rather than load
+        // rows we are not allowed to act on.
+        Some(_) if transactional => channels,
         Some(sub) => {
             let prefs = crate::topics::load_rows(&state.pool, &project.id, &[sub.to_string()])
                 .await
@@ -453,24 +473,14 @@ pub async fn send_notification(
                     })
                 })?;
             let rows = prefs.get(sub).map(Vec::as_slice).unwrap_or(&[]);
-            channels
-                .into_iter()
-                .filter(|channel| {
-                    let ok = crate::topics::allowed(
-                        rows,
-                        channel,
-                        topic.as_deref(),
-                        req.template.as_deref(),
-                    );
-                    if !ok {
-                        skipped.push(json!({
-                            "channel": channel,
-                            "reason": crate::topics::skip_reason(channel, topic.as_deref()),
-                        }));
-                    }
-                    ok
-                })
-                .collect()
+            permitted_channels(
+                channels,
+                rows,
+                topic.as_deref(),
+                req.template.as_deref(),
+                transactional,
+                &mut skipped,
+            )
         }
         None => channels,
     };
@@ -536,6 +546,15 @@ pub async fn send_notification(
     if let Some(push) = &req.push {
         if let Some(p) = payload.as_object_mut() {
             p.insert("push".to_string(), push.clone());
+        }
+    }
+
+    // Durable: the worker re-checks preferences when it claims the job, so the
+    // exemption has to survive in the payload or the send would still be
+    // skipped one step later.
+    if transactional {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("transactional".to_string(), json!(true));
         }
     }
 
@@ -635,6 +654,37 @@ pub async fn send_notification(
     })))
 }
 
+/// Channels the subscriber still accepts, recording each refusal in `skipped`.
+/// A transactional message is undeclinable: preferences are not consulted at
+/// all, so a password reset or an order receipt goes out even to somebody who
+/// opted out of everything. Suppressions are a separate concern and still
+/// apply downstream.
+fn permitted_channels(
+    channels: Vec<String>,
+    rows: &[crate::topics::PreferenceRow],
+    topic: Option<&str>,
+    template: Option<&str>,
+    transactional: bool,
+    skipped: &mut Vec<Value>,
+) -> Vec<String> {
+    if transactional {
+        return channels;
+    }
+    channels
+        .into_iter()
+        .filter(|channel| {
+            let ok = crate::topics::allowed(rows, channel, topic, template);
+            if !ok {
+                skipped.push(json!({
+                    "channel": channel,
+                    "reason": crate::topics::skip_reason(channel, topic),
+                }));
+            }
+            ok
+        })
+        .collect()
+}
+
 fn looks_like_email(value: &str) -> bool {
     let trimmed = value.trim();
     trimmed.len() <= 254
@@ -718,7 +768,73 @@ mod priority_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::permitted_channels;
     use super::validate_email_envelope;
+
+    fn prefs(items: &[(&str, &str, bool)]) -> Vec<crate::topics::PreferenceRow> {
+        items
+            .iter()
+            .map(|(c, s, e)| (c.to_string(), s.to_string(), *e))
+            .collect()
+    }
+
+    #[test]
+    fn opt_out_withholds_the_channel_and_says_why() {
+        let rows = prefs(&[("email", "*", false), ("in_app", "*", false)]);
+        let mut skipped = Vec::new();
+
+        let channels = permitted_channels(
+            vec!["email".to_string(), "in_app".to_string()],
+            &rows,
+            None,
+            Some("password_reset"),
+            false,
+            &mut skipped,
+        );
+
+        assert!(channels.is_empty());
+        assert_eq!(skipped.len(), 2);
+    }
+
+    /// The reason this flag exists: a global opt-out must never be able to
+    /// withhold a password reset or an order receipt.
+    #[test]
+    fn transactional_send_ignores_every_opt_out() {
+        let rows = prefs(&[
+            ("*", "*", false),
+            ("email", "*", false),
+            ("in_app", "*", false),
+            ("email", "password_reset", false),
+        ]);
+        let requested = vec!["email".to_string(), "in_app".to_string()];
+
+        // Opted out on every scope: without the exemption both channels drop.
+        let mut skipped = Vec::new();
+        let declined = permitted_channels(
+            requested.clone(),
+            &rows,
+            None,
+            Some("password_reset"),
+            false,
+            &mut skipped,
+        );
+        assert!(declined.is_empty(), "opt-out must hold for normal sends");
+        assert_eq!(skipped.len(), 2);
+
+        // Same subscriber, same refusals, `transactional: true`: every channel
+        // survives and nothing is reported as skipped.
+        let mut skipped = Vec::new();
+        let allowed = permitted_channels(
+            requested.clone(),
+            &rows,
+            None,
+            Some("password_reset"),
+            true,
+            &mut skipped,
+        );
+        assert_eq!(allowed, requested);
+        assert!(skipped.is_empty());
+    }
 
     #[test]
     fn email_envelope_is_normalized_without_duplicate_primary_recipient() {
@@ -783,6 +899,18 @@ pub async fn batch_notification(
             .map(|s| s.trim().to_string())
             .collect()
     });
+
+    // A fan-out never bypasses opt-outs. Refuse loudly instead of ignoring the
+    // field, so nobody ships a campaign believing it reached people who
+    // unsubscribed.
+    if req.transactional == Some(true) {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "error": "'transactional' is not accepted on /v1/batch: a fan-out must honour opt-outs. Send undeclinable messages one by one through /v1/send."
+            })),
+        ));
+    }
 
     // Recipients: an explicit list, or a segment resolved to (id, timezone) pairs.
     let subscribers: Vec<String> = match (&req.segment, req.subscribers.is_empty()) {

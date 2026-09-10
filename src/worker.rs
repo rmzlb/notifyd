@@ -160,7 +160,14 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
     let ctx = EmailContext::load(state, &jobs).await;
     let mut prepared: Vec<(Job, SendRequest)> = Vec::with_capacity(jobs.len());
     for job in jobs {
-        if let Some(sub_id) = &job.subscriber_id {
+        // A transactional job skips the preference re-check: the API already
+        // marked it undeclinable, and the worker must not undo that decision.
+        // Suppressions are handled elsewhere and still apply.
+        if let Some(sub_id) = job
+            .subscriber_id
+            .as_ref()
+            .filter(|_| !is_transactional(&job.payload))
+        {
             let allowed = if ctx.preferences_loaded {
                 ctx.preference_allows(
                     &job.project_id,
@@ -741,6 +748,7 @@ impl EmailContext {
 
     /// Same decision as `workflow_engine::check_preference`, from memory:
     /// topic, then workflow, then channel, then global; default allowed.
+    /// Callers must skip this for transactional jobs, see [`is_transactional`].
     fn preference_allows(
         &self,
         project: &str,
@@ -911,7 +919,8 @@ async fn build_send_request(
                 None => resolve_project_tracking(state, &job.project_id).await,
             };
             let tracking = project_tracking.with_request(&job.payload);
-            if tracking == crate::tracking::Tracking::OFF {
+            let in_scope = tracking.applies(is_marketing_email(job), &job.payload);
+            if !in_scope || (!tracking.opens && !tracking.clicks) {
                 body_html.clone()
             } else {
                 Some(crate::tracking::instrument(
@@ -1247,6 +1256,18 @@ pub fn is_marketing_email(job: &Job) -> bool {
                     )
             })
         })
+        .unwrap_or(false)
+}
+
+/// True when the job was enqueued as transactional (`transactional: true` on
+/// `/v1/send`): a password reset, a magic link, an order receipt. Subscription
+/// preferences do not apply to those, so the worker skips the preference
+/// re-check it normally runs when it claims the job. Suppressions are a
+/// separate concern and keep applying.
+fn is_transactional(payload: &Value) -> bool {
+    payload
+        .get("transactional")
+        .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
 

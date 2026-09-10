@@ -226,14 +226,17 @@ Everything is bound as a parameter; an empty segment means every subscriber of t
 
 ## TRACKING (opens and clicks, provider-independent)
 
-With PUBLIC_URL set, every HTML email gets a 1×1 pixel (GET /t/o/<token>.gif) and its http(s) links are wrapped
+With PUBLIC_URL set, every **marketing** HTML email (bulk priority or campaign tag, the same rule as List-Unsubscribe)
+gets a 1×1 pixel (GET /t/o/<token>.gif) and its http(s) links are wrapped
 (GET /t/c/<token> → 302 to the original URL). Tokens are HMAC-signed with JWT_SECRET: no open redirect, no forgery.
 Hits become provider_events rows (provider "notifyd", email.opened / email.clicked) and set jobs.opened_at /
 jobs.clicked_at (first time); GET /v1/jobs/:id returns both, /v1/admin/metrics/templates counts them with the
 provider webhooks. Unsubscribe links (/u/…), mailto: and template placeholders are never wrapped.
 A click event records the link's host only, never the full URL (sign-in and reset links carry tokens).
-Off switches: PATCH /v1/admin/projects/:id {"tracking": false} or {"tracking": {"opens": false, "clicks": true}} (also the MCP tool update_project);
-per request "track": false (a request can only narrow what the project allows). Opens are approximate (image
+Transactional mail (receipts, sign-in links) is never touched unless the project says {"tracking": {"applies_to": "all"}} or the
+request sets "track": true / {"opens", "clicks"}. Off: PATCH /v1/admin/projects/:id {"tracking": false} or {"tracking": {"opens": false}}
+(also the MCP tool update_project); per request "track": false. A request can narrow the project setting, or opt a
+transactional email in; it cannot re-enable tracking on a project that disabled it. Opens are approximate (image
 proxies and scanners load pixels); clicks are reliable.
 
 ## TOPICS

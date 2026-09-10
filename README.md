@@ -212,7 +212,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 **Operations**
 - **Digest**, **MCP server**, **Agent Skills**, **`llms.txt`**
 - **Metrics** — `/v1/metrics`, `/v1/metrics/prometheus`, per-template metrics
-- **Open and click tracking** — own pixel and signed redirect links for every email provider, `opened_at` / `clicked_at` on the job, off per project or per request
+- **Open and click tracking** — own pixel and signed redirect links for every email provider, on marketing email by default (transactional links stay untouched), `opened_at` / `clicked_at` on the job, off per project or per request
 - **Webhooks** — delivery events to your endpoints
 - **Workflows** — event-triggered multi-step sequences, state in Postgres
 - **Templates** — `{{variable}}` substitution, stored per project

@@ -1303,24 +1303,24 @@ pub async fn update_project(
             (true, v.clone())
         }
     };
-    // tracking: bool or {opens, clicks}; null restores the default.
+    // tracking: bool or {opens, clicks, applies_to}; null restores the default.
+    let valid_object = |v: &Value| {
+        v.as_object().is_some_and(|o| {
+            o.iter().all(|(k, val)| {
+                ((k == "opens" || k == "clicks") && val.is_boolean())
+                    || (k == "applies_to"
+                        && matches!(val.as_str(), Some("marketing") | Some("all")))
+            })
+        })
+    };
     let (set_tracking, tracking_value) = match &patch.tracking {
         None => (false, Value::Null),
         Some(Value::Null) => (true, Value::Null),
         Some(v @ Value::Bool(_)) => (true, v.clone()),
-        Some(v)
-            if v.is_object()
-                && v.as_object()
-                    .unwrap()
-                    .keys()
-                    .all(|k| k == "opens" || k == "clicks")
-                && v.as_object().unwrap().values().all(Value::is_boolean) =>
-        {
-            (true, v.clone())
-        }
+        Some(v) if valid_object(v) => (true, v.clone()),
         Some(_) => {
             return Err(anyhow!(
-                "tracking must be true, false or {{\"opens\": bool, \"clicks\": bool}}"
+                "tracking must be true, false or {{\"opens\": bool, \"clicks\": bool, \"applies_to\": \"marketing\"|\"all\"}}"
             ))
         }
     };

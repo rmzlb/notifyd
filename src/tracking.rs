@@ -11,7 +11,11 @@
 //! `clicked_at` (first time). A click event stores the link's host only,
 //! never the full URL (sign-in and reset links carry tokens).
 //!
-//! Off switches: project `settings.tracking = false` (or
+//! Scope: **marketing email only by default** (bulk priority or a campaign
+//! tag), the way every serious sender does it. Transactional mail (receipts,
+//! sign-in links) keeps its links untouched unless the project says
+//! `{"applies_to": "all"}` or the request asks for it with `"track": true`
+//! (or an object). Off switches: project `settings.tracking = false` (or
 //! `{"opens": false, "clicks": false}`), request `"track": false`.
 //! Opens are approximate by nature (image proxies and mail scanners load
 //! pixels); clicks are reliable.
@@ -41,16 +45,20 @@ const PIXEL: [u8; 43] = [
 pub struct Tracking {
     pub opens: bool,
     pub clicks: bool,
+    /// Also instrument transactional (non-marketing) email.
+    pub all_email: bool,
 }
 
 impl Tracking {
     pub const ON: Tracking = Tracking {
         opens: true,
         clicks: true,
+        all_email: false,
     };
     pub const OFF: Tracking = Tracking {
         opens: false,
         clicks: false,
+        all_email: false,
     };
 
     /// `settings.tracking`: absent → on, `false` → off, object → per flag.
@@ -67,7 +75,21 @@ impl Tracking {
             Some(obj) => Tracking {
                 opens: obj.get("opens").and_then(Value::as_bool).unwrap_or(true),
                 clicks: obj.get("clicks").and_then(Value::as_bool).unwrap_or(true),
+                all_email: obj.get("applies_to").and_then(Value::as_str) == Some("all"),
             },
+        }
+    }
+
+    /// Whether this email is in scope: marketing always, transactional only
+    /// when the project extends tracking to all mail or the request asks.
+    pub fn applies(&self, marketing: bool, payload: &Value) -> bool {
+        if marketing || self.all_email {
+            return true;
+        }
+        match payload.get("track") {
+            Some(Value::Bool(true)) => true,
+            Some(obj) if obj.is_object() => true,
+            _ => false,
         }
     }
 
@@ -79,6 +101,7 @@ impl Tracking {
             Some(obj) if obj.is_object() => Tracking {
                 opens: self.opens && obj.get("opens").and_then(Value::as_bool).unwrap_or(true),
                 clicks: self.clicks && obj.get("clicks").and_then(Value::as_bool).unwrap_or(true),
+                all_email: self.all_email,
             },
             _ => self,
         }
@@ -365,9 +388,14 @@ mod tests {
             partial,
             Tracking {
                 opens: false,
-                clicks: true
+                clicks: true,
+                all_email: false
             }
         );
+        let all = Tracking::from_settings(Some(
+            &serde_json::json!({"tracking": {"applies_to": "all"}}),
+        ));
+        assert!(all.all_email && all.opens && all.clicks);
         assert_eq!(
             Tracking::ON.with_request(&serde_json::json!({"track": false})),
             Tracking::OFF
@@ -376,6 +404,29 @@ mod tests {
             Tracking::OFF.with_request(&serde_json::json!({"track": true})),
             Tracking::OFF,
             "a request cannot re-enable what the project disabled"
+        );
+    }
+
+    #[test]
+    fn scope_is_marketing_unless_extended() {
+        let t = Tracking::ON;
+        assert!(t.applies(true, &serde_json::json!({})), "marketing: always");
+        assert!(
+            !t.applies(false, &serde_json::json!({})),
+            "transactional: not by default"
+        );
+        assert!(
+            t.applies(false, &serde_json::json!({"track": true})),
+            "request opts in"
+        );
+        assert!(t.applies(false, &serde_json::json!({"track": {"clicks": true}})));
+        assert!(!t.applies(false, &serde_json::json!({"track": false})));
+        let all = Tracking::from_settings(Some(
+            &serde_json::json!({"tracking": {"applies_to": "all"}}),
+        ));
+        assert!(
+            all.applies(false, &serde_json::json!({})),
+            "project extends to all mail"
         );
     }
 
@@ -433,6 +484,7 @@ mod tests {
             Tracking {
                 opens: false,
                 clicks: true,
+                all_email: false,
             },
         );
         assert!(clicks_only.contains("/t/c/") && !clicks_only.contains("/t/o/"));
@@ -448,6 +500,7 @@ mod tests {
             Tracking {
                 opens: true,
                 clicks: false,
+                all_email: false,
             },
         );
         assert!(

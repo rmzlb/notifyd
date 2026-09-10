@@ -167,7 +167,7 @@ pub fn tools() -> Value {
                     "from_name": {"type": "string"},
                     "rate_limit_per_min": {"type": "integer", "minimum": 1},
                     "tracking": {
-                        "description": "Open/click tracking on this project's emails: false, true, or {\"opens\": bool, \"clicks\": bool}. null restores the default (on when PUBLIC_URL is set).",
+                        "description": "Open/click tracking on this project's emails: false, true, or {\"opens\": bool, \"clicks\": bool, \"applies_to\": \"marketing\"|\"all\"}. Default: on for marketing email only (bulk priority or campaign tag); transactional mail is untouched unless applies_to is \"all\" or the request sets track. null restores the default.",
                         "type": ["boolean", "object", "null"]
                     },
                     "send_window": {
