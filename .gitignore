@@ -3,3 +3,8 @@
 .DS_Store
 docs/video/node_modules/
 docs/video/out/
+
+clients/python/.venv/
+clients/python/dist/
+clients/python/**/__pycache__/
+clients/python/.pytest_cache/
