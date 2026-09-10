@@ -13,7 +13,7 @@ const FPS = 30;
 const S = (sec: number) => Math.round(sec * FPS);
 
 /** Marque : `REMOTION_LOGO=badge|prompt|n-dot|mail-badge` choisit le fichier de public/logos. */
-const LOGO = process.env.REMOTION_LOGO ?? "badge";
+const LOGO = process.env.REMOTION_LOGO ?? "nd-two";
 
 export const Mark: React.FC<{ size?: number; tile?: boolean }> = ({ size = 96, tile = false }) => (
   <Img src={staticFile(`logos/${LOGO}${tile ? "" : "-bare"}.svg`)} style={{ width: size, height: size, display: "block" }} />
@@ -29,7 +29,7 @@ export const Brand: React.FC<{ size?: number }> = ({ size = 132 }) => (
       </>
     ) : (
       <>
-        <Mark size={size * 0.9} tile />
+        <Mark size={size * 0.95} tile={!LOGO.startsWith("nd-")} />
         <div style={{ fontSize: size, fontWeight: 800, letterSpacing: -size * 0.045, lineHeight: 1 }}>
           notify<Y>d</Y>
         </div>
@@ -351,6 +351,125 @@ export const FilmNumbers: React.FC = () => (
 
     <Scene from={S(29.4)} dur={S(3.6)}>
       <End line="Less to run. Nothing missing. Run by your agent." />
+    </Scene>
+  </Stage>
+);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Film D · « Three ways » — pour qui, contre quoi (hébergé, Novu), ce qui change,
+// en chiffres qui veulent dire quelque chose. Le flow rapide du film C.
+// ══════════════════════════════════════════════════════════════════════════════
+export const FILM_THREE_WAYS_FRAMES = S(48);
+
+const Mark2: React.FC<{ ok: boolean }> = ({ ok }) => (
+  <span style={{ display: "inline-block", width: 44, color: ok ? C.green : C.red, fontWeight: 800 }}>{ok ? "✓" : "✗"}</span>
+);
+
+const Line: React.FC<{ ok: boolean; text: string; delay: number }> = ({ ok, text, delay }) => {
+  const p = useIn(delay, 16);
+  return <div style={{ opacity: p, transform: `translateX(${(1 - p) * 60}px)`, fontSize: 54, fontWeight: 700, color: ok ? C.text : C.muted }}><Mark2 ok={ok} />{text}</div>;
+};
+
+const Stack: React.FC<{ label: string; delay: number }> = ({ label, delay }) => {
+  const p = useIn(delay, 14);
+  return <div style={{ opacity: p, transform: `translateY(${(1 - p) * -60}px)`, background: C.panel, border: `2px solid ${C.line}`, borderRadius: 16, padding: "16px 28px", fontFamily: mono, fontSize: 34, textAlign: "center", minWidth: 300 }}>{label}</div>;
+};
+
+const NOVU = ["api", "worker", "websocket", "web dashboard", "MongoDB", "Redis", "S3 storage"];
+
+const CHANGES: Array<[string, string, string]> = [
+  ["MongoDB + Redis + S3", "just the Postgres you already run", "nothing new to operate"],
+  ["7 containers", "1 binary · 10 MB", "one thing to update"],
+  ["a dashboard to log into", "an API, run by your agent over MCP", "no admin UI to host or learn"],
+  ["billed per notification", "€0 per notification", "MIT · you pay your providers, nothing else"],
+  ["a 429 fails the send", "paused · nothing lost · urgent first", "the engine handles the bad day"],
+  ["a platform to babysit", "13 MB of RAM, next to your app", "fits the small server you already pay for"],
+];
+
+const Change: React.FC<{ left: string; right: string; why: string; delay: number }> = ({ left, right, why, delay }) => {
+  const l = useIn(delay, 16);
+  const r = useIn(delay + 6, 16);
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1.35fr", gap: 50, alignItems: "center" }}>
+      <div style={{ opacity: l, transform: `translateX(${(1 - l) * -60}px)`, textAlign: "right", fontSize: 42, fontWeight: 700, color: C.muted, textDecoration: r > 0.6 ? "line-through" : "none", textDecorationColor: C.red, textDecorationThickness: 4 }}>{left}</div>
+      <div style={{ opacity: r, transform: `translateX(${(1 - r) * 60}px)` }}>
+        <div style={{ fontSize: 44, fontWeight: 800, color: C.text }}>{right}</div>
+        <div style={{ fontSize: 26, color: C.yellow, marginTop: 2 }}>{why}</div>
+      </div>
+    </div>
+  );
+};
+
+export const FilmThreeWays: React.FC = () => (
+  <Stage>
+    {/* Pour qui */}
+    <Scene from={0} dur={S(5.4)}>
+      <Center gap={36}>
+        <Slam><Big size={116}>You ship a product.</Big></Slam>
+        <div style={{ display: "flex", gap: 24 }}>
+          {["reset links", "shipped parcels", "2FA codes", "a red badge"].map((t, i) => (
+            <Appear key={t} delay={12 + i * 6}><span style={{ display: "inline-block", border: `2px solid ${C.line}`, borderRadius: 999, padding: "12px 28px", fontSize: 34, background: C.panel }}>{t}</span></Appear>
+          ))}
+        </div>
+        <Appear delay={44}><Caption color={C.text}>It has to reach people. <span style={{ color: C.yellow }}>You do not want to run a notification platform.</span></Caption></Appear>
+      </Center>
+    </Scene>
+
+    {/* Option 1 · hébergé */}
+    <Scene from={S(5.4)} dur={S(6.6)}>
+      <Kicker n="option 1" label="hosted · Knock, Courier, SuprSend…" />
+      <AbsoluteFill style={{ padding: "170px 200px 80px", display: "flex", flexDirection: "column", gap: 26, justifyContent: "center" }}>
+        <Line ok text="nothing to run" delay={6} />
+        <Line ok={false} text="billed per notification, forever" delay={20} />
+        <Line ok={false} text="your customers' data leaves your servers" delay={34} />
+        <Line ok={false} text="their dashboard, their rules, their outages" delay={48} />
+        <Appear delay={70}><Caption>Fine at 1 000 users. The invoice grows faster than you do.</Caption></Appear>
+      </AbsoluteFill>
+    </Scene>
+    <Wipe at={S(11.9)} />
+
+    {/* Option 2 · Novu */}
+    <Scene from={S(12.1)} dur={S(7.4)}>
+      <Kicker n="option 2" label="self-hosted · Novu" />
+      <Center gap={40}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, justifyContent: "center", maxWidth: 1500 }}>
+          {NOVU.map((l, i) => <Stack key={l} label={l} delay={6 + i * 7} />)}
+        </div>
+        <Appear delay={70}><Caption color={C.text}><span style={{ color: C.red }}>Seven things</span> to run, patch and babysit. A dashboard to log into. <span style={{ color: C.muted }}>(their docker-compose, today)</span></Caption></Appear>
+        <Appear delay={92}><Caption>Yours, but now you are running a platform.</Caption></Appear>
+      </Center>
+    </Scene>
+    <Wipe at={S(19.4)} />
+
+    {/* Option 3 · notifyd, ce qui change */}
+    <Scene from={S(19.6)} dur={S(14.4)}>
+      <Kicker n="option 3" label="notifyd · what changes" />
+      <AbsoluteFill style={{ padding: "150px 150px 80px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 30 }}>
+        {CHANGES.map(([l, r, w], i) => <Change key={l} left={l} right={r} why={w} delay={6 + i * S(1.75)} />)}
+      </AbsoluteFill>
+    </Scene>
+    <Wipe at={S(33.9)} />
+
+    {/* L'agent */}
+    <Scene from={S(34.1)} dur={S(6.6)}>
+      <AbsoluteFill style={{ padding: "150px 170px 80px", display: "flex", flexDirection: "column", gap: 26 }}>
+        <Appear><div style={{ fontFamily: mono, fontSize: 26, color: C.muted }}>your agent · notifyd MCP connected</div></Appear>
+        <Bubble who="you" delay={6}>Anything wrong with notifications today?</Bubble>
+        <ToolCall delay={S(1.2)} call={`digest()`} result={`0 findings · 12 400 sent · 0 failed · bounce 0.2 %`} />
+        <Bubble who="agent" delay={S(2.6)}>Nothing. 12 400 sent, no failures. The provider slowed us for 47 s at 11:06; nothing was lost.</Bubble>
+        <Sequence from={S(4.4)} layout="none"><Appear><Caption color={C.text}>No dashboard. <span style={{ color: C.yellow }}>Built to be run by your agent, natively.</span></Caption></Appear></Sequence>
+      </AbsoluteFill>
+    </Scene>
+
+    {/* Pour qui, encore, et la marque */}
+    <Scene from={S(40.7)} dur={S(7.3)}>
+      <Center gap={26}>
+        <Slam><Big size={72}>For the team that already runs Postgres,</Big></Slam>
+        <Slam delay={10}><Big size={72}>already works with an agent,</Big></Slam>
+        <Slam delay={20}><Big size={72} color={C.yellow}>and would rather ship than babysit.</Big></Slam>
+        <Appear delay={44}><Brand size={110} /></Appear>
+        <Appear delay={54}><Caption>In production for three companies · MIT · <span style={{ color: C.yellow, fontFamily: mono }}>github.com/rmzlb/notifyd</span></Caption></Appear>
+      </Center>
     </Scene>
   </Stage>
 );

@@ -37,16 +37,19 @@ link in the tweet body, GitHub link in the first reply, one short per post.
 
 ## Films for X (30–46 s, 1920×1080)
 
-Three longer cuts in `src/Films.tsx` that mix the "one call", "your agent on
-call" and "less to run" angles, efficiency first: `FilmOne` (three chapters,
-42 s), `FilmTalk` (the whole film is a chat with the agent, live counters on
-top, 46 s), `FilmNumbers` (before/after split screen, 33 s).
+Four longer cuts in `src/Films.tsx`. `FilmThreeWays` (48 s) is the main one:
+who it is for, hosted vs self-hosted Novu vs notifyd (Novu's composition is
+taken from their docker-compose documentation), what changes with each number
+translated into a benefit, the agent, who it is for again. `FilmOne` (three
+chapters, 42 s), `FilmTalk` (a chat with the agent, live counters, 46 s) and
+`FilmNumbers` (before/after, 33 s) are earlier cuts.
 
 ```bash
 npm run render:films                       # out/film-one.mp4, film-talk.mp4, film-numbers.mp4
 REMOTION_LOGO=n-dot npm run render:films   # same films with another mark from public/logos/
 ```
 
-`public/logos/` holds the logo candidates (badge, prompt, n-dot, mail-badge,
-each as dark tile, light tile and bare mark); `REMOTION_LOGO` picks one
-(default `badge`). The chosen mark becomes `docs/assets/notifyd-logo.svg`.
+`public/logos/` holds the logo candidates (`nd-two`, `nd-tile`, `nd-mono`, plus
+badge, prompt, n-dot, mail-badge; each as dark tile, light tile and bare
+mark); `REMOTION_LOGO` picks one (default `nd-two`). The chosen mark becomes
+`docs/assets/notifyd-logo.svg`.
