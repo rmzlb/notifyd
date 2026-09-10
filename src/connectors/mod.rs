@@ -1,3 +1,4 @@
+pub mod apns;
 pub mod cloudflare;
 pub mod email;
 pub mod in_app;
@@ -95,6 +96,10 @@ pub struct ProviderError {
     pub provider: &'static str,
     pub kind: ProviderErrorKind,
     pub message: String,
+    /// The recipient itself is gone (unregistered device token, dead push
+    /// endpoint): the worker drops it. A permanent error without this flag
+    /// is a payload or configuration problem and keeps the recipient.
+    pub dead_recipient: bool,
 }
 
 impl ProviderError {
@@ -103,6 +108,7 @@ impl ProviderError {
             provider,
             kind: ProviderErrorKind::Permanent,
             message: message.into(),
+            dead_recipient: false,
         }
     }
 
@@ -111,6 +117,7 @@ impl ProviderError {
             provider,
             kind: ProviderErrorKind::Transient,
             message: message.into(),
+            dead_recipient: false,
         }
     }
 
@@ -123,6 +130,17 @@ impl ProviderError {
             provider,
             kind: ProviderErrorKind::RateLimited { retry_after },
             message: message.into(),
+            dead_recipient: false,
+        }
+    }
+
+    /// Permanent error that also says the recipient no longer exists.
+    pub fn dead_recipient(provider: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            provider,
+            kind: ProviderErrorKind::Permanent,
+            message: message.into(),
+            dead_recipient: true,
         }
     }
 
@@ -131,6 +149,7 @@ impl ProviderError {
             provider: "suppression-list",
             kind: ProviderErrorKind::Suppressed,
             message: reason.into(),
+            dead_recipient: false,
         }
     }
 

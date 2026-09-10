@@ -118,6 +118,9 @@ pub struct ConnectorsConfig {
     #[serde(default)]
     pub whatsapp: Option<WhatsappConfig>,
     pub push: Option<PushConfig>,
+    /// Native APNs for `push_tokens.platform = 'apns'`.
+    #[serde(default)]
+    pub apns: Option<ApnsConfig>,
 }
 
 /// Email provider. `provider` selects the connector:
@@ -239,6 +242,75 @@ pub struct PushConfig {
     pub vapid_public_key: Option<String>,
     /// VAPID subject, usually "mailto:ops@example.com" or an HTTPS contact URL.
     pub vapid_subject: Option<String>,
+}
+
+/// Apple Push Notification service, token-based auth (`.p8` key).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApnsConfig {
+    pub key_id: String,
+    pub team_id: String,
+    /// Contents of the `.p8` file (PKCS#8 EC PEM). Env values may use literal "\n".
+    pub private_key_pem: String,
+    /// The app's bundle identifier (`apns-topic`).
+    pub topic: String,
+    /// `api.sandbox.push.apple.com` instead of production.
+    #[serde(default)]
+    pub sandbox: bool,
+}
+
+impl ApnsConfig {
+    /// `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY` or `APNS_PRIVATE_KEY_PATH`,
+    /// `APNS_TOPIC`, `APNS_ENVIRONMENT`. All of the first four are needed;
+    /// a partial set is a configuration error, reported at start-up.
+    pub fn from_env() -> Result<Option<Self>, String> {
+        let key_id = env_non_empty("APNS_KEY_ID");
+        let team_id = env_non_empty("APNS_TEAM_ID");
+        let topic = env_non_empty("APNS_TOPIC");
+        let pem = match (
+            env_non_empty("APNS_PRIVATE_KEY"),
+            env_non_empty("APNS_PRIVATE_KEY_PATH"),
+        ) {
+            (Some(inline), _) => Some(inline.replace("\\n", "\n")),
+            (None, Some(path)) => Some(
+                std::fs::read_to_string(&path)
+                    .map_err(|e| format!("APNS_PRIVATE_KEY_PATH {path}: {e}"))?,
+            ),
+            (None, None) => None,
+        };
+        if key_id.is_none() && team_id.is_none() && topic.is_none() && pem.is_none() {
+            return Ok(None);
+        }
+        let missing: Vec<&str> = [
+            ("APNS_KEY_ID", key_id.is_some()),
+            ("APNS_TEAM_ID", team_id.is_some()),
+            ("APNS_TOPIC", topic.is_some()),
+            ("APNS_PRIVATE_KEY (or APNS_PRIVATE_KEY_PATH)", pem.is_some()),
+        ]
+        .iter()
+        .filter(|(_, ok)| !ok)
+        .map(|(name, _)| *name)
+        .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "APNs is partly configured, missing: {}",
+                missing.join(", ")
+            ));
+        }
+        let sandbox = matches!(
+            env_non_empty("APNS_ENVIRONMENT")
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("sandbox") | Some("development")
+        );
+        Ok(Some(Self {
+            key_id: key_id.unwrap_or_default(),
+            team_id: team_id.unwrap_or_default(),
+            private_key_pem: pem.unwrap_or_default(),
+            topic: topic.unwrap_or_default(),
+            sandbox,
+        }))
+    }
 }
 
 impl PushConfig {
@@ -464,6 +536,7 @@ impl Config {
                 sms: SmsConfig::from_env(),
                 whatsapp: WhatsappConfig::from_env(),
                 push: PushConfig::from_env(),
+                apns: ApnsConfig::from_env().map_err(anyhow::Error::msg)?,
             },
             projects: HashMap::new(),
         };

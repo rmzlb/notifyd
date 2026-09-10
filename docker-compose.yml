@@ -75,6 +75,12 @@ services:
       VAPID_PRIVATE_KEY_PEM: ${VAPID_PRIVATE_KEY_PEM:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:ops@yourdomain.com}
+      # APNs (iOS): all four or none. APNS_PRIVATE_KEY = contents of the .p8.
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_PRIVATE_KEY: ${APNS_PRIVATE_KEY:-}
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_ENVIRONMENT: ${APNS_ENVIRONMENT:-production}
 
       # CORS for browsers calling /v1/inbox/*/stream ------------------------
       CORS_ORIGINS: ${CORS_ORIGINS:-}

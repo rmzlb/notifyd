@@ -273,7 +273,11 @@ DELETE /v1/workflows/runs/:id — Cancel a run
 ## PUSH TOKENS
 
 POST /v1/push-tokens — Register push token
-Body: {"subscriber_id": "user-1", "token": "fcm-token-xxx", "platform": "android"}
+Body: {"subscriber_id": "user-1", "token": "<device token>", "platform": "apns" | "fcm" | "web", "device_name": "iPhone"}
+Web Push subscriptions: {"subscriber_id", "endpoint", "p256dh", "auth"}. A subscriber may hold several tokens; a push
+fans out to all of them. APNs needs APNS_KEY_ID / APNS_TEAM_ID / APNS_PRIVATE_KEY / APNS_TOPIC on the server
+(docs/CONNECTORS.md). Push extras on /v1/send: "push": {"badge", "sound", "thread_id", "category", "collapse_id",
+"mutable_content", "background", "ttl_secs", "data"}; "subject" is the title, "body" the text, "url" a custom key.
 
 GET /v1/push-tokens/subscriber/:subscriber_id — List tokens
 DELETE /v1/push-tokens/:id — Delete token

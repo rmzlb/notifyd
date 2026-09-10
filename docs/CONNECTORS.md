@@ -65,6 +65,39 @@ job payload: `{"whatsapp": {"template": {...}}}`.
 A subscription the push service rejects permanently (404/410, bad request) is
 deleted, so it stops failing every send. Pacing `PUSH_RATE_PER_SEC` (50).
 
+## APNs (iOS, native)
+
+Token-based authentication with the `.p8` key from the Apple Developer
+portal, HTTP/2 to `api.push.apple.com`:
+
+| Variable | Purpose |
+|---|---|
+| `APNS_KEY_ID` | Key id of the `.p8` (10 characters) |
+| `APNS_TEAM_ID` | Your Apple team id |
+| `APNS_PRIVATE_KEY` | Contents of the `.p8` file (`\n` accepted), or `APNS_PRIVATE_KEY_PATH` to a mounted file |
+| `APNS_TOPIC` | The app's bundle identifier |
+| `APNS_ENVIRONMENT` | `production` (default) or `sandbox` for development builds |
+
+The four first variables are all-or-nothing; a partial set stops the process
+at start-up with the missing names. Register device tokens with
+`POST /v1/push-tokens {"subscriber_id", "token", "platform": "apns"}`; a
+subscriber can hold APNs, FCM and Web Push tokens at once, every send fans out
+to all of them. The provider JWT is re-signed every 50 minutes.
+
+Payload: `subject` → title, `body` → body, `url` forwarded as a custom key.
+Extras under `push` in the send request:
+`{"badge": 3, "sound": "default" | "none" | "<file>", "thread_id": "orders",
+"category": "ORDER", "collapse_id": "order-42", "mutable_content": true,
+"background": true, "ttl_secs": 3600, "data": {...}}`. `background` sends a
+silent `content-available` push at priority 5.
+
+Apple's answers: `Unregistered`, `BadDeviceToken`, `DeviceTokenNotForTopic`
+and `ExpiredToken` delete the device token; `TooManyRequests` pauses the
+push lane for `Retry-After`; 5xx and `ExpiredProviderToken` retry (the JWT is
+re-signed at once on a 403); anything else (`BadTopic`, `PayloadTooLarge`…)
+fails the job and keeps the token, since it is a configuration or payload
+problem on our side.
+
 ## In-app inbox
 
 No configuration: messages are stored in Postgres and pushed to connected

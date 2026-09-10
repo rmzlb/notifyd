@@ -1107,19 +1107,55 @@ async fn dispatch_push(state: &Arc<AppState>, job: &Job, req: SendRequest) -> Se
         return Ok(Delivery::new("skipped", None));
     }
 
-    let config = state
+    // Web Push / FCM share one connector; APNs device tokens go to Apple
+    // directly. Either can be absent: a token whose service is not configured
+    // fails permanently but is kept (a configuration problem is not a dead device).
+    let web_or_fcm = state
         .config
         .connectors
         .push
         .clone()
         .or_else(crate::config::PushConfig::from_env)
-        .ok_or_else(|| ProviderError::permanent("none", "push connector not configured"))?;
-    let connector = crate::connectors::push::PushConnector::new(config);
+        .map(crate::connectors::push::PushConnector::new);
+    let apns = match &state.config.connectors.apns {
+        Some(cfg) => Some(crate::connectors::apns::ApnsConnector::new(cfg.clone())?),
+        None => None,
+    };
+    if web_or_fcm.is_none() && apns.is_none() {
+        return Err(ProviderError::permanent(
+            "none",
+            "push connector not configured",
+        ));
+    }
 
     let mut accepted: Option<Delivery> = None;
     let mut last_error: Option<ProviderError> = None;
     for token in tokens {
         let mut push_req = req.clone();
+        let is_apns = token.platform.eq_ignore_ascii_case("apns");
+        let connector: &dyn Connector = if is_apns {
+            match &apns {
+                Some(c) => c,
+                None => {
+                    last_error = Some(ProviderError::permanent(
+                        "apns",
+                        "APNs not configured (APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY, APNS_TOPIC)",
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            match &web_or_fcm {
+                Some(c) => c,
+                None => {
+                    last_error = Some(ProviderError::permanent(
+                        "web-push",
+                        "web push / FCM not configured",
+                    ));
+                    continue;
+                }
+            }
+        };
         if let (Some(endpoint), Some(p256dh), Some(auth)) =
             (&token.endpoint, &token.p256dh, &token.auth)
         {
@@ -1150,7 +1186,11 @@ async fn dispatch_push(state: &Arc<AppState>, job: &Job, req: SendRequest) -> Se
         match result {
             Ok(delivery) => accepted = Some(delivery),
             Err(err) => {
-                if err.kind == ProviderErrorKind::Permanent {
+                // APNs says precisely when a device is gone; the other services
+                // keep the historical rule (any permanent rejection drops the token).
+                let dead =
+                    err.dead_recipient || (!is_apns && err.kind == ProviderErrorKind::Permanent);
+                if dead {
                     if let Err(db_e) = sqlx::query("DELETE FROM push_tokens WHERE id=$1")
                         .bind(token.id)
                         .execute(&state.pool)

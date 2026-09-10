@@ -152,6 +152,9 @@ pub struct SendRequest {
     /// Open/click tracking for this email: `false`, or `{"opens": bool, "clicks": bool}`.
     /// Can only narrow what the project allows.
     pub track: Option<Value>,
+    /// Push extras: `{"badge", "sound", "thread_id", "category", "collapse_id",
+    /// "mutable_content", "background", "ttl_secs", "data"}` (see connectors/apns.rs).
+    pub push: Option<Value>,
 }
 
 /// Effective send window for a request: the request's own object wins,
@@ -303,6 +306,8 @@ pub struct BatchRequest {
     pub topic: Option<String>,
     /// Tracking override, see `/v1/send`.
     pub track: Option<Value>,
+    /// Push extras, see `/v1/send`.
+    pub push: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -480,6 +485,12 @@ pub async fn send_notification(
     if let Some(track) = &req.track {
         if let Some(p) = payload.as_object_mut() {
             p.insert("track".to_string(), track.clone());
+        }
+    }
+
+    if let Some(push) = &req.push {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("push".to_string(), push.clone());
         }
     }
 
@@ -804,6 +815,7 @@ pub async fn batch_notification(
         "icon": req.icon.as_deref().unwrap_or("bell"),
         "url": req.url,
         "track": req.track,
+        "push": req.push,
     });
 
     // Recipient timezones in one query (only when a window applies).

@@ -9,7 +9,7 @@ import { Typewriter, useIn } from "./ui";
 
 const FPS = 30;
 const S = (sec: number) => Math.round(sec * FPS);
-export const CLEAR_FRAMES = S(36);
+export const CLEAR_FRAMES = S(30);
 
 /** Palette claire. */
 const L = { bg: "#ffffff", ink: "#0f1115", muted: "#6b7280", line: "#e5e7eb", panel: "#f4f4f5", yellow: "#f5c518", green: "#15803d", red: "#b91c1c" };
@@ -128,7 +128,7 @@ const Term: React.FC<{ children: React.ReactNode; width?: number }> = ({ childre
 export const Clear: React.FC = () => (
   <Page>
     {/* 0 · Pour qui, vite */}
-    <Cut from={0} dur={S(2.4)}>
+    <Cut from={0} dur={S(2)}>
       <Center gap={30}>
         <In snap><Big size={120}>You ship a product.</Big></In>
         <div style={{ display: "flex", gap: 22 }}>
@@ -138,7 +138,7 @@ export const Clear: React.FC = () => (
         </div>
       </Center>
     </Cut>
-    <Cut from={S(2.4)} dur={S(2.6)}>
+    <Cut from={S(2)} dur={S(2.2)}>
       <Center gap={26}>
         <In snap><Big size={104}>It has to reach people.</Big></In>
         <In delay={12}><Big size={72}><Hi>Without running a notification platform.</Hi></Big></In>
@@ -146,10 +146,10 @@ export const Clear: React.FC = () => (
     </Cut>
 
     {/* 1 · Quatre piliers : on ralentit */}
-    <Cut from={S(5)} dur={S(8.2)}>
+    <Cut from={S(4.2)} dur={S(6.4)}>
       <AbsoluteFill style={{ padding: "0 200px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 34 }}>
         {PILLARS.map(([big, small], i) => (
-          <In key={big} delay={i * S(1.3)} snap from={40}>
+          <In key={big} delay={i * S(1.05)} snap from={40}>
             <div style={{ display: "flex", alignItems: "center", gap: 40 }}>
               <div style={{ fontSize: 108, fontWeight: 800, letterSpacing: -4, lineHeight: 1.1, minWidth: 760 }}>{i === 3 ? <Hi>{big}</Hi> : big}</div>
               <div style={{ fontSize: 38, color: L.muted, whiteSpace: "nowrap" }}>{small}</div>
@@ -160,39 +160,39 @@ export const Clear: React.FC = () => (
     </Cut>
 
     {/* 2 · Ce qui change : vite */}
-    <Cut from={S(13.2)} dur={S(9.2)}>
+    <Cut from={S(10.6)} dur={S(7.6)}>
       <AbsoluteFill style={{ padding: "110px 120px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 30 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 50, fontFamily: mono, fontSize: 26, color: L.muted, letterSpacing: 2 }}>
           <In style={{ textAlign: "right" }}>THE USUAL WAY</In>
           <In delay={3} style={{ color: L.ink, fontWeight: 700 }}>NOTIFYD</In>
         </div>
-        {ROWS.map(([l, r], i) => <Row key={l} left={l} right={r} delay={8 + i * S(1.15)} />)}
+        {ROWS.map(([l, r], i) => <Row key={l} left={l} right={r} delay={6 + i * S(0.95)} />)}
       </AbsoluteFill>
     </Cut>
 
     {/* 3 · L'agent : on ralentit */}
-    <Cut from={S(22.4)} dur={S(6.4)}>
+    <Cut from={S(18.2)} dur={S(5.4)}>
       <AbsoluteFill style={{ padding: "150px 170px 80px", display: "flex", flexDirection: "column", gap: 24 }}>
         <In><div style={{ fontFamily: mono, fontSize: 26, color: L.muted }}>your agent · notifyd MCP connected</div></In>
         <Bubble who="you" delay={6}>Anything wrong with notifications today?</Bubble>
-        <Tool delay={S(1.1)} call={`digest()`} result={`0 findings · 12 400 sent · 0 failed · bounce 0.2 %`} />
-        <Bubble who="agent" delay={S(2.3)}>Nothing. 12 400 sent, no failures. The provider slowed us for 47 s at 11:06; nothing was lost.</Bubble>
-        <Sequence from={S(4)} layout="none"><In><Small color={L.ink}>No dashboard. <Hi>Your agent operates it, natively.</Hi></Small></In></Sequence>
+        <Tool delay={S(0.9)} call={`digest()`} result={`0 findings · 12 400 sent · 0 failed · bounce 0.2 %`} />
+        <Bubble who="agent" delay={S(1.9)}>Nothing. 12 400 sent, no failures. The provider slowed us for 47 s at 11:06; nothing was lost.</Bubble>
+        <Sequence from={S(3.4)} layout="none"><In><Small color={L.ink}>No dashboard. <Hi>Your agent operates it, natively.</Hi></Small></In></Sequence>
       </AbsoluteFill>
     </Cut>
 
     {/* 4 · Pour qui, et la commande */}
-    <Cut from={S(28.8)} dur={S(7.2)}>
+    <Cut from={S(23.6)} dur={S(6.4)}>
       <Center gap={34}>
         <In snap><Big size={50}>For the team that already runs Postgres and works with an agent,<br />and would rather ship than babysit.</Big></In>
         <In delay={14}>
           <Term>
-            <span style={{ color: "#8a8f9c" }}>$ </span><Typewriter start={18} cps={60} text="git clone https://github.com/rmzlb/notifyd && cd notifyd" />{"\n"}
-            <Sequence from={S(1.9)} layout="none"><span><span style={{ color: "#8a8f9c" }}>$ </span><Typewriter start={0} cps={40} text="docker compose up -d" /></span></Sequence>{"\n"}
-            <Sequence from={S(3)} layout="none"><span style={{ color: "#3fb950" }}>→ notifyd listening on :3400 · 42 MB image · Postgres only</span></Sequence>
+            <span style={{ color: "#8a8f9c" }}>$ </span><Typewriter start={14} cps={75} text="git clone https://github.com/rmzlb/notifyd && cd notifyd" />{"\n"}
+            <Sequence from={S(1.5)} layout="none"><span><span style={{ color: "#8a8f9c" }}>$ </span><Typewriter start={0} cps={50} text="docker compose up -d" /></span></Sequence>{"\n"}
+            <Sequence from={S(2.4)} layout="none"><span style={{ color: "#3fb950" }}>→ notifyd listening on :3400 · 42 MB image · Postgres only</span></Sequence>
           </Term>
         </In>
-        <Sequence from={S(4.2)} layout="none">
+        <Sequence from={S(3.4)} layout="none">
           <In><div style={{ display: "flex", alignItems: "center", gap: 60 }}>
             <Brand size={96} />
             <Small>MIT · <span style={{ fontFamily: mono, color: L.ink }}>github.com/rmzlb/notifyd</span> · in production for three companies</Small>
