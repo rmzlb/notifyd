@@ -284,6 +284,13 @@ DELETE /v1/push-tokens/:id — Delete token
 
 ---
 
+## CLI (same binary)
+
+notifyd digest [--window 1d] [--json] · notifyd jobs [--status --project --channel --topic --recipient --since 24h --limit] [--json]
+notifyd job <id> · notifyd retry <id> · notifyd cancel <id> · notifyd send-test --project P --channel C --to X [--subject --body]
+Target: --url / NOTIFYD_URL (default http://localhost:3400); key: --key / NOTIFYD_ADMIN_API_KEY (falls back to ADMIN_API_KEY).
+HTTP behind it: GET /v1/admin/jobs/:id (reader key) and POST /v1/admin/send-test {project_id, channel, to, subject?, body?} (admin key).
+
 ## ADMIN
 
 POST /v1/admin/projects — Create project

@@ -1,4 +1,5 @@
 mod api;
+mod cli;
 mod config;
 mod connectors;
 mod db;
@@ -83,6 +84,19 @@ async fn request_id_middleware(mut req: Request<axum::body::Body>, next: Next) -
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `notifyd digest`, `notifyd jobs`…: operator commands against a running
+    // instance. Without a subcommand the process is the server.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        return match cli::run(&args).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        };
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG")

@@ -30,4 +30,7 @@ fn main() {
     println!("cargo:rustc-env=NOTIFYD_BUILD_EPOCH={built_at}");
     println!("cargo:rerun-if-env-changed=GIT_COMMIT_SHA");
     println!("cargo:rerun-if-changed=.git/HEAD");
+    // `sqlx::migrate!` embeds the directory at compile time but cargo only
+    // notices edits to files it already saw: a *new* migration needs this.
+    println!("cargo:rerun-if-changed=migrations");
 }

@@ -99,6 +99,22 @@ every language: [`examples/`](examples/).
 
 ---
 
+## Run it from a terminal
+
+The same binary is the operator's CLI, against any instance (the server host
+has `ADMIN_API_KEY` in its environment, so it just works there):
+
+```bash
+notifyd digest                       # what needs attention, with the action for each finding
+notifyd jobs --status failed         # --project, --channel, --topic, --recipient, --since 24h, --limit, --json
+notifyd job <id>                     # provider, attempts, delivery events
+notifyd retry <id>                   # re-queue after fixing the cause
+notifyd send-test --project myapp --channel email --to you@example.com
+NOTIFYD_URL=https://notifyd.example.com NOTIFYD_ADMIN_API_KEY=… notifyd digest   # from your laptop
+```
+
+---
+
 ## Let your agent run it
 
 Most notification tools were designed for a human clicking through a
@@ -273,7 +289,7 @@ Inbox endpoints also accept a subscriber JWT.
 | `GET` | `/v1/inbox/:id` · `/stream` | In-app inbox, SSE realtime stream |
 | `POST` | `/v1/workflows/trigger` | Trigger an event-based workflow |
 | `GET` | `/v1/admin/digest` | What needs attention, with actions |
-| `GET` | `/v1/admin/jobs` · `POST …/:id/retry` | Operator view and actions |
+| `GET` | `/v1/admin/jobs` · `/:id` · `POST …/:id/retry` · `/admin/send-test` | Operator view and actions (also the CLI's transport) |
 | `PATCH` | `/v1/admin/projects/:id` | Sender, channels, rate limit, send window |
 | `POST` | `/mcp` | MCP server (Streamable HTTP) |
 | `GET` | `/v1/metrics/prometheus` | Prometheus exposition |
@@ -441,9 +457,9 @@ idle, 23 MB while draining 100 000 jobs. → [docs/ARCHITECTURE.md](docs/ARCHITE
 
 ## Status
 
-notifyd is a 0.x running in production for three companies. Not done yet: a
-`notifyd` CLI, Swift and Kotlin packages; no dashboard, A/B testing or
-inbound email by design. Order and sizes in [docs/ROADMAP.md](docs/ROADMAP.md). Breaking
+notifyd is a 0.x running in production for three companies. Not done yet:
+Swift and Kotlin packages; no dashboard, A/B testing or inbound email by
+design. Order and sizes in [docs/ROADMAP.md](docs/ROADMAP.md). Breaking
 changes are announced in release notes; the queue schema is migrated
 automatically.
 

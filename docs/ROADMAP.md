@@ -15,20 +15,23 @@ rotation, digest + MCP server + Agent Skills for operations, reproducible
 benchmarks, MIT licence, TypeScript and Python clients, three production
 instances.
 
+## Shipped since this roadmap was written (10 September 2026)
+
+| Piece | Where |
+|---|---|
+| Native APNs connector (`.p8` token auth, HTTP/2, full `aps`, dead tokens dropped) | `src/connectors/apns.rs`, `APNS_*` in docs/CONNECTORS.md |
+| Topics (per-topic, per-channel preferences, enforced at enqueue, topic-level unsubscribe page) | `src/topics.rs`, `topic` on send/batch/templates |
+| Segments (`batch` to a filter, `POST /v1/segments/preview`) | `src/segments.rs` |
+| Own open and click tracking for every email provider | `src/tracking.rs`, `/t/o`, `/t/c` |
+| `notifyd` CLI subcommands (digest, jobs, job, retry, cancel, send-test) | `src/cli.rs` |
+
 ## What comes next
 
 | # | Piece | Why | Size |
 |---|---|---|---|
-| 1 | **Native APNs connector** — HTTP/2 with `.p8` token auth, device token lifecycle (`410 Unregistered` deletes the token), rich payload (title, body, badge, sound, thread id, `mutable-content`, collapse id), silent push | Mobile teams evaluate a notification server on iOS push first. FCM can relay to APNs but adds a Google account and hides delivery errors | 3 d |
-| 2 | **Topics** — a `topic` on `send` / `batch`, subscriber preferences per topic and channel, enforced at enqueue, topic-level opt-out on the unsubscribe landing | "Subscribe to release notes but not to tips" is the preference model users actually understand; today preferences are per channel and per workflow only | 1.5 d |
-| 3 | **Segments** — `POST /v1/batch` with a filter on subscriber `locale`, `timezone` and `data` (JSON path, `eq/neq/in/exists`), plus a count preview endpoint | A campaign to "plan = pro, country = FR" without the caller paginating subscribers | 2 d |
-| 4 | **Own open and click tracking** — pixel and redirect served by notifyd for every email provider (today opens and clicks come from Resend webhooks only), `opened_at` / `clicked_at` on the job, per-template funnel completed | Delivery receipts must not depend on which provider is configured | 1.5 d |
-| 5 | **`notifyd` CLI subcommands** — `notifyd digest`, `notifyd jobs --status failed`, `notifyd retry <id>`, `notifyd send-test`, reusing `ops.rs`; same binary, no extra install | The operator surface stays API + MCP + terminal, no dashboard to host | 2 d |
-| 6 | **Swift package** — device token registration, inbox, unread badge, `EventSource` stream | Pairs with #1; without it, an iOS team writes the same 200 lines every time | 2 d |
-| 7 | **Kotlin package** — same surface for Android | Pairs with FCM/APNs | 2 d |
-
-Items 1 to 5: about ten working days. Items 6 and 7 follow once APNs is
-shipped.
+| 1 | **Swift package** — device token registration, inbox, unread badge, `EventSource` stream | Pairs with APNs; without it, an iOS team writes the same 200 lines every time | 2 d |
+| 2 | **Kotlin package** — same surface for Android | Pairs with FCM | 2 d |
+| 3 | **Per-topic outcomes in the digest** — sent, opened, unsubscribed per topic | Topics exist; the operator view should show them | 0.5 d |
 
 ## Deliberately not planned
 

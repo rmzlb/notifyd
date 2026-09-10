@@ -70,6 +70,60 @@ pub async fn list_jobs(
     Ok(Json(json!({ "jobs": jobs, "count": jobs.len() })))
 }
 
+/// GET /v1/admin/jobs/:id — the operator's view of one job (any project).
+pub async fn admin_get_job(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_reader(&headers)?;
+    let job = ops::get_job(&state, id).await.map_err(|e| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    Ok(Json(job))
+}
+
+#[derive(Deserialize)]
+pub struct SendTestBody {
+    pub project_id: String,
+    pub channel: String,
+    pub to: String,
+    pub subject: Option<String>,
+    pub body: Option<String>,
+}
+
+/// POST /v1/admin/send-test — prove a channel end to end (same as the MCP tool).
+pub async fn admin_send_test(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<SendTestBody>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&headers)?;
+    let body = req
+        .body
+        .clone()
+        .unwrap_or_else(|| "notifyd test message".to_string());
+    let job = ops::enqueue_test(
+        &state,
+        &req.project_id,
+        &req.channel,
+        &req.to,
+        req.subject.as_deref(),
+        &body,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": e.to_string() })),
+        )
+    })?;
+    Ok(Json(job))
+}
+
 /// POST /v1/admin/jobs/:id/retry
 pub async fn admin_retry_job(
     State(state): State<Arc<AppState>>,
