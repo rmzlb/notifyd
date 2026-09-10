@@ -585,6 +585,24 @@ fn fire_terminal_webhooks(state: &Arc<AppState>, job: &Job, status: &str) {
 /// TOML-configured projects win (static config), then the projects table.
 /// Any lookup failure falls back to the instance default — a bad from
 /// must never block a send.
+/// `settings.tracking` of a project; on when unset or unreadable.
+async fn resolve_project_tracking(
+    state: &Arc<AppState>,
+    project_id: &str,
+) -> crate::tracking::Tracking {
+    match sqlx::query_scalar::<_, Option<Value>>("SELECT settings FROM projects WHERE id = $1")
+        .bind(project_id)
+        .fetch_optional(&state.pool)
+        .await
+    {
+        Ok(settings) => crate::tracking::Tracking::from_settings(settings.flatten().as_ref()),
+        Err(e) => {
+            warn!("tracking settings lookup failed for {} ({})", project_id, e);
+            crate::tracking::Tracking::ON
+        }
+    }
+}
+
 async fn resolve_project_from(
     state: &Arc<AppState>,
     project_id: &str,
@@ -623,6 +641,8 @@ struct EmailContext {
     /// rather than sending to an address that may be blocked.
     suppressions_loaded: bool,
     senders: std::collections::HashMap<String, (Option<String>, Option<String>)>,
+    /// Per-project open/click tracking switches (`settings.tracking`).
+    tracking: std::collections::HashMap<String, crate::tracking::Tracking>,
     /// (project, lower(email)) → (reason, scope, since)
     suppressions:
         std::collections::HashMap<(String, String), (String, String, chrono::DateTime<Utc>)>,
@@ -642,6 +662,10 @@ impl EmailContext {
         for project in &projects {
             let from = resolve_project_from(state, project).await;
             ctx.senders.insert(project.clone(), from);
+            ctx.tracking.insert(
+                project.clone(),
+                resolve_project_tracking(state, project).await,
+            );
         }
         ctx.webhook_projects =
             crate::webhooks::projects_with_webhooks(&state.pool, &projects).await;
@@ -868,6 +892,34 @@ async fn build_send_request(
         }
     } else {
         (None, None)
+    };
+
+    // Open pixel and tracked links, when this instance has a public URL and
+    // neither the project nor the request turned tracking off.
+    let body_html = match (
+        &body_html,
+        job.channel.as_str(),
+        crate::unsubscribe::public_url(),
+    ) {
+        (Some(html), "email", Some(public_url)) => {
+            let project_tracking = match ctx.and_then(|c| c.tracking.get(&job.project_id)) {
+                Some(t) => *t,
+                None => resolve_project_tracking(state, &job.project_id).await,
+            };
+            let tracking = project_tracking.with_request(&job.payload);
+            if tracking == crate::tracking::Tracking::OFF {
+                body_html.clone()
+            } else {
+                Some(crate::tracking::instrument(
+                    html,
+                    &state.config.server.jwt_secret,
+                    &public_url,
+                    job.id,
+                    tracking,
+                ))
+            }
+        }
+        _ => body_html,
     };
 
     Ok(SendRequest {

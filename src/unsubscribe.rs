@@ -36,7 +36,8 @@ pub fn public_url() -> Option<String> {
         .filter(|u| u.starts_with("http"))
 }
 
-fn sign(secret: &str, payload: &str) -> String {
+/// base64url(HMAC-SHA256(secret, payload)); shared with `tracking`.
+pub(crate) fn sign(secret: &str, payload: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac key");
     mac.update(payload.as_bytes());
     B64.encode(mac.finalize().into_bytes())

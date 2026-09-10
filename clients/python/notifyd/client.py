@@ -48,6 +48,7 @@ def _send_body(
     icon: Optional[str],
     url: Optional[str],
     topic: Optional[str],
+    track: Optional[Union[Mapping[str, bool], bool]],
 ) -> Json:
     if channel is None and not channels:
         raise ValueError("send() needs `channel` or `channels`")
@@ -74,6 +75,7 @@ def _send_body(
             "icon": icon,
             "url": url,
             "topic": topic,
+            "track": track,
         }
     )
 
@@ -173,6 +175,7 @@ class Notifyd(_Base):
         icon: Optional[str] = None,
         url: Optional[str] = None,
         topic: Optional[str] = None,
+        track: Optional[Union[Mapping[str, bool], bool]] = None,
     ) -> Json:
         """Queue one notification on one or several channels.
 
@@ -185,7 +188,7 @@ class Notifyd(_Base):
             channel=channel, channels=channels, to=to, subscriber_id=subscriber_id, template=template, subject=subject,
             body=body, body_html=body_html, vars=vars, scheduled_at=scheduled_at, idempotency_key=idempotency_key,
             priority=priority, tags=tags, email_headers=email_headers, attachments=attachments, cc=cc, reply_to=reply_to,
-            send_window=send_window, icon=icon, url=url, topic=topic,
+            send_window=send_window, icon=icon, url=url, topic=topic, track=track,
         )
         return self._request("POST", "/v1/send", json=payload)
 
@@ -207,6 +210,7 @@ class Notifyd(_Base):
         icon: Optional[str] = None,
         url: Optional[str] = None,
         topic: Optional[str] = None,
+        track: Optional[Union[Mapping[str, bool], bool]] = None,
     ) -> Json:
         """Send the same message to many subscribers in one call (one job per subscriber and channel).
 
@@ -232,6 +236,7 @@ class Notifyd(_Base):
                 "icon": icon,
                 "url": url,
                 "topic": topic,
+                "track": track,
             }
         )
         return self._request("POST", "/v1/batch", json=payload)

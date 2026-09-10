@@ -41,7 +41,8 @@ Body:
   "attachments": [{"filename": "f.pdf", "content": "<base64>", "content_type": "application/pdf"}],
   "cc": ["copy@example.com"], "reply_to": "support@example.com",
   "send_window": {"start":"09:00","end":"20:00","tz":"Europe/Paris","days":[1,2,3,4,5]},  // bulk waits for recipient daytime; false bypasses the project window
-  "topic": "tips"                    // optional stream name; defaults to the template's topic. See TOPICS.
+  "topic": "tips",                   // optional stream name; defaults to the template's topic. See TOPICS.
+  "track": false                     // or {"opens": false, "clicks": true}; see TRACKING. Default: project setting (on).
 }
 
 Channels: "email", "sms", "whatsapp", "in_app", "push"
@@ -141,7 +142,9 @@ Then: GET /v1/inbox/:subscriber_id/stream?ticket=abc-123
 ## JOBS
 
 GET /v1/jobs/:id — Get job status
-Response: {"id": "uuid", "status": "sent", "channel": "email", "sent_at": "...", "attempts": 1}
+Response: {"id", "status", "channel", "subscriber_id", "recipient", "template_id", "topic", "priority", "attempts", "max_attempts",
+           "provider", "provider_message_id", "scheduled_at", "created_at", "sent_at", "delivered_at", "bounced_at",
+           "opened_at", "clicked_at", "error", "provider_events": [{"provider", "type", "occurred_at", ...}]}
 
 Status values: pending, processing, sent, failed, cancelled, retry
 
@@ -188,6 +191,17 @@ Response rows: {"channel", "workflow_id", "topic", "enabled"} — `topic` and `w
 Everything is allowed by default. Decision order, most specific first:
 (channel, topic) > ("*", topic) > (channel, workflow or template id) > (channel, "*") > ("*", "*").
 Enforced at enqueue (no job created, listed in `skipped`) and again by the worker.
+
+## TRACKING (opens and clicks, provider-independent)
+
+With PUBLIC_URL set, every HTML email gets a 1×1 pixel (GET /t/o/<token>.gif) and its http(s) links are wrapped
+(GET /t/c/<token> → 302 to the original URL). Tokens are HMAC-signed with JWT_SECRET: no open redirect, no forgery.
+Hits become provider_events rows (provider "notifyd", email.opened / email.clicked) and set jobs.opened_at /
+jobs.clicked_at (first time); GET /v1/jobs/:id returns both, /v1/admin/metrics/templates counts them with the
+provider webhooks. Unsubscribe links (/u/…), mailto: and template placeholders are never wrapped.
+Off switches: PATCH /v1/admin/projects/:id {"settings": {"tracking": false}} or {"tracking": {"opens": false}};
+per request "track": false (a request can only narrow what the project allows). Opens are approximate (image
+proxies and scanners load pixels); clicks are reliable.
 
 ## TOPICS
 

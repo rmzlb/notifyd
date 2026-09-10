@@ -43,6 +43,12 @@ impl Connector for LogConnector {
             message_id = %id,
             "message accepted by the log connector (nothing was sent)"
         );
+        tracing::debug!(
+            message_id = %id,
+            body = %req.body,
+            body_html = req.body_html.as_deref().unwrap_or(""),
+            "log connector body (RUST_LOG=notifyd=debug shows the exact content that would leave)"
+        );
         Ok(Delivery::new("log", Some(id)))
     }
 }

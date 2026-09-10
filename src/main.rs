@@ -14,6 +14,7 @@ mod send_window;
 mod sse;
 mod templates;
 mod topics;
+mod tracking;
 mod unsubscribe;
 mod webhooks;
 mod worker;

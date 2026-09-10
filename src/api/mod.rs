@@ -34,6 +34,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .with_state(state.clone());
 
+    // Open pixel and click redirects (src/tracking.rs), signed tokens.
+    let tracking = Router::new()
+        .route("/t/o/:token", axum::routing::get(crate::tracking::open))
+        .route("/t/c/:token", axum::routing::get(crate::tracking::click))
+        .with_state(state.clone());
+
     // Model Context Protocol endpoint for agents (admin key).
     let mcp = Router::new()
         .route(
@@ -46,6 +52,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .nest("/v1", api_routes(state))
         .merge(provider)
         .merge(unsubscribe)
+        .merge(tracking)
         .merge(mcp)
 }
 

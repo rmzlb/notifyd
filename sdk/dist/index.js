@@ -159,6 +159,8 @@ function jobFromWire(j) {
     sentAt: j.sent_at ?? null,
     deliveredAt: j.delivered_at ?? null,
     bouncedAt: j.bounced_at ?? null,
+    openedAt: j.opened_at ?? null,
+    clickedAt: j.clicked_at ?? null,
     error: j.error ?? null,
     providerEvents: (j.provider_events ?? []).map((e) => ({
       provider: e.provider,
@@ -230,7 +232,8 @@ function createNotifydClient(config) {
           tags: input.tags,
           email_headers: input.emailHeaders,
           send_window: sendWindowToWire(input.sendWindow),
-          topic: input.topic
+          topic: input.topic,
+          track: input.track
         }
       });
       return {
@@ -261,7 +264,8 @@ function createNotifydClient(config) {
           priority: input.priority,
           idempotency_key: input.idempotencyKey,
           send_window: sendWindowToWire(input.sendWindow),
-          topic: input.topic
+          topic: input.topic,
+          track: input.track
         }
       });
       return {

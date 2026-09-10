@@ -71,7 +71,9 @@ pub async fn get_job(
     let delivery: (
         Option<chrono::DateTime<chrono::Utc>>,
         Option<chrono::DateTime<chrono::Utc>>,
-    ) = sqlx::query_as("SELECT delivered_at, bounced_at FROM jobs WHERE id=$1 AND project_id=$2")
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as("SELECT delivered_at, bounced_at, opened_at, clicked_at FROM jobs WHERE id=$1 AND project_id=$2")
         .bind(id)
         .bind(&project.id)
         .fetch_one(&state.pool)
@@ -139,6 +141,8 @@ pub async fn get_job(
         "sent_at": job.sent_at,
         "delivered_at": delivery.0,
         "bounced_at": delivery.1,
+        "opened_at": delivery.2,
+        "clicked_at": delivery.3,
         "provider_events": provider_events,
         "email_envelope": envelope,
         "error": job.error,

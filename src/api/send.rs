@@ -149,6 +149,9 @@ pub struct SendRequest {
     /// Subscriber-facing stream ("tips", "billing"); falls back to the
     /// template's topic. Preferences can opt out of it per channel.
     pub topic: Option<String>,
+    /// Open/click tracking for this email: `false`, or `{"opens": bool, "clicks": bool}`.
+    /// Can only narrow what the project allows.
+    pub track: Option<Value>,
 }
 
 /// Effective send window for a request: the request's own object wins,
@@ -294,6 +297,8 @@ pub struct BatchRequest {
     pub send_window: Option<Value>,
     /// Topic of the campaign, see `/v1/send`.
     pub topic: Option<String>,
+    /// Tracking override, see `/v1/send`.
+    pub track: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -465,6 +470,12 @@ pub async fn send_notification(
     if let Some(reply_to) = reply_to {
         if let Some(p) = payload.as_object_mut() {
             p.insert("reply_to".to_string(), json!(reply_to));
+        }
+    }
+
+    if let Some(track) = &req.track {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("track".to_string(), track.clone());
         }
     }
 
@@ -753,6 +764,7 @@ pub async fn batch_notification(
         "vars": req.vars,
         "icon": req.icon.as_deref().unwrap_or("bell"),
         "url": req.url,
+        "track": req.track,
     });
 
     // Recipient timezones in one query (only when a window applies).

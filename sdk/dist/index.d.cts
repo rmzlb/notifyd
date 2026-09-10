@@ -50,6 +50,11 @@ interface SendNotificationInput {
     sendWindow?: SendWindow | false;
     /** Subscriber-facing stream ("tips", "billing"); defaults to the template's topic. */
     topic?: string;
+    /** Open/click tracking for this email: `false`, or per flag. Can only narrow the project setting. */
+    track?: false | {
+        opens?: boolean;
+        clicks?: boolean;
+    };
 }
 type NotifydPriority = 'critical' | 'high' | 'normal' | 'low' | 'bulk' | number;
 interface SendWindow {
@@ -92,6 +97,10 @@ interface BatchNotificationInput {
     idempotencyKey?: string;
     sendWindow?: SendWindow | false;
     topic?: string;
+    track?: false | {
+        opens?: boolean;
+        clicks?: boolean;
+    };
 }
 interface BatchNotificationResponse {
     success: boolean;
@@ -225,6 +234,8 @@ interface Job {
     sentAt?: string | null;
     deliveredAt?: string | null;
     bouncedAt?: string | null;
+    openedAt?: string | null;
+    clickedAt?: string | null;
     error?: string | null;
     providerEvents: ProviderEvent[];
 }

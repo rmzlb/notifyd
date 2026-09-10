@@ -50,6 +50,8 @@ export interface SendNotificationInput {
   sendWindow?: SendWindow | false;
   /** Subscriber-facing stream ("tips", "billing"); defaults to the template's topic. */
   topic?: string;
+  /** Open/click tracking for this email: `false`, or per flag. Can only narrow the project setting. */
+  track?: false | { opens?: boolean; clicks?: boolean };
 }
 
 export type NotifydPriority = 'critical' | 'high' | 'normal' | 'low' | 'bulk' | number;
@@ -93,6 +95,7 @@ export interface BatchNotificationInput {
   idempotencyKey?: string;
   sendWindow?: SendWindow | false;
   topic?: string;
+  track?: false | { opens?: boolean; clicks?: boolean };
 }
 
 export interface BatchNotificationResponse {
@@ -246,6 +249,8 @@ export interface Job {
   sentAt?: string | null;
   deliveredAt?: string | null;
   bouncedAt?: string | null;
+  openedAt?: string | null;
+  clickedAt?: string | null;
   error?: string | null;
   providerEvents: ProviderEvent[];
 }
@@ -572,6 +577,8 @@ interface WireJob {
   sent_at?: string | null;
   delivered_at?: string | null;
   bounced_at?: string | null;
+  opened_at?: string | null;
+  clicked_at?: string | null;
   error?: string | null;
   provider_events?: Array<{ provider: string; type: string; occurred_at: string; provider_message_id?: string | null; recipients: unknown; error?: unknown }>;
 }
@@ -595,6 +602,8 @@ function jobFromWire(j: WireJob): Job {
     sentAt: j.sent_at ?? null,
     deliveredAt: j.delivered_at ?? null,
     bouncedAt: j.bounced_at ?? null,
+    openedAt: j.opened_at ?? null,
+    clickedAt: j.clicked_at ?? null,
     error: j.error ?? null,
     providerEvents: (j.provider_events ?? []).map((e) => ({
       provider: e.provider,
@@ -713,6 +722,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           email_headers: input.emailHeaders,
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
+          track: input.track,
         },
       });
 
@@ -754,6 +764,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           idempotency_key: input.idempotencyKey,
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
+          track: input.track,
         },
       });
 
