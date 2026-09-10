@@ -44,7 +44,7 @@ Body:
 }
 
 Channels: "email", "sms", "whatsapp", "in_app", "push"
-Response: {"success": true, "jobs": [{"id": "uuid", "channel": "email", "status": "pending"}]}
+Response: {"success": true, "job_ids": ["uuid", ...], "scheduled_at": "...", "channels": ["email", "in_app"]} (one job per channel, same order)
 
 Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed.
 - provider accepted: sent, provider + provider_message_id stored
@@ -93,8 +93,8 @@ DELETE /v1/subscribers/:id — Delete subscriber and all their data
 ## IN-APP INBOX
 
 GET /v1/inbox/:subscriber_id — List notifications
-Query: ?limit=20&cursor=<iso_timestamp>&unread_only=true
-Response: {"notifications": [...], "has_more": true, "next_cursor": "..."}
+Query: ?limit=20&offset=0&filter=all|unread|todo&q=<search>
+Response: {"items": [...], "total": n, "limit": 20, "offset": 0}
 
 Each notification:
 {
@@ -158,7 +158,7 @@ Body:
   "body_html": "<h1>Welcome {{first_name}}!</h1>"
 }
 
-GET /v1/templates — List all templates
+GET /v1/templates?limit=&offset= — List templates. Response: {"items": [...], "total", "limit", "offset"}
 GET /v1/templates/:id — Get template
 DELETE /v1/templates/:id — Delete template
 
@@ -191,26 +191,32 @@ Body:
 {
   "id": "welcome-series",
   "name": "Welcome Series",
+  "description": "optional",
   "trigger_event": "user.signup",
+  "enabled": true,
   "steps": [
     {"type": "send", "channel": "email", "template": "welcome"},
-    {"type": "delay", "duration": "24h"},
-    {"type": "send", "channel": "email", "template": "getting_started"},
-    {"type": "condition", "check": "completed_onboarding", "if_false": [
-      {"type": "send", "channel": "email", "template": "nudge"}
-    ]}
+    {"type": "delay", "duration_secs": 86400},
+    {"type": "condition", "field": "payload.plan", "operator": "eq", "value": "pro", "on_true": 4},
+    {"type": "send", "channel": "email", "template": "nudge"},
+    {"type": "digest", "duration_secs": 3600, "channel": "email", "template": "hourly-digest"}
   ]
 }
 
-Step types: "send", "delay", "condition"
+Step types (steps run in order, indexes start at 0):
+- "send": channel + template, or inline subject/body/body_html. Uses the trigger payload as template vars.
+- "delay": duration_secs. The run pauses (status "paused", resume_at set) and resumes on its own.
+- "condition": field is "inbox.is_read" (last in-app message read?) or "payload.<key>" (from the trigger payload); operator eq|neq (gt|lt for payload numbers); value; on_true / on_false = step index to jump to (default: next step).
+- "digest": collect further triggers for duration_secs, then send one message listing them ({{item_count}}, {{items}}).
 
 POST /v1/workflows/trigger — Trigger workflow
 Body: {"event": "user.signup", "subscriber_id": "user-42", "payload": {"plan": "pro"}}
+Response: {"success": true, "event": "user.signup", "workflow_runs": ["run-uuid"]}
 
-GET /v1/workflows — List workflows
+GET /v1/workflows — List workflows. Response: {"workflows": [...], "count": n}
 GET /v1/workflows/:id — Get workflow
 DELETE /v1/workflows/:id — Delete workflow
-GET /v1/workflows/runs — List active runs
+GET /v1/workflows/runs?status=&workflow_id=&limit=&offset= — List runs. Response: {"items": [...], "total", "limit", "offset"}
 DELETE /v1/workflows/runs/:id — Cancel a run
 
 ---

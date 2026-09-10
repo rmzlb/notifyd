@@ -1,0 +1,55 @@
+<!doctype html>
+<!--
+  A minimal in-app inbox. Open this file in a browser after filling the three constants.
+  Auth: your backend mints a short-lived subscriber token (POST /v1/auth/subscriber-token) and
+  hands it to the page; the page never sees the project API key. The SSE stream is opened with a
+  one-time ticket so no long-lived secret appears in a URL or a server log.
+-->
+<meta charset="utf-8">
+<title>notifyd inbox</title>
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; max-width: 560px; margin: 40px auto; color: #222 }
+  h1 { font-size: 18px } h1 span { background: #ffd400; border-radius: 999px; padding: 0 8px; margin-left: 6px }
+  li { padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; margin: 8px 0; list-style: none; cursor: pointer }
+  li.unread { border-color: #222; font-weight: 600 }
+</style>
+<h1>Inbox <span id="badge">0</span></h1>
+<ul id="list"></ul>
+<script type="module">
+  const NOTIFYD_URL = 'http://localhost:3400';
+  const SUBSCRIBER_ID = 'user-42';
+  const SUBSCRIBER_TOKEN = 'paste the token from POST /v1/auth/subscriber-token';
+
+  const headers = { Authorization: `Bearer ${SUBSCRIBER_TOKEN}`, 'Content-Type': 'application/json' };
+  const api = (path, init = {}) => fetch(`${NOTIFYD_URL}/v1${path}`, { ...init, headers }).then((r) => r.json());
+
+  const list = document.getElementById('list');
+  const badge = document.getElementById('badge');
+
+  function render(items) {
+    list.replaceChildren(...items.map((m) => {
+      const li = document.createElement('li');
+      li.className = m.read_at ? '' : 'unread';
+      li.textContent = m.data?.subject || m.body || '(no subject)';
+      li.onclick = () => api(`/inbox/${SUBSCRIBER_ID}/${m.id}`, { method: 'PATCH', body: JSON.stringify({ read: true }) }).then(load);
+      return li;
+    }));
+  }
+
+  async function load() {
+    const [{ items }, { unread_count }] = await Promise.all([api(`/inbox/${SUBSCRIBER_ID}`), api(`/inbox/${SUBSCRIBER_ID}/unread-count`)]);
+    render(items);
+    badge.textContent = unread_count;
+  }
+
+  // Live updates: one-time ticket, then a plain EventSource.
+  const { ticket } = await api(`/inbox/${SUBSCRIBER_ID}/stream-ticket`, { method: 'POST' });
+  const events = new EventSource(`${NOTIFYD_URL}/v1/inbox/${SUBSCRIBER_ID}/stream?token=${encodeURIComponent(ticket)}`);
+  events.onmessage = (e) => {
+    const event = JSON.parse(e.data);
+    if (event.type === 'new_notification') load();
+    if (event.type === 'count_update') badge.textContent = event.unread_count;
+  };
+
+  load();
+</script>

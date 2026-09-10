@@ -216,18 +216,24 @@ Lightweight event-driven workflows. Not Temporal — just what you need for noti
 ```json
 {
   "id": "welcome-series",
+  "name": "Welcome series",
   "trigger_event": "user.signup",
   "steps": [
     {"type": "send", "channel": "email", "template": "welcome"},
-    {"type": "delay", "duration": "24h"},
+    {"type": "delay", "duration_secs": 86400},
     {"type": "send", "channel": "email", "template": "getting_started"},
-    {"type": "delay", "duration": "72h"},
-    {"type": "condition", "check": "has_completed_onboarding", "if_false": [
-      {"type": "send", "channel": "email", "template": "nudge"}
-    ]}
+    {"type": "delay", "duration_secs": 259200},
+    {"type": "condition", "field": "payload.completed_onboarding", "operator": "eq", "value": true, "on_true": 6},
+    {"type": "send", "channel": "email", "template": "nudge"}
   ]
 }
 ```
+
+Four step types, serialized with a `type` tag (`src/db.rs::WorkflowStep`):
+`send` (template or inline body), `delay` (`duration_secs`), `condition`
+(`inbox.is_read` or `payload.<key>`, `eq|neq|gt|lt`, jump with `on_true` /
+`on_false` step indexes) and `digest` (buffer triggers for `duration_secs`,
+then one message with `{{item_count}}` and `{{items}}`).
 
 ### Execution
 

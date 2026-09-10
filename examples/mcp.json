@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "notifyd": {
+      "type": "http",
+      "url": "https://notifyd.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${NOTIFYD_ADMIN_API_KEY}" }
+    }
+  }
+}

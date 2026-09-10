@@ -5,8 +5,8 @@
 <h1 align="center">notifyd</h1>
 
 <p align="center">
-  <strong>The notification service your agent can send through <em>and</em> run.</strong><br>
-  Email, SMS, WhatsApp, push, in-app inbox. One Rust binary. Postgres only. No dashboard: a digest endpoint and an MCP server instead.
+  <strong>Send email, SMS, WhatsApp, push and in-app notifications from one API call.</strong><br>
+  One 10 MB Rust binary, PostgreSQL only. Queues, retries, provider failover and quiet hours are handled for you, and an AI agent can run it over MCP.
 </p>
 
 <p align="center">
@@ -22,6 +22,8 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
+  <a href="#clients">Clients</a> •
+  <a href="examples/">Examples</a> •
   <a href="#let-your-agent-run-it">Agent operations</a> •
   <a href="docs/API.md">API Reference</a> •
   <a href="docs/ARCHITECTURE.md">Architecture</a> •
@@ -34,22 +36,33 @@
 
 ## What it is
 
-Every product needs to send email, texts and in-app notifications. The usual
-options are a hosted SaaS billed per notification, or a self-hosted stack
-with MongoDB, Redis and four containers behind a React dashboard.
-
-notifyd is the third option: a **single 10 MB binary** with **PostgreSQL as
-its only dependency**, that sends through the providers you already have
-(Resend, Cloudflare Email Service, any SMTP, AgentMail, Telnyx, Twilio,
-Web Push, FCM), with a real delivery engine (priorities, pacing, retries with
-`Retry-After`, provider failover, send windows, one-click unsubscribe) and
-**no admin UI at all**. Operating it is an API call or an MCP tool, so the
-person on call can be an AI agent.
+Your app has to tell people things: a password reset, a shipped parcel, a
+newsletter, a red badge in the corner. notifyd is the small server that does
+all of it, so your code makes **one call** and never has to think about
+providers, rate limits, retries or time zones again.
 
 ```
-your app / your agent ──POST /v1/send──▶ notifyd ──▶ email · sms · whatsapp · push · in-app (SSE)
-your agent            ──POST /mcp─────▶ notifyd ──▶ digest · jobs · retries · suppressions · settings
+                       ┌─────────────────────── notifyd ────────────────────────┐
+  your app ── POST /v1/send ──▶ queue ─▶ priority ─▶ pacing ─▶ retry / failover ──▶ email · sms · whatsapp · push · in-app
+                       │            │                                            │
+  your agent ─ POST /mcp ─────▶ digest · jobs · retries · suppressions · settings │
+                       └──────────────────── PostgreSQL only ────────────────────┘
 ```
+
+- **Small and fast.** One 10 MB binary, a 42 MB image, 13 MB of RAM idle. It
+  accepts 44 000 notifications per second and drains 3 500 per second on a
+  laptop ([method](docs/BENCHMARKS.md)). No Redis, no message broker, no
+  dashboard to host: PostgreSQL is the only dependency.
+- **Nothing gets lost.** A password reset always goes before a campaign. When a
+  provider says "slow down", that channel pauses for exactly the time asked
+  and resumes in priority order; when it fails, a second provider takes over.
+  Retries, idempotency and quiet hours in each recipient's time zone are
+  built in.
+- **Your providers, your data.** Resend, Cloudflare Email, any SMTP,
+  AgentMail, Telnyx, Twilio, Web Push, FCM. Self-hosted, MIT.
+- **Operated by an API or an AI agent.** No admin UI: a digest endpoint says
+  what needs attention and what to do, and the same operations are MCP
+  tools, so the person on call can be an agent.
 
 Three instances run in production today, one per company, operated this way.
 
@@ -77,10 +90,12 @@ curl -X POST https://notifyd.example.com/v1/send \
   }'
 ```
 
-Flat REST, `curl` is the SDK. Retries are safe (`idempotency_key`), scheduling
-is a field (`scheduled_at`), a marketing campaign is `POST /v1/batch` with
-thousands of subscribers per call and it lands in the bulk lane so it never delays a
-password reset. Follow any send with `GET /v1/jobs/:id`.
+Flat REST, `curl` works; [TypeScript](#clients) and [Python](#clients) clients
+exist. Retries are safe (`idempotency_key`), scheduling is a field
+(`scheduled_at`), a marketing campaign is `POST /v1/batch` with thousands of
+subscribers per call and it lands in the bulk lane so it never delays a
+password reset. Follow any send with `GET /v1/jobs/:id`. Runnable examples in
+every language: [`examples/`](examples/).
 
 ---
 
@@ -288,38 +303,74 @@ describes shape, not performance. Method, hardware and bias disclaimer in
 
 ---
 
-## In-app inbox and TypeScript SDK
+## Clients
+
+Both clients cover the whole API (send, batch, jobs, subscribers, preferences,
+templates, workflows, suppressions, inbox) and raise a typed error on any
+non-2xx answer.
+
+**TypeScript / JavaScript** — `npm i notifyd-sdk` (Node 18+, browsers, edge runtimes; zero dependencies)
 
 ```typescript
-import { createNotifydClient } from 'notifyd-sdk';   // pnpm add notifyd-sdk@github:rmzlb/notifyd
+import { createNotifydClient } from 'notifyd-sdk';
 
 const notifyd = createNotifydClient({ url: process.env.NOTIFYD_URL!, apiKey: process.env.NOTIFYD_API_KEY! });
-await notifyd.send({ channels: ['email', 'in_app'], subscriberId: 'user-123',
-  subject: 'Your report is ready', body: 'Hey {{first_name}}, the analysis is complete.', vars: { first_name: 'Alice' } });
 
-// Browser: subscriber token from your backend, then a plain EventSource
-const events = new EventSource(`${url}/v1/inbox/${userId}/stream?token=${jwt}`);
-events.onmessage = (e) => { const d = JSON.parse(e.data);
-  if (d.type === 'new_notification') showToast(d.notification);
-  if (d.type === 'count_update') updateBadge(d.unread_count); };
+const { jobIds } = await notifyd.send({
+  channels: ['email', 'in_app'], subscriberId: 'user-42',
+  subject: 'Your order shipped', body: 'Hi {{first_name}}, parcel {{parcel}} is on its way.',
+  vars: { first_name: 'Alice', parcel: 'FR-2041' }, idempotencyKey: 'order-2041-shipped',
+});
+const job = await notifyd.getJob(jobIds[0]);   // status, provider, attempts, delivery events
+
+// Browser inbox: subscriber token from your backend, live updates over EventSource
+const inbox = createNotifydClient({ url, subscriberToken });
+const stream = await inbox.openInboxStream('user-42', { onMessage: (e) => {
+  const event = JSON.parse(e.data);
+  if (event.type === 'new_notification') showToast(event.notification);
+  if (event.type === 'count_update') updateBadge(event.unread_count);
+} });
 ```
+
+**Python** — `pip install notifyd-sdk` (3.9+, sync and asyncio, `httpx` only) — [`clients/python`](clients/python)
+
+```python
+from notifyd import Notifyd
+
+nd = Notifyd(os.environ["NOTIFYD_URL"], api_key=os.environ["NOTIFYD_API_KEY"])
+result = nd.send(channels=["email", "in_app"], subscriber_id="user-42",
+                 subject="Your order shipped", body="Hi {{first_name}}, parcel {{parcel}} is on its way.",
+                 vars={"first_name": "Alice", "parcel": "FR-2041"}, idempotency_key="order-2041-shipped")
+print(nd.get_job(result["job_ids"][0])["status"])
+```
+
+Any other language: the API is flat JSON over HTTP and
+[docs/llms.txt](docs/llms.txt) is the whole contract on one page.
 
 ---
 
 ## Workflows
 
+Multi-step sequences triggered by an event, state in Postgres, survive
+restarts. Steps run in order; a condition jumps to a step index.
+
 ```bash
 curl -X POST http://localhost:3400/v1/workflows -H "X-Api-Key: sk_myapp_xxx" -d '{
-  "id": "welcome-series", "trigger_event": "user.signup",
+  "id": "welcome-series", "name": "Welcome series", "trigger_event": "user.signup",
   "steps": [
     {"type": "send", "channel": "email", "template": "welcome"},
-    {"type": "delay", "duration": "24h"},
-    {"type": "condition", "check": "completed_onboarding",
-     "if_false": [{"type": "send", "channel": "email", "template": "nudge"}]}
+    {"type": "delay", "duration_secs": 86400},
+    {"type": "condition", "field": "payload.plan", "operator": "eq", "value": "pro", "on_true": 4},
+    {"type": "send", "channel": "email", "template": "nudge"}
   ]}'
+
+curl -X POST http://localhost:3400/v1/workflows/trigger -H "X-Api-Key: sk_myapp_xxx" \
+  -d '{"event": "user.signup", "subscriber_id": "user-42", "payload": {"plan": "free"}}'
 ```
 
-State lives in Postgres and survives restarts.
+Step types: `send`, `delay`, `condition` (`inbox.is_read` or `payload.<key>`)
+and `digest` (collect events for a while, then send one message). Full
+script: [`examples/welcome-series.sh`](examples/welcome-series.sh).
 
 ---
 
@@ -398,6 +449,8 @@ in release notes; the queue schema is migrated automatically.
 | | |
 |---|---|
 | 📦 **[Setup](docs/SETUP.md)** | Local dev, Docker, production |
+| 🧪 **[Examples](examples/)** | curl, TypeScript, Python, a 10k campaign, a workflow, a browser inbox, MCP config |
+| 🐍 **[Python client](clients/python)** · **[TypeScript client](sdk/)** | Full-API clients, typed errors, contract tests |
 | 🔌 **[API reference](docs/API.md)** | Every endpoint with curl / TypeScript / Rust examples |
 | 🤝 **[Agent operations](docs/AGENT.md)** | Digest, MCP tools, read-only key, how an agent runs an instance |
 | 🔌 **[Connectors](docs/CONNECTORS.md)** | Providers, environment variables, adding one |
