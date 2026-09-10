@@ -9,7 +9,7 @@ import { Typewriter, useIn } from "./ui";
 
 const FPS = 30;
 const S = (sec: number) => Math.round(sec * FPS);
-export const CLEAR_FRAMES = S(30);
+export const CLEAR_FRAMES = S(31);
 
 /** Palette claire. */
 const L = { bg: "#ffffff", ink: "#0f1115", muted: "#6b7280", line: "#e5e7eb", panel: "#f4f4f5", yellow: "#f5c518", green: "#15803d", red: "#b91c1c" };
@@ -142,6 +142,7 @@ export const Clear: React.FC = () => (
       <Center gap={26}>
         <In snap><Big size={104}>It has to reach people.</Big></In>
         <In delay={12}><Big size={72}><Hi>Without running a notification platform.</Hi></Big></In>
+        <In delay={22}><Small>email · SMS · WhatsApp · push · in-app · Telegram · Slack · Discord</Small></In>
       </Center>
     </Cut>
 
@@ -171,18 +172,19 @@ export const Clear: React.FC = () => (
     </Cut>
 
     {/* 3 · L'agent : on ralentit */}
-    <Cut from={S(18.2)} dur={S(5.4)}>
+    <Cut from={S(18.2)} dur={S(6.2)}>
       <AbsoluteFill style={{ padding: "150px 170px 80px", display: "flex", flexDirection: "column", gap: 24 }}>
-        <In><div style={{ fontFamily: mono, fontSize: 26, color: L.muted }}>your agent · notifyd MCP connected</div></In>
-        <Bubble who="you" delay={6}>Anything wrong with notifications today?</Bubble>
-        <Tool delay={S(0.9)} call={`digest()`} result={`0 findings · 12 400 sent · 0 failed · bounce 0.2 %`} />
-        <Bubble who="agent" delay={S(1.9)}>Nothing. 12 400 sent, no failures. The provider slowed us for 47 s at 11:06; nothing was lost.</Bubble>
-        <Sequence from={S(3.4)} layout="none"><In><Small color={L.ink}>No dashboard. <Hi>Your agent operates it, natively.</Hi></Small></In></Sequence>
+        <In><div style={{ fontFamily: mono, fontSize: 26, color: L.muted }}>Telegram · 03:07 · from notifyd</div></In>
+        <Bubble who="agent" delay={6}>notifyd: 1 warning. Resend asked us to slow down at 03:05. The email lane paused 47 s, then resumed in priority order. Nothing lost, nothing to do.</Bubble>
+        <In delay={S(1.6)}><div style={{ fontFamily: mono, fontSize: 26, color: L.muted }}>your agent · notifyd MCP connected</div></In>
+        <Bubble who="you" delay={S(1.9)}>Anything else wrong today?</Bubble>
+        <Tool delay={S(2.5)} call={`digest()`} result={`0 findings · 12 400 sent · 0 failed`} />
+        <Sequence from={S(3.6)} layout="none"><In><Small color={L.ink}>No dashboard. <Hi>It tells you in your chat. Your agent operates it, natively.</Hi></Small></In></Sequence>
       </AbsoluteFill>
     </Cut>
 
     {/* 4 · Pour qui, et la commande */}
-    <Cut from={S(23.6)} dur={S(6.4)}>
+    <Cut from={S(24.4)} dur={S(6.4)}>
       <Center gap={34}>
         <In snap><Big size={50}>For the team that already runs Postgres and works with an agent,<br />and would rather ship than babysit.</Big></In>
         <In delay={14}>
