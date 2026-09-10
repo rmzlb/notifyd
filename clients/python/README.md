@@ -43,7 +43,7 @@ async with AsyncNotifyd("http://localhost:3400", api_key="nd_...") as nd:
 | Send | `send`, `batch` (one message, many subscribers, deduplicated by `idempotency_key`) |
 | Jobs | `get_job`, `cancel_job`, `retry_job` |
 | Subscribers | `upsert_subscriber`, `get_subscriber`, `list_subscribers`, `delete_subscriber` |
-| Preferences | `get_preferences`, `set_preferences` (per channel, per workflow, `"*"` = all) |
+| Preferences | `get_preferences`, `set_preferences` (per channel and per topic or workflow; `"*"` = all) |
 | Templates | `upsert_template`, `get_template`, `list_templates`, `delete_template` |
 | Workflows | `upsert_workflow`, `trigger_workflow`, `list_workflow_runs`, `cancel_workflow_run`, … |
 | Suppressions | `suppress`, `list_suppressions`, `release_suppression` |
@@ -61,6 +61,17 @@ except NotifydError as e:
     if e.is_retryable:        # 429 or 5xx
         ...
     print(e.status, e.message)
+```
+
+## Topics
+
+```python
+nd.upsert_template("weekly-tips", channel="email", subject="Tip of the week", body="…", topic="tips")
+nd.set_preferences("user-42", [{"channel": "email", "topic": "tips", "enabled": False}])
+
+result = nd.send(channels=["email", "in_app"], subscriber_id="user-42", template="weekly-tips")
+result["channels"]  # ["in_app"]: the email was not even queued
+result["skipped"]   # [{"channel": "email", "reason": "subscriber opted out of topic 'tips' on email"}]
 ```
 
 ## Workflows in one screen

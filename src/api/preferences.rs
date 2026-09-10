@@ -10,7 +10,11 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct SetPreference {
+    /// "email", "sms", "push", "in_app", "whatsapp" or "*" for every channel.
     pub channel: String,
+    /// Scope: a topic id (`topic`), a workflow id (`workflow_id`), or nothing
+    /// for the whole channel. `topic` wins when both are given.
+    pub topic: Option<String>,
     pub workflow_id: Option<String>,
     pub enabled: bool,
 }
@@ -39,13 +43,7 @@ pub async fn get_preferences(
 
     let items: Vec<Value> = prefs
         .iter()
-        .map(|p| {
-            json!({
-                "channel": p.channel,
-                "workflow_id": p.workflow_id,
-                "enabled": p.enabled,
-            })
-        })
+        .map(|p| crate::topics::row_json(&p.channel, &p.workflow_id, p.enabled))
         .collect();
 
     Ok(Json(json!({"preferences": items})))
@@ -60,8 +58,19 @@ pub async fn set_preferences(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
 
+    let mut scopes = Vec::with_capacity(req.preferences.len());
     for pref in &req.preferences {
-        let workflow_id = pref.workflow_id.as_deref().unwrap_or("*");
+        let scope = crate::topics::scope_from(pref.topic.as_deref(), pref.workflow_id.as_deref())
+            .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+        scopes.push(scope);
+    }
+
+    for (pref, workflow_id) in req.preferences.iter().zip(scopes.iter()) {
         sqlx::query(
             r#"
             INSERT INTO subscriber_preferences (project_id, subscriber_id, channel, workflow_id, enabled)

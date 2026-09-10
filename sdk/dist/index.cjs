@@ -172,6 +172,7 @@ function jobFromWire(j) {
     subscriberId: j.subscriber_id ?? null,
     recipient: j.recipient ?? null,
     templateId: j.template_id ?? null,
+    topic: j.topic ?? null,
     priority: j.priority,
     attempts: j.attempts ?? 0,
     maxAttempts: j.max_attempts,
@@ -194,10 +195,15 @@ function jobFromWire(j) {
   };
 }
 function templateFromWire(t) {
-  return { id: t.id, channel: t.channel, subject: t.subject ?? void 0, body: t.body, bodyHtml: t.body_html ?? void 0 };
+  return { id: t.id, channel: t.channel, subject: t.subject ?? void 0, body: t.body, bodyHtml: t.body_html ?? void 0, topic: t.topic ?? void 0 };
 }
 function suppressionFromWire(s) {
   return { id: s.id, email: s.email, reason: s.reason, detail: s.detail ?? null, createdAt: s.created_at, releasedAt: s.released_at ?? null };
+}
+function sendWindowToWire(w) {
+  if (w === void 0) return void 0;
+  if (w === false) return false;
+  return { start: w.start, end: w.end, tz: w.tz, days: w.days, applies_to: w.appliesTo };
 }
 function createNotifydClient(config) {
   const baseUrl = normalizeUrl(config.url);
@@ -243,14 +249,21 @@ function createNotifydClient(config) {
             content_type: a.contentType
           })),
           cc: input.cc,
-          reply_to: input.replyTo
+          reply_to: input.replyTo,
+          priority: input.priority,
+          tags: input.tags,
+          email_headers: input.emailHeaders,
+          send_window: sendWindowToWire(input.sendWindow),
+          topic: input.topic
         }
       });
       return {
         success: response.success,
         jobIds: response.job_ids,
         scheduledAt: response.scheduled_at,
-        channels: response.channels
+        channels: response.channels,
+        topic: response.topic ?? null,
+        skipped: response.skipped ?? []
       };
     },
     async batch(input) {
@@ -266,14 +279,23 @@ function createNotifydClient(config) {
           body: input.body,
           body_html: input.bodyHtml,
           vars: input.vars,
-          scheduled_at: input.scheduledAt
+          scheduled_at: input.scheduledAt,
+          icon: input.icon,
+          url: input.url,
+          priority: input.priority,
+          idempotency_key: input.idempotencyKey,
+          send_window: sendWindowToWire(input.sendWindow),
+          topic: input.topic
         }
       });
       return {
         success: response.success,
         jobsCreated: response.jobs_created,
+        jobsDeduplicated: response.jobs_deduplicated ?? 0,
+        jobsSkipped: response.jobs_skipped ?? 0,
         subscribers: response.subscribers,
-        channels: response.channels
+        channels: response.channels,
+        topic: response.topic ?? null
       };
     },
     async upsertSubscriber(input) {
@@ -445,7 +467,7 @@ function createNotifydClient(config) {
       return request("/v1/templates", {
         method: "POST",
         auth: "apiKey",
-        body: { id: input.id, channel: input.channel, subject: input.subject, body: input.body, body_html: input.bodyHtml }
+        body: { id: input.id, channel: input.channel, subject: input.subject, body: input.body, body_html: input.bodyHtml, topic: input.topic }
       });
     },
     async listTemplates(options = {}) {
@@ -510,13 +532,13 @@ function createNotifydClient(config) {
         `/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`,
         { auth: "apiKey" }
       );
-      return (response.preferences ?? []).map((p) => ({ channel: p.channel, workflowId: p.workflow_id ?? "*", enabled: p.enabled }));
+      return (response.preferences ?? []).map((p) => ({ channel: p.channel, workflowId: p.workflow_id ?? "*", topic: p.topic ?? null, enabled: p.enabled }));
     },
     async setPreferences(subscriberId, preferences) {
       return request(`/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`, {
         method: "PUT",
         auth: "apiKey",
-        body: { preferences: preferences.map((p) => ({ channel: p.channel, workflow_id: p.workflowId, enabled: p.enabled })) }
+        body: { preferences: preferences.map((p) => ({ channel: p.channel, workflow_id: p.workflowId, topic: p.topic ?? void 0, enabled: p.enabled })) }
       });
     },
     // ── Suppressions ────────────────────────────────────────────────────────

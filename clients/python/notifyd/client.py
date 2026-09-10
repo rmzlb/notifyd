@@ -47,6 +47,7 @@ def _send_body(
     send_window: Optional[Union[Mapping[str, Any], bool]],
     icon: Optional[str],
     url: Optional[str],
+    topic: Optional[str],
 ) -> Json:
     if channel is None and not channels:
         raise ValueError("send() needs `channel` or `channels`")
@@ -72,6 +73,7 @@ def _send_body(
             "send_window": send_window,
             "icon": icon,
             "url": url,
+            "topic": topic,
         }
     )
 
@@ -170,17 +172,20 @@ class Notifyd(_Base):
         send_window: Optional[Union[Mapping[str, Any], bool]] = None,
         icon: Optional[str] = None,
         url: Optional[str] = None,
+        topic: Optional[str] = None,
     ) -> Json:
         """Queue one notification on one or several channels.
 
-        Returns `{"success": true, "job_ids": [...], "scheduled_at": ..., "channels": [...]}`.
+        `topic` names the stream ("tips", "billing"); it defaults to the template's topic and subscribers can
+        opt out of it per channel. Returns `{"success": true, "job_ids": [...], "scheduled_at": ..., "channels": [...],
+        "topic": ..., "skipped": [{"channel", "reason"}]}`; channels the subscriber opted out of create no job.
         Delivery is asynchronous: poll `get_job(job_id)` or subscribe to webhooks.
         """
         payload = _send_body(
             channel=channel, channels=channels, to=to, subscriber_id=subscriber_id, template=template, subject=subject,
             body=body, body_html=body_html, vars=vars, scheduled_at=scheduled_at, idempotency_key=idempotency_key,
             priority=priority, tags=tags, email_headers=email_headers, attachments=attachments, cc=cc, reply_to=reply_to,
-            send_window=send_window, icon=icon, url=url,
+            send_window=send_window, icon=icon, url=url, topic=topic,
         )
         return self._request("POST", "/v1/send", json=payload)
 
@@ -201,10 +206,12 @@ class Notifyd(_Base):
         send_window: Optional[Union[Mapping[str, Any], bool]] = None,
         icon: Optional[str] = None,
         url: Optional[str] = None,
+        topic: Optional[str] = None,
     ) -> Json:
         """Send the same message to many subscribers in one call (one job per subscriber and channel).
 
-        Returns `{"success": true, "jobs_created": n, "jobs_deduplicated": n, "subscribers": n, "channels": [...]}`.
+        Returns `{"success": true, "jobs_created": n, "jobs_deduplicated": n, "jobs_skipped": n, "subscribers": n,
+        "channels": [...], "topic": ...}`; `jobs_skipped` counts subscriber × channel opt-outs.
         """
         if channel is None and not channels:
             raise ValueError("batch() needs `channel` or `channels`")
@@ -224,6 +231,7 @@ class Notifyd(_Base):
                 "send_window": send_window,
                 "icon": icon,
                 "url": url,
+                "topic": topic,
             }
         )
         return self._request("POST", "/v1/batch", json=payload)
@@ -273,16 +281,18 @@ class Notifyd(_Base):
         return self._request("GET", f"/v1/subscribers/{subscriber_id}/preferences")
 
     def set_preferences(self, subscriber_id: str, preferences: Iterable[Mapping[str, Any]]) -> Json:
-        """Each item: `{"channel": "email", "workflow_id": "marketing" | "*", "enabled": False}`.
+        """Each item: `{"channel": "email" | "*", "topic": "tips", "enabled": False}` (or `"workflow_id"`, or neither
+        for the whole channel).
 
-        Everything is enabled by default; a workflow-specific row wins over the channel-wide `"*"` row.
+        Everything is enabled by default. Most specific wins: (channel, topic) > ("*", topic) > (channel, workflow)
+        > (channel, "*") > ("*", "*").
         """
         return self._request("PUT", f"/v1/subscribers/{subscriber_id}/preferences", json={"preferences": list(preferences)})
 
     # ── Templates ─────────────────────────────────────────────────────────
-    def upsert_template(self, template_id: str, *, channel: Channel, body: str, subject: Optional[str] = None, body_html: Optional[str] = None) -> Json:
-        """Create or replace a template. `{{variables}}` are filled from `send(vars=...)`."""
-        return self._request("POST", "/v1/templates", json=_compact({"id": template_id, "channel": channel, "subject": subject, "body": body, "body_html": body_html}))
+    def upsert_template(self, template_id: str, *, channel: Channel, body: str, subject: Optional[str] = None, body_html: Optional[str] = None, topic: Optional[str] = None) -> Json:
+        """Create or replace a template. `{{variables}}` are filled from `send(vars=...)`; `topic` is the default topic of sends using it."""
+        return self._request("POST", "/v1/templates", json=_compact({"id": template_id, "channel": channel, "subject": subject, "body": body, "body_html": body_html, "topic": topic}))
 
     def list_templates(self, *, limit: Optional[int] = None, offset: Optional[int] = None) -> Json:
         return self._request("GET", "/v1/templates", params={"limit": limit, "offset": offset})

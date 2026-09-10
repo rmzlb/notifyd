@@ -40,11 +40,14 @@ Body:
   "email_headers": {"List-Unsubscribe": "<https://...>"},    // email, custom MIME headers
   "attachments": [{"filename": "f.pdf", "content": "<base64>", "content_type": "application/pdf"}],
   "cc": ["copy@example.com"], "reply_to": "support@example.com",
-  "send_window": {"start":"09:00","end":"20:00","tz":"Europe/Paris","days":[1,2,3,4,5]}  // bulk waits for recipient daytime; false bypasses the project window
+  "send_window": {"start":"09:00","end":"20:00","tz":"Europe/Paris","days":[1,2,3,4,5]},  // bulk waits for recipient daytime; false bypasses the project window
+  "topic": "tips"                    // optional stream name; defaults to the template's topic. See TOPICS.
 }
 
 Channels: "email", "sms", "whatsapp", "in_app", "push"
-Response: {"success": true, "job_ids": ["uuid", ...], "scheduled_at": "...", "channels": ["email", "in_app"]} (one job per channel, same order)
+Response: {"success": true, "job_ids": ["uuid", ...], "scheduled_at": "...", "channels": ["email", "in_app"], "topic": "tips"|null,
+           "skipped": [{"channel": "email", "reason": "subscriber opted out of topic 'tips' on email"}]}
+(one job per channel actually queued, same order; channels the subscriber opted out of are listed in `skipped`, no job is created)
 
 Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed.
 - provider accepted: sent, provider + provider_message_id stored
@@ -54,7 +57,7 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 - other 4xx, invalid recipient, suppression list: failed immediately
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
-POST /v1/batch accepts idempotency_key (declined per subscriber and channel) and reports jobs_deduplicated.
+POST /v1/batch accepts idempotency_key (declined per subscriber and channel) and `topic`; reports jobs_created, jobs_deduplicated and jobs_skipped (opt-outs).
 Send windows: project settings.send_window (PATCH /v1/admin/projects/:id {send_window}) or per request; applies to marketing email
 (priority>=80 / campaign tag) unless applies_to=all; recipient timezone from subscribers.timezone (POST /v1/subscribers {timezone}).
 Bulk email (priority>=80 or tag category=campaign|marketing|newsletter) gets List-Unsubscribe + one-click headers pointing at PUBLIC_URL/u/<token>;
@@ -155,7 +158,8 @@ Body:
   "channel": "email",
   "subject": "Welcome {{first_name}}!",
   "body": "Hello {{first_name}}, welcome to {{app_name}}.",
-  "body_html": "<h1>Welcome {{first_name}}!</h1>"
+  "body_html": "<h1>Welcome {{first_name}}!</h1>",
+  "topic": "onboarding"              // optional default topic for sends using this template
 }
 
 GET /v1/templates?limit=&offset= — List templates. Response: {"items": [...], "total", "limit", "offset"}
@@ -174,10 +178,25 @@ PUT /v1/subscribers/:id/preferences — Set preferences
 Body:
 {
   "preferences": [
-    {"channel": "email", "workflow_id": "marketing", "enabled": false},
-    {"channel": "sms", "workflow_id": "*", "enabled": false}
+    {"channel": "email", "topic": "tips", "enabled": false},          // stop one topic on one channel
+    {"channel": "*", "topic": "tips", "enabled": false},              // stop one topic everywhere
+    {"channel": "email", "workflow_id": "welcome-series", "enabled": false},
+    {"channel": "sms", "enabled": false}                              // whole channel (workflow_id "*")
   ]
 }
+Response rows: {"channel", "workflow_id", "topic", "enabled"} — `topic` and `workflow_id` are the same scope column.
+Everything is allowed by default. Decision order, most specific first:
+(channel, topic) > ("*", topic) > (channel, workflow or template id) > (channel, "*") > ("*", "*").
+Enforced at enqueue (no job created, listed in `skipped`) and again by the worker.
+
+## TOPICS
+
+A topic is the subscriber-facing name of a stream of messages ("tips", "release-notes", "billing"):
+1–64 chars, lowercase letters, digits, "-", "_", ".", ":". Set it on /v1/send and /v1/batch, or once on a
+template (`POST /v1/templates {"topic": "tips"}`); jobs inherit the template's topic when the request has none.
+Jobs carry `topic` (GET /v1/jobs/:id, GET /v1/admin/jobs?topic=tips, MCP list_jobs). Bulk emails with a topic get an
+unsubscribe page with two choices: stop this topic only (stored as a preference) or stop all commercial email
+(marketing suppression). The RFC 8058 one-click POST from mail clients keeps the broad behaviour.
 
 Hierarchy: workflow-specific > channel-wide > global.
 Default: everything enabled.

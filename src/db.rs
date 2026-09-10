@@ -28,10 +28,13 @@ pub struct Job {
     pub provider_message_id: Option<String>,
     /// When the worker claimed the job (see the stuck-job reaper).
     pub claimed_at: Option<DateTime<Utc>>,
+    /// Subscriber-facing stream this message belongs to ("tips", "billing"…);
+    /// preferences can opt out of it per channel. See migration 021.
+    pub topic: Option<String>,
 }
 
 /// Column list shared by every `SELECT … FROM jobs` that loads a [`Job`].
-pub const JOB_COLUMNS: &str = "id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error, priority, provider, provider_message_id, claimed_at";
+pub const JOB_COLUMNS: &str = "id, project_id, channel, subscriber_id, recipient, template_id, payload, status, scheduled_at, attempts, max_attempts, next_retry_at, idempotency_key, created_at, sent_at, error, priority, provider, provider_message_id, claimed_at, topic";
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct InboxMessage {
@@ -70,6 +73,8 @@ pub struct Template {
     pub subject: Option<String>,
     pub body: String,
     pub body_html: Option<String>,
+    /// Default topic for messages sent with this template.
+    pub topic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

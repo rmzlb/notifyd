@@ -64,6 +64,18 @@ def test_send_builds_snake_case_body_and_api_key_header(client):
     }
 
 
+def test_topic_travels_on_send_batch_template_and_preferences(client):
+    nd, recorded = client
+    nd.send(channel="email", subscriber_id="u1", body="x", topic="tips")
+    nd.batch(subscribers=["u1"], channel="email", body="x", topic="tips")
+    nd.upsert_template("weekly", channel="email", body="x", topic="tips")
+    nd.set_preferences("u1", [{"channel": "*", "topic": "tips", "enabled": False}])
+    assert body(recorded[0])["topic"] == "tips"
+    assert body(recorded[1])["topic"] == "tips"
+    assert body(recorded[2])["topic"] == "tips"
+    assert body(recorded[3]) == {"preferences": [{"channel": "*", "topic": "tips", "enabled": False}]}
+
+
 def test_send_requires_a_channel(client):
     nd, _ = client
     with pytest.raises(ValueError):

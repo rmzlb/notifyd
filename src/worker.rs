@@ -166,6 +166,7 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
                     &job.project_id,
                     sub_id,
                     &job.channel,
+                    job.topic.as_deref(),
                     job.template_id.as_deref(),
                 )
             } else {
@@ -174,14 +175,16 @@ async fn process_email_batch(state: &Arc<AppState>, jobs: Vec<Job>) {
                     &job.project_id,
                     sub_id,
                     &job.channel,
+                    job.topic.as_deref(),
                     job.template_id.as_deref(),
                 )
                 .await
             };
             if !allowed {
                 info!(
-                    "Job {} skipped (subscriber opted out of {} channel)",
-                    job.id, job.channel
+                    "Job {} skipped ({})",
+                    job.id,
+                    crate::topics::skip_reason(&job.channel, job.topic.as_deref())
                 );
                 finalize_skipped(state, &job).await;
                 continue;
@@ -712,33 +715,23 @@ impl EmailContext {
         ctx
     }
 
-    /// Same precedence as `workflow_engine::check_preference`: specific
-    /// workflow, then channel wildcard, then global opt-out, default allowed.
+    /// Same decision as `workflow_engine::check_preference`, from memory:
+    /// topic, then workflow, then channel, then global; default allowed.
     fn preference_allows(
         &self,
         project: &str,
         subscriber: &str,
         channel: &str,
+        topic: Option<&str>,
         workflow: Option<&str>,
     ) -> bool {
-        let Some(rows) = self
+        match self
             .preferences
             .get(&(project.to_string(), subscriber.to_string()))
-        else {
-            return true;
-        };
-        if let Some(wf) = workflow {
-            if let Some((_, _, enabled)) = rows.iter().find(|(c, w, _)| c == channel && w == wf) {
-                return *enabled;
-            }
+        {
+            Some(rows) => crate::topics::allowed(rows, channel, topic, workflow),
+            None => true,
         }
-        if let Some((_, _, enabled)) = rows.iter().find(|(c, w, _)| c == channel && w == "*") {
-            return *enabled;
-        }
-        if let Some((_, _, enabled)) = rows.iter().find(|(c, w, _)| c == "*" && w == "*") {
-            return *enabled;
-        }
-        true
     }
 
     /// Same answer as `deliverability::active_suppression`, from memory.
@@ -836,6 +829,7 @@ async fn build_send_request(
                                 &public_url,
                                 &job.project_id,
                                 &job.recipient,
+                                job.topic.as_deref(),
                             );
                             if let Some(g) = generated.as_object() {
                                 for (k, v) in g {
@@ -952,13 +946,15 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
             &job.project_id,
             sub_id,
             &job.channel,
+            job.topic.as_deref(),
             job.template_id.as_deref(),
         )
         .await
         {
             info!(
-                "Job {} skipped (subscriber opted out of {} channel)",
-                job.id, job.channel
+                "Job {} skipped ({})",
+                job.id,
+                crate::topics::skip_reason(&job.channel, job.topic.as_deref())
             );
             return Ok(Delivery::new("skipped", None));
         }

@@ -15,6 +15,8 @@ pub struct UpsertTemplate {
     pub subject: Option<String>,
     pub body: String,
     pub body_html: Option<String>,
+    /// Default topic of messages sent with this template (see `topics` in llms.txt).
+    pub topic: Option<String>,
 }
 
 /// POST /v1/templates — create or upsert a template
@@ -24,15 +26,22 @@ pub async fn upsert_template(
     Json(req): Json<UpsertTemplate>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
+    let topic = crate::topics::normalize(req.topic.as_deref()).map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
 
     sqlx::query(
         r#"
-        INSERT INTO templates (id, project_id, channel, subject, body, body_html)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO templates (id, project_id, channel, subject, body, body_html, topic)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (project_id, id, channel) DO UPDATE SET
             subject = EXCLUDED.subject,
             body = EXCLUDED.body,
             body_html = EXCLUDED.body_html,
+            topic = EXCLUDED.topic,
             updated_at = now()
         "#,
     )
@@ -42,6 +51,7 @@ pub async fn upsert_template(
     .bind(req.subject.as_deref())
     .bind(&req.body)
     .bind(req.body_html.as_deref())
+    .bind(topic.as_deref())
     .execute(&state.pool)
     .await
     .map_err(|e| {
@@ -88,7 +98,7 @@ pub async fn list_templates(
         })?;
 
     let templates: Vec<Template> = sqlx::query_as(
-        "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 ORDER BY id, channel LIMIT $2 OFFSET $3"
+        "SELECT id, project_id, channel, subject, body, body_html, topic FROM templates WHERE project_id=$1 ORDER BY id, channel LIMIT $2 OFFSET $3"
     )
     .bind(&project.id)
     .bind(limit)
@@ -109,6 +119,7 @@ pub async fn list_templates(
                 "subject": t.subject,
                 "body": t.body,
                 "body_html": t.body_html,
+                "topic": t.topic,
             })
         })
         .collect();
@@ -130,7 +141,7 @@ pub async fn get_template(
     let project = extract_project(&state, &headers).await?;
 
     let templates: Vec<Template> = sqlx::query_as(
-        "SELECT id, project_id, channel, subject, body, body_html FROM templates WHERE project_id=$1 AND id=$2"
+        "SELECT id, project_id, channel, subject, body, body_html, topic FROM templates WHERE project_id=$1 AND id=$2"
     )
     .bind(&project.id)
     .bind(&id)
@@ -157,6 +168,7 @@ pub async fn get_template(
                 "subject": t.subject,
                 "body": t.body,
                 "body_html": t.body_html,
+                "topic": t.topic,
             })
         })
         .collect();

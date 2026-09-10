@@ -184,7 +184,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 
 **Governance**
 - **Unsubscribe** — RFC 8058 `List-Unsubscribe` one-click on every marketing email, suppression scopes `all` / `marketing`
-- **Preferences** — per-subscriber opt-in / opt-out
+- **Topics and preferences** — a `topic` on any send ("tips", "billing"); subscribers opt out per topic and channel, honoured at enqueue; the unsubscribe page offers "this topic only" before "all marketing"
 - **Multi-project** — one instance, many projects, isolated by API key, key rotation with a grace period
 - **PII masking** in logs, audit log of every mutation, per-project rate limit
 

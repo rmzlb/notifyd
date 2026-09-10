@@ -40,13 +40,39 @@ export interface SendNotificationInput {
   cc?: string[];
   /** Address that receives replies (email channel only). */
   replyTo?: string;
+  /** `critical` | `high` | `normal` | `low` | `bulk`, or 0–100 (lower goes first). */
+  priority?: NotifydPriority;
+  /** Provider tags, e.g. `[{ name: 'category', value: 'campaign' }]` (campaign/marketing/newsletter default to the bulk lane). */
+  tags?: Array<{ name: string; value: string }>;
+  /** Extra MIME headers for email. */
+  emailHeaders?: Record<string, string>;
+  /** Quiet hours for this request, or `false` to bypass the project's window. */
+  sendWindow?: SendWindow | false;
+  /** Subscriber-facing stream ("tips", "billing"); defaults to the template's topic. */
+  topic?: string;
+}
+
+export type NotifydPriority = 'critical' | 'high' | 'normal' | 'low' | 'bulk' | number;
+
+export interface SendWindow {
+  /** "HH:MM" local to `tz` or to the subscriber's timezone. */
+  start: string;
+  end: string;
+  tz?: string;
+  /** ISO weekdays 1 (Monday) … 7 (Sunday). */
+  days?: number[];
+  /** `marketing` (default) or `all`. */
+  appliesTo?: 'marketing' | 'all';
 }
 
 export interface SendNotificationResponse {
   success: boolean;
+  /** One id per channel in `channels` (channels the subscriber opted out of create no job). */
   jobIds: string[];
   scheduledAt: string;
   channels: string[];
+  topic: string | null;
+  skipped: Array<{ channel: string; reason: string }>;
 }
 
 export interface BatchNotificationInput {
@@ -59,13 +85,25 @@ export interface BatchNotificationInput {
   bodyHtml?: string;
   vars?: Record<string, unknown>;
   scheduledAt?: string;
+  icon?: string;
+  url?: string;
+  /** Defaults to `bulk`: a campaign never delays a password reset. */
+  priority?: NotifydPriority;
+  /** Declined per subscriber and channel: re-running the same batch creates nothing twice. */
+  idempotencyKey?: string;
+  sendWindow?: SendWindow | false;
+  topic?: string;
 }
 
 export interface BatchNotificationResponse {
   success: boolean;
   jobsCreated: number;
+  jobsDeduplicated: number;
+  /** Subscriber × channel pairs skipped because of an opt-out. */
+  jobsSkipped: number;
   subscribers: number;
   channels: string[];
+  topic: string | null;
 }
 
 export interface SubscriberInput {
@@ -197,6 +235,7 @@ export interface Job {
   subscriberId?: string | null;
   recipient?: string | null;
   templateId?: string | null;
+  topic?: string | null;
   priority?: number;
   attempts: number;
   maxAttempts?: number;
@@ -217,6 +256,8 @@ export interface TemplateInput {
   subject?: string;
   body: string;
   bodyHtml?: string;
+  /** Default topic of sends using this template. */
+  topic?: string;
 }
 
 export interface Template extends TemplateInput {}
@@ -266,8 +307,18 @@ export interface TriggerWorkflowInput {
 
 export interface Preference {
   channel: NotifydChannel | '*';
-  /** A workflow id, or `'*'` for every workflow on that channel. */
+  /** Scope: a topic id (preferred), a workflow id, or `'*'` for the whole channel. */
   workflowId: string;
+  /** Same scope as `workflowId` when it names a topic. */
+  topic?: string | null;
+  enabled: boolean;
+}
+
+/** Input row: give `topic`, or `workflowId`, or neither for the whole channel. */
+export interface PreferenceInput {
+  channel: NotifydChannel | '*';
+  topic?: string;
+  workflowId?: string;
   enabled: boolean;
 }
 
@@ -510,6 +561,7 @@ interface WireJob {
   subscriber_id?: string | null;
   recipient?: string | null;
   template_id?: string | null;
+  topic?: string | null;
   priority?: number;
   attempts?: number;
   max_attempts?: number;
@@ -532,6 +584,7 @@ function jobFromWire(j: WireJob): Job {
     subscriberId: j.subscriber_id ?? null,
     recipient: j.recipient ?? null,
     templateId: j.template_id ?? null,
+    topic: j.topic ?? null,
     priority: j.priority,
     attempts: j.attempts ?? 0,
     maxAttempts: j.max_attempts,
@@ -560,10 +613,11 @@ interface WireTemplate {
   subject?: string | null;
   body: string;
   body_html?: string | null;
+  topic?: string | null;
 }
 
 function templateFromWire(t: WireTemplate): Template {
-  return { id: t.id, channel: t.channel as NotifydChannel, subject: t.subject ?? undefined, body: t.body, bodyHtml: t.body_html ?? undefined };
+  return { id: t.id, channel: t.channel as NotifydChannel, subject: t.subject ?? undefined, body: t.body, bodyHtml: t.body_html ?? undefined, topic: t.topic ?? undefined };
 }
 
 interface WireSuppression {
@@ -577,6 +631,12 @@ interface WireSuppression {
 
 function suppressionFromWire(s: WireSuppression): Suppression {
   return { id: s.id, email: s.email, reason: s.reason, detail: s.detail ?? null, createdAt: s.created_at, releasedAt: s.released_at ?? null };
+}
+
+function sendWindowToWire(w: SendWindow | false | undefined): unknown {
+  if (w === undefined) return undefined;
+  if (w === false) return false;
+  return { start: w.start, end: w.end, tz: w.tz, days: w.days, applies_to: w.appliesTo };
 }
 
 export function createNotifydClient(config: NotifydClientConfig) {
@@ -622,6 +682,8 @@ export function createNotifydClient(config: NotifydClientConfig) {
         job_ids: string[];
         scheduled_at: string;
         channels: string[];
+        topic?: string | null;
+        skipped?: Array<{ channel: string; reason: string }>;
       }>('/v1/send', {
         method: 'POST',
         auth: 'apiKey',
@@ -646,6 +708,11 @@ export function createNotifydClient(config: NotifydClientConfig) {
           })),
           cc: input.cc,
           reply_to: input.replyTo,
+          priority: input.priority,
+          tags: input.tags,
+          email_headers: input.emailHeaders,
+          send_window: sendWindowToWire(input.sendWindow),
+          topic: input.topic,
         },
       });
 
@@ -654,6 +721,8 @@ export function createNotifydClient(config: NotifydClientConfig) {
         jobIds: response.job_ids,
         scheduledAt: response.scheduled_at,
         channels: response.channels,
+        topic: response.topic ?? null,
+        skipped: response.skipped ?? [],
       };
     },
 
@@ -661,8 +730,11 @@ export function createNotifydClient(config: NotifydClientConfig) {
       const response = await request<{
         success: boolean;
         jobs_created: number;
+        jobs_deduplicated?: number;
+        jobs_skipped?: number;
         subscribers: number;
         channels: string[];
+        topic?: string | null;
       }>('/v1/batch', {
         method: 'POST',
         auth: 'apiKey',
@@ -676,14 +748,23 @@ export function createNotifydClient(config: NotifydClientConfig) {
           body_html: input.bodyHtml,
           vars: input.vars,
           scheduled_at: input.scheduledAt,
+          icon: input.icon,
+          url: input.url,
+          priority: input.priority,
+          idempotency_key: input.idempotencyKey,
+          send_window: sendWindowToWire(input.sendWindow),
+          topic: input.topic,
         },
       });
 
       return {
         success: response.success,
         jobsCreated: response.jobs_created,
+        jobsDeduplicated: response.jobs_deduplicated ?? 0,
+        jobsSkipped: response.jobs_skipped ?? 0,
         subscribers: response.subscribers,
         channels: response.channels,
+        topic: response.topic ?? null,
       };
     },
 
@@ -906,7 +987,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
       return request<{ success: boolean; id: string }>('/v1/templates', {
         method: 'POST',
         auth: 'apiKey',
-        body: { id: input.id, channel: input.channel, subject: input.subject, body: input.body, body_html: input.bodyHtml },
+        body: { id: input.id, channel: input.channel, subject: input.subject, body: input.body, body_html: input.bodyHtml, topic: input.topic },
       });
     },
 
@@ -978,18 +1059,18 @@ export function createNotifydClient(config: NotifydClientConfig) {
     // ── Preferences ─────────────────────────────────────────────────────────
     /** Everything is enabled by default. A workflow-specific row wins over the channel-wide `'*'` row. */
     async getPreferences(subscriberId: string): Promise<Preference[]> {
-      const response = await request<{ preferences: Array<{ channel: string; workflow_id: string | null; enabled: boolean }> }>(
+      const response = await request<{ preferences: Array<{ channel: string; workflow_id: string | null; topic?: string | null; enabled: boolean }> }>(
         `/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`,
         { auth: 'apiKey' },
       );
-      return (response.preferences ?? []).map((p) => ({ channel: p.channel as Preference['channel'], workflowId: p.workflow_id ?? '*', enabled: p.enabled }));
+      return (response.preferences ?? []).map((p) => ({ channel: p.channel as Preference['channel'], workflowId: p.workflow_id ?? '*', topic: p.topic ?? null, enabled: p.enabled }));
     },
 
-    async setPreferences(subscriberId: string, preferences: Preference[]): Promise<{ success: boolean }> {
+    async setPreferences(subscriberId: string, preferences: PreferenceInput[]): Promise<{ success: boolean }> {
       return request<{ success: boolean }>(`/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`, {
         method: 'PUT',
         auth: 'apiKey',
-        body: { preferences: preferences.map((p) => ({ channel: p.channel, workflow_id: p.workflowId, enabled: p.enabled })) },
+        body: { preferences: preferences.map((p) => ({ channel: p.channel, workflow_id: p.workflowId, topic: p.topic ?? undefined, enabled: p.enabled })) },
       });
     },
 

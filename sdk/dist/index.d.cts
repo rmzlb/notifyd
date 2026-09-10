@@ -37,12 +37,42 @@ interface SendNotificationInput {
     cc?: string[];
     /** Address that receives replies (email channel only). */
     replyTo?: string;
+    /** `critical` | `high` | `normal` | `low` | `bulk`, or 0–100 (lower goes first). */
+    priority?: NotifydPriority;
+    /** Provider tags, e.g. `[{ name: 'category', value: 'campaign' }]` (campaign/marketing/newsletter default to the bulk lane). */
+    tags?: Array<{
+        name: string;
+        value: string;
+    }>;
+    /** Extra MIME headers for email. */
+    emailHeaders?: Record<string, string>;
+    /** Quiet hours for this request, or `false` to bypass the project's window. */
+    sendWindow?: SendWindow | false;
+    /** Subscriber-facing stream ("tips", "billing"); defaults to the template's topic. */
+    topic?: string;
+}
+type NotifydPriority = 'critical' | 'high' | 'normal' | 'low' | 'bulk' | number;
+interface SendWindow {
+    /** "HH:MM" local to `tz` or to the subscriber's timezone. */
+    start: string;
+    end: string;
+    tz?: string;
+    /** ISO weekdays 1 (Monday) … 7 (Sunday). */
+    days?: number[];
+    /** `marketing` (default) or `all`. */
+    appliesTo?: 'marketing' | 'all';
 }
 interface SendNotificationResponse {
     success: boolean;
+    /** One id per channel in `channels` (channels the subscriber opted out of create no job). */
     jobIds: string[];
     scheduledAt: string;
     channels: string[];
+    topic: string | null;
+    skipped: Array<{
+        channel: string;
+        reason: string;
+    }>;
 }
 interface BatchNotificationInput {
     channel?: NotifydChannel;
@@ -54,12 +84,24 @@ interface BatchNotificationInput {
     bodyHtml?: string;
     vars?: Record<string, unknown>;
     scheduledAt?: string;
+    icon?: string;
+    url?: string;
+    /** Defaults to `bulk`: a campaign never delays a password reset. */
+    priority?: NotifydPriority;
+    /** Declined per subscriber and channel: re-running the same batch creates nothing twice. */
+    idempotencyKey?: string;
+    sendWindow?: SendWindow | false;
+    topic?: string;
 }
 interface BatchNotificationResponse {
     success: boolean;
     jobsCreated: number;
+    jobsDeduplicated: number;
+    /** Subscriber × channel pairs skipped because of an opt-out. */
+    jobsSkipped: number;
     subscribers: number;
     channels: string[];
+    topic: string | null;
 }
 interface SubscriberInput {
     id: string;
@@ -172,6 +214,7 @@ interface Job {
     subscriberId?: string | null;
     recipient?: string | null;
     templateId?: string | null;
+    topic?: string | null;
     priority?: number;
     attempts: number;
     maxAttempts?: number;
@@ -191,6 +234,8 @@ interface TemplateInput {
     subject?: string;
     body: string;
     bodyHtml?: string;
+    /** Default topic of sends using this template. */
+    topic?: string;
 }
 interface Template extends TemplateInput {
 }
@@ -253,8 +298,17 @@ interface TriggerWorkflowInput {
 }
 interface Preference {
     channel: NotifydChannel | '*';
-    /** A workflow id, or `'*'` for every workflow on that channel. */
+    /** Scope: a topic id (preferred), a workflow id, or `'*'` for the whole channel. */
     workflowId: string;
+    /** Same scope as `workflowId` when it names a topic. */
+    topic?: string | null;
+    enabled: boolean;
+}
+/** Input row: give `topic`, or `workflowId`, or neither for the whole channel. */
+interface PreferenceInput {
+    channel: NotifydChannel | '*';
+    topic?: string;
+    workflowId?: string;
     enabled: boolean;
 }
 interface Suppression {
@@ -375,7 +429,7 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     }>;
     /** Everything is enabled by default. A workflow-specific row wins over the channel-wide `'*'` row. */
     getPreferences(subscriberId: string): Promise<Preference[]>;
-    setPreferences(subscriberId: string, preferences: Preference[]): Promise<{
+    setPreferences(subscriberId: string, preferences: PreferenceInput[]): Promise<{
         success: boolean;
     }>;
     /** Stop sending to an address. Bounces and complaints are suppressed automatically; this is for manual opt-outs. */
@@ -395,4 +449,4 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     openInboxStream(subscriberId: string, options?: OpenInboxStreamOptions): Promise<OpenInboxStreamResult>;
 };
 
-export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type ProviderEvent, type PushToken, type PushTokensResponse, type SendNotificationInput, type SendNotificationResponse, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };
+export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushToken, type PushTokensResponse, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };

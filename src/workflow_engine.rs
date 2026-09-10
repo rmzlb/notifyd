@@ -9,51 +9,32 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-/// Check if a subscriber has opted out of a channel/workflow
+/// Whether a subscriber accepts a message on `channel`, given its topic and
+/// the workflow (or template) that produced it. One query, then the shared
+/// decision in [`crate::topics::allowed`].
 pub async fn check_preference(
     state: &AppState,
     project_id: &str,
     subscriber_id: &str,
     channel: &str,
+    topic: Option<&str>,
     workflow_id: Option<&str>,
 ) -> bool {
-    // Check specific workflow preference first
-    if let Some(wf_id) = workflow_id {
-        let specific: Option<(bool,)> = sqlx::query_as(
-            "SELECT enabled FROM subscriber_preferences WHERE project_id=$1 AND subscriber_id=$2 AND channel=$3 AND workflow_id=$4"
-        )
-        .bind(project_id).bind(subscriber_id).bind(channel).bind(wf_id)
-        .fetch_optional(&state.pool).await.ok().flatten();
-
-        if let Some((enabled,)) = specific {
-            return enabled;
+    let rows: Vec<crate::topics::PreferenceRow> = match sqlx::query_as(
+        "SELECT channel, workflow_id, enabled FROM subscriber_preferences WHERE project_id=$1 AND subscriber_id=$2",
+    )
+    .bind(project_id)
+    .bind(subscriber_id)
+    .fetch_all(&state.pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!("preference lookup failed ({}), allowing the send", e);
+            return true;
         }
-    }
-
-    // Check wildcard channel preference
-    let wildcard: Option<(bool,)> = sqlx::query_as(
-        "SELECT enabled FROM subscriber_preferences WHERE project_id=$1 AND subscriber_id=$2 AND channel=$3 AND workflow_id='*'"
-    )
-    .bind(project_id).bind(subscriber_id).bind(channel)
-    .fetch_optional(&state.pool).await.ok().flatten();
-
-    if let Some((enabled,)) = wildcard {
-        return enabled;
-    }
-
-    // Check global opt-out
-    let global: Option<(bool,)> = sqlx::query_as(
-        "SELECT enabled FROM subscriber_preferences WHERE project_id=$1 AND subscriber_id=$2 AND channel='*' AND workflow_id='*'"
-    )
-    .bind(project_id).bind(subscriber_id)
-    .fetch_optional(&state.pool).await.ok().flatten();
-
-    if let Some((enabled,)) = global {
-        return enabled;
-    }
-
-    // Default: enabled
-    true
+    };
+    crate::topics::allowed(&rows, channel, topic, workflow_id)
 }
 
 /// Trigger all workflows matching an event
@@ -159,6 +140,7 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                     &run.project_id,
                     &run.subscriber_id,
                     channel,
+                    None,
                     Some(&run.workflow_id),
                 )
                 .await

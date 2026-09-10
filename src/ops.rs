@@ -830,6 +830,7 @@ pub struct JobFilter {
     pub status: Option<String>,
     pub channel: Option<String>,
     pub recipient: Option<String>,
+    pub topic: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub limit: Option<i64>,
 }
@@ -843,13 +844,14 @@ pub async fn list_jobs(state: &Arc<AppState>, filter: &JobFilter) -> Result<Vec<
         r#"
         SELECT id, project_id, channel, status, recipient, priority, attempts, max_attempts,
                provider, provider_message_id, scheduled_at, sent_at, next_retry_at, created_at, error,
-               payload->>'subject' AS subject
+               payload->>'subject' AS subject, topic
         FROM jobs
         WHERE created_at >= $1
           AND ($2::text IS NULL OR project_id = $2)
           AND ($3::text IS NULL OR status = $3)
           AND ($4::text IS NULL OR channel = $4)
           AND ($5::text IS NULL OR lower(recipient) = lower($5))
+          AND ($7::text IS NULL OR topic = $7)
         ORDER BY created_at DESC
         LIMIT $6
         "#,
@@ -860,6 +862,7 @@ pub async fn list_jobs(state: &Arc<AppState>, filter: &JobFilter) -> Result<Vec<
     .bind(&filter.channel)
     .bind(&filter.recipient)
     .bind(limit)
+    .bind(&filter.topic)
     .fetch_all(&state.pool)
     .await?;
     Ok(rows
@@ -872,6 +875,7 @@ pub async fn list_jobs(state: &Arc<AppState>, filter: &JobFilter) -> Result<Vec<
                 "status": r.get::<String, _>("status"),
                 "recipient": crate::pii::mask_recipient(r.get::<String, _>("channel").as_str(), &r.get::<String, _>("recipient")),
                 "subject": r.get::<Option<String>, _>("subject"),
+                "topic": r.get::<Option<String>, _>("topic"),
                 "priority": r.get::<i16, _>("priority"),
                 "attempts": r.get::<i32, _>("attempts"),
                 "max_attempts": r.get::<i32, _>("max_attempts"),

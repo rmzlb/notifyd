@@ -146,6 +146,9 @@ pub struct SendRequest {
     /// Send window override: `{start, end, tz?, days?, applies_to?}` or
     /// `false` to bypass the project's window for this request.
     pub send_window: Option<Value>,
+    /// Subscriber-facing stream ("tips", "billing"); falls back to the
+    /// template's topic. Preferences can opt out of it per channel.
+    pub topic: Option<String>,
 }
 
 /// Effective send window for a request: the request's own object wins,
@@ -289,6 +292,8 @@ pub struct BatchRequest {
     pub idempotency_key: Option<String>,
     /// Send window override, see `/v1/send`.
     pub send_window: Option<Value>,
+    /// Topic of the campaign, see `/v1/send`.
+    pub topic: Option<String>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -361,6 +366,55 @@ pub async fn send_notification(
             )
         })?;
     let recipient_tz = subscriber_timezone(&state, &project.id, req.subscriber_id.as_deref()).await;
+    let topic = crate::topics::resolve(
+        &state.pool,
+        &project.id,
+        req.topic.as_deref(),
+        req.template.as_deref(),
+    )
+    .await
+    .map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
+    // Opt-outs are honoured at enqueue: no job is created for a channel the
+    // subscriber declined (the worker re-checks, so a change of mind between
+    // enqueue and send still counts).
+    let mut skipped: Vec<Value> = Vec::new();
+    let channels: Vec<String> = match req.subscriber_id.as_deref() {
+        Some(sub) => {
+            let prefs = crate::topics::load_rows(&state.pool, &project.id, &[sub.to_string()])
+                .await
+                .map_err(|e| {
+                    (StatusCode::INTERNAL_SERVER_ERROR, {
+                        tracing::error!("DB error: {}", e);
+                        Json(json!({"error": "Internal server error"}))
+                    })
+                })?;
+            let rows = prefs.get(sub).map(Vec::as_slice).unwrap_or(&[]);
+            channels
+                .into_iter()
+                .filter(|channel| {
+                    let ok = crate::topics::allowed(
+                        rows,
+                        channel,
+                        topic.as_deref(),
+                        req.template.as_deref(),
+                    );
+                    if !ok {
+                        skipped.push(json!({
+                            "channel": channel,
+                            "reason": crate::topics::skip_reason(channel, topic.as_deref()),
+                        }));
+                    }
+                    ok
+                })
+                .collect()
+        }
+        None => channels,
+    };
     let marketing =
         priority >= PRIORITY_BULK || default_priority_from_tags(req.tags.as_ref()) == PRIORITY_BULK;
     let scheduled_at = windowed_schedule(
@@ -439,8 +493,8 @@ pub async fn send_notification(
         // fresh row and the history keeps both.
         let inserted: Option<Uuid> = sqlx::query_scalar(
             r#"
-            INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, idempotency_key, priority, max_attempts)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, idempotency_key, priority, max_attempts, topic)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (project_id, idempotency_key)
                 WHERE idempotency_key IS NOT NULL
                   AND status NOT IN ('failed', 'cancelled')
@@ -458,6 +512,7 @@ pub async fn send_notification(
         .bind(idem_key.as_deref())
         .bind(priority)
         .bind(state.config.worker.max_attempts)
+        .bind(topic.as_deref())
         .fetch_optional(&state.pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
@@ -499,6 +554,8 @@ pub async fn send_notification(
         "job_ids": job_ids,
         "scheduled_at": scheduled_at,
         "channels": channels,
+        "topic": topic,
+        "skipped": skipped,
     })))
 }
 
@@ -667,6 +724,27 @@ pub async fn batch_notification(
             )
         })?;
     let marketing = priority >= PRIORITY_BULK;
+    let topic = crate::topics::resolve(
+        &state.pool,
+        &project.id,
+        req.topic.as_deref(),
+        req.template.as_deref(),
+    )
+    .await
+    .map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
+    let prefs = crate::topics::load_rows(&state.pool, &project.id, &req.subscribers)
+        .await
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, {
+                tracing::error!("DB error: {}", e);
+                Json(json!({"error": "Internal server error"}))
+            })
+        })?;
 
     let payload = json!({
         "subject": req.subject,
@@ -707,6 +785,7 @@ pub async fn batch_notification(
     let mut col_subscriber: Vec<String> = Vec::new();
     let mut col_scheduled: Vec<DateTime<Utc>> = Vec::new();
     let mut col_idem: Vec<Option<String>> = Vec::new();
+    let mut jobs_skipped = 0usize;
     for subscriber_id in &req.subscribers {
         let scheduled_at = windowed_schedule(
             window.as_ref(),
@@ -714,7 +793,12 @@ pub async fn batch_notification(
             marketing,
             timezones.get(subscriber_id).map(String::as_str),
         );
+        let rows = prefs.get(subscriber_id).map(Vec::as_slice).unwrap_or(&[]);
         for channel in &channels {
+            if !crate::topics::allowed(rows, channel, topic.as_deref(), req.template.as_deref()) {
+                jobs_skipped += 1;
+                continue;
+            }
             col_channel.push(channel.clone());
             col_subscriber.push(subscriber_id.clone());
             col_scheduled.push(scheduled_at);
@@ -728,8 +812,8 @@ pub async fn batch_notification(
     let requested_total = col_channel.len();
     let inserted = sqlx::query(
         r#"
-        INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts, idempotency_key)
-        SELECT $1, c, s, s, $2, $3, t, $4, $5, k
+        INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts, idempotency_key, topic)
+        SELECT $1, c, s, s, $2, $3, t, $4, $5, k, $10
         FROM unnest($6::text[], $7::text[], $8::timestamptz[], $9::text[]) AS rows(c, s, t, k)
         ON CONFLICT (project_id, idempotency_key)
             WHERE idempotency_key IS NOT NULL
@@ -746,6 +830,7 @@ pub async fn batch_notification(
     .bind(&col_subscriber)
     .bind(&col_scheduled)
     .bind(&col_idem)
+    .bind(topic.as_deref())
     .execute(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
@@ -756,7 +841,9 @@ pub async fn batch_notification(
         "success": true,
         "jobs_created": total,
         "jobs_deduplicated": deduplicated,
+        "jobs_skipped": jobs_skipped,
         "subscribers": req.subscribers.len(),
         "channels": channels,
+        "topic": topic,
     })))
 }

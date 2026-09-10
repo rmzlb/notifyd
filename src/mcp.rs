@@ -118,6 +118,7 @@ pub fn tools() -> Value {
                     "status": {"type": "string", "enum": ["pending", "processing", "retry", "sent", "failed", "cancelled"]},
                     "channel": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push"]},
                     "recipient": {"type": "string", "description": "Exact address or phone number."},
+                    "topic": {"type": "string", "description": "Only jobs carrying this topic (e.g. \"tips\")."},
                     "since": {"type": "string", "format": "date-time"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500}
                 }

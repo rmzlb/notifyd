@@ -13,6 +13,7 @@ mod pii;
 mod send_window;
 mod sse;
 mod templates;
+mod topics;
 mod unsubscribe;
 mod webhooks;
 mod worker;

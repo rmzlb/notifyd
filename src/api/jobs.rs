@@ -127,6 +127,7 @@ pub async fn get_job(
         "subscriber_id": job.subscriber_id,
         "recipient": job.recipient,
         "template_id": job.template_id,
+        "topic": job.topic,
         "status": job.status,
         "scheduled_at": job.scheduled_at,
         "attempts": job.attempts,
