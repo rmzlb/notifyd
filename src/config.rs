@@ -66,6 +66,15 @@ pub struct PacingConfig {
     pub whatsapp_per_sec: f64,
     #[serde(default = "default_push_per_sec")]
     pub push_per_sec: f64,
+    /// Telegram allows about 30 messages/s per bot.
+    #[serde(default = "default_telegram_per_sec")]
+    pub telegram_per_sec: f64,
+    /// Slack: one message per second per channel is the documented tier.
+    #[serde(default = "default_slack_per_sec")]
+    pub slack_per_sec: f64,
+    /// Discord webhooks: 30 requests per minute per webhook.
+    #[serde(default = "default_discord_per_sec")]
+    pub discord_per_sec: f64,
     /// Lane pause after a 429 without `Retry-After`, in seconds.
     #[serde(default = "default_rate_limit_pause_secs")]
     pub rate_limit_pause_secs: u64,
@@ -82,6 +91,9 @@ impl Default for PacingConfig {
             sms_per_sec: default_sms_per_sec(),
             whatsapp_per_sec: default_sms_per_sec(),
             push_per_sec: default_push_per_sec(),
+            telegram_per_sec: default_telegram_per_sec(),
+            slack_per_sec: default_slack_per_sec(),
+            discord_per_sec: default_discord_per_sec(),
             rate_limit_pause_secs: default_rate_limit_pause_secs(),
             failover_cooldown_secs: default_failover_cooldown_secs(),
         }
@@ -100,6 +112,15 @@ fn default_sms_per_sec() -> f64 {
 }
 fn default_push_per_sec() -> f64 {
     50.0
+}
+fn default_telegram_per_sec() -> f64 {
+    20.0
+}
+fn default_slack_per_sec() -> f64 {
+    1.0
+}
+fn default_discord_per_sec() -> f64 {
+    0.5
 }
 fn default_rate_limit_pause_secs() -> u64 {
     2
@@ -121,6 +142,9 @@ pub struct ConnectorsConfig {
     /// Native APNs for `push_tokens.platform = 'apns'`.
     #[serde(default)]
     pub apns: Option<ApnsConfig>,
+    /// Telegram / Slack tokens for the chat channels.
+    #[serde(default)]
+    pub chat: ChatConfig,
 }
 
 /// Email provider. `provider` selects the connector:
@@ -242,6 +266,30 @@ pub struct PushConfig {
     pub vapid_public_key: Option<String>,
     /// VAPID subject, usually "mailto:ops@example.com" or an HTTPS contact URL.
     pub vapid_subject: Option<String>,
+}
+
+/// Telegram and Slack credentials (Discord webhooks carry their own).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChatConfig {
+    pub telegram_bot_token: Option<String>,
+    /// Needed to post to Slack channel ids; incoming webhook URLs need nothing.
+    pub slack_bot_token: Option<String>,
+    /// Bot API base, for a self-hosted `telegram-bot-api` or a proxy
+    /// (`TELEGRAM_API_BASE`, default `https://api.telegram.org`).
+    pub telegram_api_base: Option<String>,
+    /// `SLACK_API_BASE`, default `https://slack.com/api`.
+    pub slack_api_base: Option<String>,
+}
+
+impl ChatConfig {
+    pub fn from_env() -> Self {
+        Self {
+            telegram_bot_token: env_non_empty("TELEGRAM_BOT_TOKEN"),
+            slack_bot_token: env_non_empty("SLACK_BOT_TOKEN"),
+            telegram_api_base: env_non_empty("TELEGRAM_API_BASE"),
+            slack_api_base: env_non_empty("SLACK_API_BASE"),
+        }
+    }
 }
 
 /// Apple Push Notification service, token-based auth (`.p8` key).
@@ -520,6 +568,12 @@ impl Config {
                     sms_per_sec: env_parse("SMS_RATE_PER_SEC", default_sms_per_sec()),
                     whatsapp_per_sec: env_parse("WHATSAPP_RATE_PER_SEC", default_sms_per_sec()),
                     push_per_sec: env_parse("PUSH_RATE_PER_SEC", default_push_per_sec()),
+                    telegram_per_sec: env_parse(
+                        "TELEGRAM_RATE_PER_SEC",
+                        default_telegram_per_sec(),
+                    ),
+                    slack_per_sec: env_parse("SLACK_RATE_PER_SEC", default_slack_per_sec()),
+                    discord_per_sec: env_parse("DISCORD_RATE_PER_SEC", default_discord_per_sec()),
                     rate_limit_pause_secs: env_parse(
                         "RATE_LIMIT_PAUSE_SECS",
                         default_rate_limit_pause_secs(),
@@ -537,6 +591,7 @@ impl Config {
                 whatsapp: WhatsappConfig::from_env(),
                 push: PushConfig::from_env(),
                 apns: ApnsConfig::from_env().map_err(anyhow::Error::msg)?,
+                chat: ChatConfig::from_env(),
             },
             projects: HashMap::new(),
         };

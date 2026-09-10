@@ -1063,6 +1063,9 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
             state.broadcaster.clone(),
         )),
         Some(Channel::Push) => return dispatch_push(state, job, req).await,
+        Some(chat @ (Channel::Telegram | Channel::Slack | Channel::Discord)) => Box::new(
+            crate::connectors::chat::ChatConnector::new(chat, state.config.connectors.chat.clone()),
+        ),
         None => {
             return Err(ProviderError::permanent(
                 "none",

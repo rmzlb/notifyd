@@ -1,4 +1,4 @@
-export type NotifydChannel = 'email' | 'sms' | 'push' | 'in_app' | (string & {});
+export type NotifydChannel = 'email' | 'sms' | 'whatsapp' | 'push' | 'in_app' | 'telegram' | 'slack' | 'discord' | (string & {});
 
 /**
  * Email attachment. `content` is the file bytes encoded as a base64 string
@@ -54,6 +54,8 @@ export interface SendNotificationInput {
   track?: false | { opens?: boolean; clicks?: boolean };
   /** Push extras (APNs, FCM, Web Push). */
   push?: PushExtras;
+  /** Chat extras (Telegram, Slack, Discord): exact text instead of subject + body, button label. */
+  chat?: { text?: string; button?: string };
 }
 
 export interface PushExtras {
@@ -133,6 +135,7 @@ export interface BatchNotificationInput {
   topic?: string;
   track?: false | { opens?: boolean; clicks?: boolean };
   push?: PushExtras;
+  chat?: { text?: string; button?: string };
 }
 
 export interface BatchNotificationResponse {
@@ -141,6 +144,8 @@ export interface BatchNotificationResponse {
   jobsDeduplicated: number;
   /** Subscriber × channel pairs skipped because of an opt-out. */
   jobsSkipped: number;
+  /** Pairs skipped because the id is unknown or the subscriber has no address for the channel. */
+  jobsWithoutAddress: number;
   subscribers: number;
   channels: string[];
   topic: string | null;
@@ -790,6 +795,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           topic: input.topic,
           track: input.track,
           push: pushToWire(input.push),
+          chat: input.chat,
         },
       });
 
@@ -809,6 +815,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
         jobs_created: number;
         jobs_deduplicated?: number;
         jobs_skipped?: number;
+        jobs_without_address?: number;
         subscribers: number;
         channels: string[];
         topic?: string | null;
@@ -834,6 +841,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           topic: input.topic,
           track: input.track,
           push: pushToWire(input.push),
+          chat: input.chat,
         },
       });
 
@@ -842,6 +850,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
         jobsCreated: response.jobs_created,
         jobsDeduplicated: response.jobs_deduplicated ?? 0,
         jobsSkipped: response.jobs_skipped ?? 0,
+        jobsWithoutAddress: response.jobs_without_address ?? 0,
         subscribers: response.subscribers,
         channels: response.channels,
         topic: response.topic ?? null,

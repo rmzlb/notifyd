@@ -22,7 +22,7 @@ use std::collections::HashMap;
 const HELP: &str = "notifyd — self-hosted notification server
 
   notifyd                      start the server (reads the environment)
-  notifyd digest               what needs attention, with the action for each finding
+  notifyd digest               what needs attention, with the action for each finding; --to telegram:<chat> sends it there
   notifyd jobs                 recent jobs; filters: --status --project --channel --topic --recipient --since --limit
   notifyd job <id>             one job: provider, attempts, delivery events
   notifyd retry <id>           re-queue a failed job
@@ -56,6 +56,19 @@ pub async fn run(args: &[String]) -> anyhow::Result<bool> {
                 .cloned()
                 .flatten()
                 .unwrap_or_else(|| "1d".to_string());
+            if let Some(Some(to)) = flags.get("to") {
+                let v = client
+                    .post(
+                        "/v1/admin/digest/notify",
+                        serde_json::json!({ "to": to, "window": window }),
+                    )
+                    .await?;
+                println!(
+                    "digest sent via {}",
+                    v.get("provider").and_then(Value::as_str).unwrap_or("?")
+                );
+                return Ok(true);
+            }
             if json {
                 let v = client
                     .get(&format!("/v1/admin/digest?window={window}"))

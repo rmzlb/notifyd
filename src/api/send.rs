@@ -337,20 +337,66 @@ pub async fn send_notification(
             .collect()
     });
 
-    let recipient = req
-        .to
-        .clone()
-        .or_else(|| req.subscriber_id.clone())
-        .ok_or_else(|| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({"error": "Missing 'to' or 'subscriber_id'"})),
-            )
-        })?;
+    if req.to.is_none() && req.subscriber_id.is_none() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"error": "Missing 'to' or 'subscriber_id'"})),
+        ));
+    }
+    // Without `to`, each channel takes its address from the subscriber record
+    // (email, phone, data.telegram_chat_id…); in_app and push use the id.
+    let addresses = match (&req.to, req.subscriber_id.as_deref()) {
+        (None, Some(sub)) => crate::addresses::load(&state.pool, &project.id, &[sub.to_string()])
+            .await
+            .map_err(|e| {
+                (StatusCode::INTERNAL_SERVER_ERROR, {
+                    tracing::error!("DB error: {}", e);
+                    Json(json!({"error": "Internal server error"}))
+                })
+            })?
+            .remove(sub),
+        _ => None,
+    };
+    let mut skipped: Vec<Value> = Vec::new();
+    let mut recipients: Vec<(String, String)> = Vec::with_capacity(channels.len());
+    for channel in &channels {
+        let address = match (&req.to, &addresses, req.subscriber_id.as_deref()) {
+            (Some(to), _, _) => Some(to.clone()),
+            (None, Some(sub), _) => sub.for_channel(channel),
+            (None, None, Some(id)) => {
+                let needs_address = crate::connectors::Channel::from_str(channel)
+                    .map(|c| c.needs_address())
+                    .unwrap_or(true);
+                if needs_address {
+                    None
+                } else {
+                    Some(id.to_string())
+                }
+            }
+            (None, None, None) => None,
+        };
+        match address {
+            Some(a) => recipients.push((channel.clone(), a)),
+            None => skipped.push(json!({
+                "channel": channel,
+                "reason": if addresses.is_none() && req.subscriber_id.is_some() {
+                    format!("unknown subscriber '{}'", req.subscriber_id.as_deref().unwrap_or_default())
+                } else {
+                    crate::addresses::missing_reason(channel)
+                },
+            })),
+        }
+    }
+    let channels: Vec<String> = recipients.iter().map(|(c, _)| c.clone()).collect();
+    let email_recipient = recipients
+        .iter()
+        .find(|(c, _)| c == "email")
+        .map(|(_, a)| a.clone())
+        .unwrap_or_default();
 
     let (cc, reply_to) = validate_email_envelope(
         &channels,
-        &recipient,
+        &email_recipient,
         req.cc.as_deref(),
         req.reply_to.as_deref(),
     )
@@ -396,7 +442,6 @@ pub async fn send_notification(
     // Opt-outs are honoured at enqueue: no job is created for a channel the
     // subscriber declined (the worker re-checks, so a change of mind between
     // enqueue and send still counts).
-    let mut skipped: Vec<Value> = Vec::new();
     let channels: Vec<String> = match req.subscriber_id.as_deref() {
         Some(sub) => {
             let prefs = crate::topics::load_rows(&state.pool, &project.id, &[sub.to_string()])
@@ -506,6 +551,11 @@ pub async fn send_notification(
     let mut job_ids: Vec<Uuid> = Vec::new();
 
     for channel in &channels {
+        let recipient = recipients
+            .iter()
+            .find(|(c, _)| c == channel)
+            .map(|(_, a)| a.clone())
+            .unwrap_or_default();
         let idem_key = req
             .idempotency_key
             .as_ref()
@@ -735,39 +785,34 @@ pub async fn batch_notification(
     });
 
     // Recipients: an explicit list, or a segment resolved to (id, timezone) pairs.
-    let (subscribers, segment_timezones): (Vec<String>, std::collections::HashMap<String, String>) =
-        match (&req.segment, req.subscribers.is_empty()) {
-            (Some(_), false) => {
-                return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(json!({"error": "give either 'subscribers' or 'segment', not both"})),
-                ))
-            }
-            (Some(segment), true) => {
-                let rows = crate::segments::resolve(&state.pool, &project.id, segment)
-                    .await
-                    .map_err(|error| {
-                        (
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            Json(json!({ "error": error })),
-                        )
-                    })?;
-                let tz = rows
-                    .iter()
-                    .filter_map(|(id, tz)| tz.clone().map(|tz| (id.clone(), tz)))
-                    .collect();
-                (rows.into_iter().map(|(id, _)| id).collect(), tz)
-            }
-            (None, true) => {
-                return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    Json(
-                        json!({"error": "'subscribers' (list of ids) or 'segment' (filter) is required"}),
-                    ),
-                ))
-            }
-            (None, false) => (req.subscribers.clone(), Default::default()),
-        };
+    let subscribers: Vec<String> = match (&req.segment, req.subscribers.is_empty()) {
+        (Some(_), false) => {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "give either 'subscribers' or 'segment', not both"})),
+            ))
+        }
+        (Some(segment), true) => {
+            let rows = crate::segments::resolve(&state.pool, &project.id, segment)
+                .await
+                .map_err(|error| {
+                    (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(json!({ "error": error })),
+                    )
+                })?;
+            rows.into_iter().map(|(id, _)| id).collect()
+        }
+        (None, true) => {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(
+                    json!({"error": "'subscribers' (list of ids) or 'segment' (filter) is required"}),
+                ),
+            ))
+        }
+        (None, false) => req.subscribers.clone(),
+    };
 
     let requested_at = req.scheduled_at.unwrap_or_else(Utc::now);
     let priority = resolve_priority(req.priority.as_ref(), PRIORITY_BULK).map_err(|error| {
@@ -818,29 +863,17 @@ pub async fn batch_notification(
         "push": req.push,
     });
 
-    // Recipient timezones in one query (only when a window applies).
-    let timezones: std::collections::HashMap<String, String> = if req.segment.is_some() {
-        segment_timezones
-    } else if window.is_some() {
-        sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT id, timezone FROM subscribers WHERE project_id = $1 AND id = ANY($2)",
-        )
-        .bind(&project.id)
-        .bind(&subscribers)
-        .fetch_all(&state.pool)
+    // Addresses and timezones of every recipient in one query: each job
+    // carries the real address of its channel (an id that is not a known
+    // subscriber, or a subscriber without that address, gets no job).
+    let addresses = crate::addresses::load(&state.pool, &project.id, &subscribers)
         .await
         .map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, {
                 tracing::error!("DB error: {}", e);
                 Json(json!({"error": "Internal server error"}))
             })
-        })?
-        .into_iter()
-        .filter_map(|(id, tz)| tz.map(|tz| (id, tz)))
-        .collect()
-    } else {
-        Default::default()
-    };
+        })?;
 
     // One set-based INSERT per request: a 5 000-recipient campaign is one
     // round trip, not 5 000. Same idempotency rule as /v1/send: a key held
@@ -850,13 +883,19 @@ pub async fn batch_notification(
     let mut col_subscriber: Vec<String> = Vec::new();
     let mut col_scheduled: Vec<DateTime<Utc>> = Vec::new();
     let mut col_idem: Vec<Option<String>> = Vec::new();
+    let mut col_recipient: Vec<String> = Vec::new();
     let mut jobs_skipped = 0usize;
+    let mut jobs_without_address = 0usize;
     for subscriber_id in &subscribers {
+        let Some(address_book) = addresses.get(subscriber_id) else {
+            jobs_without_address += channels.len();
+            continue;
+        };
         let scheduled_at = windowed_schedule(
             window.as_ref(),
             requested_at,
             marketing,
-            timezones.get(subscriber_id).map(String::as_str),
+            address_book.timezone.as_deref(),
         );
         let rows = prefs.get(subscriber_id).map(Vec::as_slice).unwrap_or(&[]);
         for channel in &channels {
@@ -864,8 +903,13 @@ pub async fn batch_notification(
                 jobs_skipped += 1;
                 continue;
             }
+            let Some(address) = address_book.for_channel(channel) else {
+                jobs_without_address += 1;
+                continue;
+            };
             col_channel.push(channel.clone());
             col_subscriber.push(subscriber_id.clone());
+            col_recipient.push(address);
             col_scheduled.push(scheduled_at);
             col_idem.push(
                 req.idempotency_key
@@ -878,8 +922,8 @@ pub async fn batch_notification(
     let inserted = sqlx::query(
         r#"
         INSERT INTO jobs (project_id, channel, subscriber_id, recipient, template_id, payload, scheduled_at, priority, max_attempts, idempotency_key, topic)
-        SELECT $1, c, s, s, $2, $3, t, $4, $5, k, $10
-        FROM unnest($6::text[], $7::text[], $8::timestamptz[], $9::text[]) AS rows(c, s, t, k)
+        SELECT $1, c, s, r, $2, $3, t, $4, $5, k, $10
+        FROM unnest($6::text[], $7::text[], $8::timestamptz[], $9::text[], $11::text[]) AS rows(c, s, t, k, r)
         ON CONFLICT (project_id, idempotency_key)
             WHERE idempotency_key IS NOT NULL
               AND status NOT IN ('failed', 'cancelled')
@@ -896,6 +940,7 @@ pub async fn batch_notification(
     .bind(&col_scheduled)
     .bind(&col_idem)
     .bind(topic.as_deref())
+    .bind(&col_recipient)
     .execute(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, { tracing::error!("DB error: {}", e); Json(json!({"error": "Internal server error"})) }))?;
@@ -907,6 +952,7 @@ pub async fn batch_notification(
         "jobs_created": total,
         "jobs_deduplicated": deduplicated,
         "jobs_skipped": jobs_skipped,
+        "jobs_without_address": jobs_without_address,
         "subscribers": subscribers.len(),
         "channels": channels,
         "topic": topic,

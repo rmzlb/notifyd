@@ -14,7 +14,7 @@ import httpx
 from .errors import NotifydError
 
 Json = Dict[str, Any]
-Channel = str  # "email" | "sms" | "whatsapp" | "in_app" | "push"
+Channel = str  # "email" | "sms" | "whatsapp" | "in_app" | "push" | "telegram" | "slack" | "discord"
 Priority = Union[str, int]  # "critical" | "high" | "normal" | "low" | "bulk" or 0-100
 
 DEFAULT_TIMEOUT = 10.0
@@ -50,6 +50,7 @@ def _send_body(
     topic: Optional[str],
     track: Optional[Union[Mapping[str, bool], bool]],
     push: Optional[Mapping[str, Any]],
+    chat: Optional[Mapping[str, str]],
 ) -> Json:
     if channel is None and not channels:
         raise ValueError("send() needs `channel` or `channels`")
@@ -78,6 +79,7 @@ def _send_body(
             "topic": topic,
             "track": track,
             "push": dict(push) if push else None,
+            "chat": dict(chat) if chat else None,
         }
     )
 
@@ -179,8 +181,13 @@ class Notifyd(_Base):
         topic: Optional[str] = None,
         track: Optional[Union[Mapping[str, bool], bool]] = None,
         push: Optional[Mapping[str, Any]] = None,
+        chat: Optional[Mapping[str, str]] = None,
     ) -> Json:
         """Queue one notification on one or several channels.
+
+        Without `to`, each channel takes its address from the subscriber (email, phone, `data.telegram_chat_id`,
+        `data.slack`, `data.discord_webhook`); a channel with no address is listed in `skipped`. `chat` holds
+        `{"text": "exact text", "button": "Open"}` for telegram/slack/discord.
 
         `push` carries APNs/FCM extras: `{"badge": 3, "sound": "default", "thread_id": "orders",
         "collapse_id": "order-42", "mutable_content": True, "background": False, "ttl_secs": 3600, "data": {...}}`.
@@ -194,7 +201,7 @@ class Notifyd(_Base):
             channel=channel, channels=channels, to=to, subscriber_id=subscriber_id, template=template, subject=subject,
             body=body, body_html=body_html, vars=vars, scheduled_at=scheduled_at, idempotency_key=idempotency_key,
             priority=priority, tags=tags, email_headers=email_headers, attachments=attachments, cc=cc, reply_to=reply_to,
-            send_window=send_window, icon=icon, url=url, topic=topic, track=track, push=push,
+            send_window=send_window, icon=icon, url=url, topic=topic, track=track, push=push, chat=chat,
         )
         return self._request("POST", "/v1/send", json=payload)
 
@@ -219,6 +226,7 @@ class Notifyd(_Base):
         topic: Optional[str] = None,
         track: Optional[Union[Mapping[str, bool], bool]] = None,
         push: Optional[Mapping[str, Any]] = None,
+        chat: Optional[Mapping[str, str]] = None,
     ) -> Json:
         """Send the same message to many subscribers in one call (one job per subscriber and channel).
 
@@ -250,6 +258,7 @@ class Notifyd(_Base):
                 "topic": topic,
                 "track": track,
                 "push": dict(push) if push else None,
+                "chat": dict(chat) if chat else None,
             }
         )
         return self._request("POST", "/v1/batch", json=payload)

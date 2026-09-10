@@ -1,9 +1,11 @@
+mod addresses;
 mod api;
 mod cli;
 mod config;
 mod connectors;
 mod db;
 mod deliverability;
+mod digest_notify;
 mod failover;
 mod mcp;
 mod metrics;
@@ -152,6 +154,10 @@ async fn main() -> anyhow::Result<()> {
     let worker_handle = tokio::spawn(async move {
         worker::run(worker_state, worker_shutdown).await;
     });
+
+    // Digest to a chat (DIGEST_NOTIFY), when configured. A bad value is a
+    // start-up error, not a silent no-op.
+    digest_notify::spawn_scheduler(state.clone())?;
 
     // SSE cleanup
     let cleanup_broadcaster = broadcaster.clone();

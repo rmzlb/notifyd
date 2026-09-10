@@ -86,6 +86,9 @@ impl Pacer {
             "sms" => self.config.sms_per_sec,
             "whatsapp" => self.config.whatsapp_per_sec,
             "push" => self.config.push_per_sec,
+            "telegram" => self.config.telegram_per_sec,
+            "slack" => self.config.slack_per_sec,
+            "discord" => self.config.discord_per_sec,
             _ => 0.0, // in_app writes to our own database: never paced
         }
     }
@@ -147,6 +150,9 @@ mod tests {
             sms_per_sec: 10.0,
             whatsapp_per_sec: 10.0,
             push_per_sec: 50.0,
+            telegram_per_sec: 20.0,
+            slack_per_sec: 1.0,
+            discord_per_sec: 0.5,
             rate_limit_pause_secs: 2,
             failover_cooldown_secs: 60,
         })

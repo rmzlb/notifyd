@@ -75,6 +75,12 @@ services:
       VAPID_PRIVATE_KEY_PEM: ${VAPID_PRIVATE_KEY_PEM:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:ops@yourdomain.com}
+      # Chat channels and the digest in your chat (docs/CONNECTORS.md)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      DIGEST_NOTIFY: ${DIGEST_NOTIFY:-}
+      DIGEST_NOTIFY_EVERY: ${DIGEST_NOTIFY_EVERY:-1d}
+      DIGEST_NOTIFY_LEVEL: ${DIGEST_NOTIFY_LEVEL:-warning}
       # APNs (iOS): all four or none. APNS_PRIVATE_KEY = contents of the .p8.
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}

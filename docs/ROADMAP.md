@@ -24,6 +24,8 @@ instances.
 | Segments (`batch` to a filter, `POST /v1/segments/preview`) | `src/segments.rs` |
 | Own open and click tracking for every email provider | `src/tracking.rs`, `/t/o`, `/t/c` |
 | `notifyd` CLI subcommands (digest, jobs, job, retry, cancel, send-test) | `src/cli.rs` |
+| Telegram, Slack and Discord channels; the digest delivered to a chat (`DIGEST_NOTIFY`) | `src/connectors/chat.rs`, `src/digest_notify.rs` |
+| Addresses resolved per channel from the subscriber at enqueue (a batch email now carries the address, not the id) | `src/addresses.rs` |
 
 ## What comes next
 

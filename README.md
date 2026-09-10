@@ -44,7 +44,7 @@ providers, rate limits, retries or time zones again.
 ```
                  ┌───────────────────────────── notifyd ──────────────────────────────┐
 your app ─────▶  │ POST /v1/send ─▶ queue ─▶ priority ─▶ pacing ─▶ retry ─▶ failover  │ ─▶ email · sms · whatsapp
-                 │                                                                    │    push · in-app inbox
+                 │                                                                    │    push · in-app · telegram · slack · discord
 your agent ───▶  │ POST /mcp ─▶ digest · jobs · retry · suppressions · settings       │
                  └───────────────────────── PostgreSQL only ──────────────────────────┘
 ```
@@ -167,7 +167,11 @@ Every tool carries `readOnlyHint` / `destructiveHint` annotations and an
 the read tools, for an agent that reports but must not act. Every MCP call is
 audited.
 
-**3. Everything an agent needs to integrate is in the repo.** `docs/llms.txt`
+**3. The digest comes to you.** `DIGEST_NOTIFY=telegram:<chat id>` (or a
+Slack / Discord webhook) and the findings above land in your chat when
+something needs attention; `notifyd digest --to telegram:…` sends one now.
+
+**4. Everything an agent needs to integrate is in the repo.** `docs/llms.txt`
 is the whole API in plain text for a context window; three **Agent Skills**
 ship in [`skills/`](skills/) (`notifyd-operate`, `notifyd-integrate`,
 `notifyd-deploy`):

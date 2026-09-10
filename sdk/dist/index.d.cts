@@ -1,4 +1,4 @@
-type NotifydChannel = 'email' | 'sms' | 'push' | 'in_app' | (string & {});
+type NotifydChannel = 'email' | 'sms' | 'whatsapp' | 'push' | 'in_app' | 'telegram' | 'slack' | 'discord' | (string & {});
 /**
  * Email attachment. `content` is the file bytes encoded as a base64 string
  * (no data-URL prefix). `contentType` is optional — Resend infers it from
@@ -57,6 +57,11 @@ interface SendNotificationInput {
     };
     /** Push extras (APNs, FCM, Web Push). */
     push?: PushExtras;
+    /** Chat extras (Telegram, Slack, Discord): exact text instead of subject + body, button label. */
+    chat?: {
+        text?: string;
+        button?: string;
+    };
 }
 interface PushExtras {
     badge?: number;
@@ -136,6 +141,10 @@ interface BatchNotificationInput {
         clicks?: boolean;
     };
     push?: PushExtras;
+    chat?: {
+        text?: string;
+        button?: string;
+    };
 }
 interface BatchNotificationResponse {
     success: boolean;
@@ -143,6 +152,8 @@ interface BatchNotificationResponse {
     jobsDeduplicated: number;
     /** Subscriber × channel pairs skipped because of an opt-out. */
     jobsSkipped: number;
+    /** Pairs skipped because the id is unknown or the subscriber has no address for the channel. */
+    jobsWithoutAddress: number;
     subscribers: number;
     channels: string[];
     topic: string | null;

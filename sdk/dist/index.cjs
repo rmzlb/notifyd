@@ -285,7 +285,8 @@ function createNotifydClient(config) {
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
           track: input.track,
-          push: pushToWire(input.push)
+          push: pushToWire(input.push),
+          chat: input.chat
         }
       });
       return {
@@ -319,7 +320,8 @@ function createNotifydClient(config) {
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
           track: input.track,
-          push: pushToWire(input.push)
+          push: pushToWire(input.push),
+          chat: input.chat
         }
       });
       return {
@@ -327,6 +329,7 @@ function createNotifydClient(config) {
         jobsCreated: response.jobs_created,
         jobsDeduplicated: response.jobs_deduplicated ?? 0,
         jobsSkipped: response.jobs_skipped ?? 0,
+        jobsWithoutAddress: response.jobs_without_address ?? 0,
         subscribers: response.subscribers,
         channels: response.channels,
         topic: response.topic ?? null

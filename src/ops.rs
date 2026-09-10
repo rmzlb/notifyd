@@ -589,6 +589,42 @@ fn window_label(window: Duration) -> String {
 
 /// Markdown rendering of the digest: what a human wants to read, what an
 /// agent can paste into a report.
+impl Digest {
+    /// An empty digest with a fixed timestamp, for unit tests of renderers.
+    #[cfg(test)]
+    pub fn empty_for_tests(window: &str) -> Self {
+        Self {
+            generated_at: DateTime::parse_from_rfc3339("2026-09-10T03:07:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            window: window.to_string(),
+            instance: InstanceInfo {
+                version: "test",
+                commit: "test",
+                built_at_epoch: 0,
+                uptime_seconds: 0,
+                email_provider: None,
+                sms_provider: None,
+                whatsapp_provider: None,
+                paused_lanes: Vec::new(),
+                email_fallback_provider: None,
+                email_primary_resting_seconds: None,
+                email_failovers_since_boot: 0,
+                public_url: None,
+            },
+            findings: Vec::new(),
+            queue: QueueState::default(),
+            outcomes: Vec::new(),
+            failures: Vec::new(),
+            retries_waiting: Vec::new(),
+            latency: Vec::new(),
+            deliverability: Deliverability::default(),
+            projects: Vec::new(),
+            workflows_active: 0,
+        }
+    }
+}
+
 pub fn render_markdown(d: &Digest) -> String {
     let mut out = String::new();
     out.push_str(&format!(

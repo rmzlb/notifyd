@@ -70,6 +70,46 @@ pub async fn list_jobs(
     Ok(Json(json!({ "jobs": jobs, "count": jobs.len() })))
 }
 
+#[derive(Deserialize)]
+pub struct DigestNotifyBody {
+    /// `telegram:<chat id>`, `slack:<webhook or channel>`, `discord:<webhook>`;
+    /// defaults to `DIGEST_NOTIFY`.
+    pub to: Option<String>,
+    pub window: Option<String>,
+}
+
+/// POST /v1/admin/digest/notify — send the digest to a chat now.
+pub async fn digest_notify(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DigestNotifyBody>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&headers)?;
+    let target = req
+        .to
+        .clone()
+        .or_else(|| std::env::var("DIGEST_NOTIFY").ok())
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": "give 'to' (telegram:<chat id>, slack:<webhook or channel>, discord:<webhook>) or set DIGEST_NOTIFY" })),
+            )
+        })?;
+    let window = ops::parse_window(req.window.as_deref()).map_err(bad_request)?;
+    let delivery = crate::digest_notify::send(&state, &target, window)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": e.to_string() })),
+            )
+        })?;
+    Ok(Json(
+        json!({ "success": true, "provider": delivery.provider, "provider_message_id": delivery.provider_message_id }),
+    ))
+}
+
 /// GET /v1/admin/jobs/:id — the operator's view of one job (any project).
 pub async fn admin_get_job(
     State(state): State<Arc<AppState>>,

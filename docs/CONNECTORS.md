@@ -98,6 +98,34 @@ re-signed at once on a 403); anything else (`BadTopic`, `PayloadTooLarge`…)
 fails the job and keeps the token, since it is a configuration or payload
 problem on our side.
 
+## Telegram, Slack, Discord
+
+Three chat channels with the same lifecycle as the others (preferences,
+topics, priorities, pacing, retries).
+
+| Channel | Recipient (`to`, or on the subscriber) | Server variable |
+|---|---|---|
+| `telegram` | chat id · `data.telegram_chat_id` | `TELEGRAM_BOT_TOKEN`; `TELEGRAM_API_BASE` for a self-hosted Bot API server |
+| `slack` | incoming webhook URL, or a channel id · `data.slack` | `SLACK_BOT_TOKEN` (channel ids only) |
+| `discord` | webhook URL · `data.discord_webhook` | none |
+
+The message is `subject`, a blank line, `body`; `url` becomes an inline
+"Open" button on Telegram, a link on Slack, the embed link on Discord.
+`"chat": {"text": "…"}` in the request replaces the built text. A bot the
+user blocked, a chat that no longer exists, an archived channel or a deleted
+webhook fail the job for good and log why; a 429 pauses the lane for the
+time the service asks. Pacing: `TELEGRAM_RATE_PER_SEC` (20),
+`SLACK_RATE_PER_SEC` (1), `DISCORD_RATE_PER_SEC` (0.5).
+
+### The digest in your chat
+
+`DIGEST_NOTIFY=telegram:<chat id>` (or `slack:<webhook or channel id>`,
+`discord:<webhook url>`) sends the operator digest to that destination every
+`DIGEST_NOTIFY_EVERY` (default `1d`) when a finding reaches
+`DIGEST_NOTIFY_LEVEL` (default `warning`; `always` sends every time). The
+same message on demand: `notifyd digest --to telegram:<chat id>` or
+`POST /v1/admin/digest/notify`.
+
 ## In-app inbox
 
 No configuration: messages are stored in Postgres and pushed to connected

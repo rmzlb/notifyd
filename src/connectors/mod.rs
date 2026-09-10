@@ -1,4 +1,5 @@
 pub mod apns;
+pub mod chat;
 pub mod cloudflare;
 pub mod email;
 pub mod in_app;
@@ -12,13 +13,16 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     Email,
     Sms,
     Whatsapp,
     InApp,
     Push,
+    Telegram,
+    Slack,
+    Discord,
 }
 
 impl Channel {
@@ -29,6 +33,9 @@ impl Channel {
             "whatsapp" => Some(Self::Whatsapp),
             "in_app" | "inapp" => Some(Self::InApp),
             "push" | "fcm" => Some(Self::Push),
+            "telegram" => Some(Self::Telegram),
+            "slack" => Some(Self::Slack),
+            "discord" => Some(Self::Discord),
             _ => None,
         }
     }
@@ -39,7 +46,16 @@ impl Channel {
             Self::Whatsapp => "whatsapp",
             Self::InApp => "in_app",
             Self::Push => "push",
+            Self::Telegram => "telegram",
+            Self::Slack => "slack",
+            Self::Discord => "discord",
         }
+    }
+
+    /// Channels whose recipient is an address to look up on the subscriber
+    /// (`email`, `phone`, `data.*`) when the request names no `to`.
+    pub fn needs_address(&self) -> bool {
+        !matches!(self, Self::InApp | Self::Push)
     }
 }
 

@@ -28,7 +28,9 @@ Body:
 {
   "channels": ["email", "in_app"],   // or "channel": "email" for single
   "subscriber_id": "user-uuid",      // optional, links to subscriber record
-  "to": "user@example.com",          // optional override (email or phone)
+  "to": "user@example.com",          // optional; without it each channel takes its address from the subscriber:
+                                     // email, phone (sms/whatsapp), data.telegram_chat_id, data.slack (webhook or channel id),
+                                     // data.discord_webhook; in_app/push use the subscriber id. No address = channel skipped.
   "subject": "Email subject",        // email only
   "body": "Hello {{first_name}}!",   // supports {{var}} substitution
   "template": "template_id",         // optional, use stored template instead
@@ -45,7 +47,7 @@ Body:
   "track": false                     // or {"opens": false, "clicks": true}; see TRACKING. Default: project setting (on).
 }
 
-Channels: "email", "sms", "whatsapp", "in_app", "push"
+Channels: "email", "sms", "whatsapp", "in_app", "push", "telegram", "slack", "discord"
 Response: {"success": true, "job_ids": ["uuid", ...], "scheduled_at": "...", "channels": ["email", "in_app"], "topic": "tips"|null,
            "skipped": [{"channel": "email", "reason": "subscriber opted out of topic 'tips' on email"}]}
 (one job per channel actually queued, same order; channels the subscriber opted out of are listed in `skipped`, no job is created)
@@ -59,7 +61,8 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
 POST /v1/batch takes "subscribers": [ids] OR "segment": {filter} (see SEGMENTS), accepts idempotency_key (declined per
-subscriber and channel), `topic`, `track`; reports jobs_created, jobs_deduplicated, jobs_skipped (opt-outs), subscribers.
+subscriber and channel), `topic`, `track`, `push`; each job carries the subscriber's address for its channel; reports
+jobs_created, jobs_deduplicated, jobs_skipped (opt-outs), jobs_without_address (unknown id or no address), subscribers.
 Send windows: project settings.send_window (PATCH /v1/admin/projects/:id {send_window}) or per request; applies to marketing email
 (priority>=80 / campaign tag) unless applies_to=all; recipient timezone from subscribers.timezone (POST /v1/subscribers {timezone}).
 Bulk email (priority>=80 or tag category=campaign|marketing|newsletter) gets List-Unsubscribe + one-click headers pointing at PUBLIC_URL/u/<token>;
@@ -192,6 +195,19 @@ Response rows: {"channel", "workflow_id", "topic", "enabled"} — `topic` and `w
 Everything is allowed by default. Decision order, most specific first:
 (channel, topic) > ("*", topic) > (channel, workflow or template id) > (channel, "*") > ("*", "*").
 Enforced at enqueue (no job created, listed in `skipped`) and again by the worker.
+
+## CHAT CHANNELS (telegram, slack, discord)
+
+Same request as any channel. Recipient: Telegram chat id · Slack incoming webhook URL or channel id (C…/D…) · Discord webhook URL.
+Server config: TELEGRAM_BOT_TOKEN (Telegram), SLACK_BOT_TOKEN (Slack channel ids only; webhooks need nothing), Discord: nothing.
+Text = subject + blank line + body; "url" becomes an inline "Open" button (Telegram), a link (Slack) or the embed link (Discord).
+"chat": {"text": "…"} replaces the built text; "chat": {"button": "See order"} names the Telegram button.
+Dead destinations (bot blocked, chat not found, channel archived, unknown webhook) fail the job for good; 429 pauses the lane.
+Pacing: TELEGRAM_RATE_PER_SEC (20), SLACK_RATE_PER_SEC (1), DISCORD_RATE_PER_SEC (0.5). TELEGRAM_API_BASE for a self-hosted Bot API.
+
+Digest to a chat: DIGEST_NOTIFY=telegram:<chat id> | slack:<webhook or channel> | discord:<webhook>, DIGEST_NOTIFY_EVERY (1d),
+DIGEST_NOTIFY_LEVEL (warning; critical|info|always). POST /v1/admin/digest/notify {"to"?, "window"?} and
+`notifyd digest --to telegram:<chat id>` send one now.
 
 ## SEGMENTS
 
