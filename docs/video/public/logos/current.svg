@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-label="notifyd">
-  <rect width="80" height="80" rx="18" fill="#0f1115"/>
-  <!-- the "d" of notifyd: bowl + ascender -->
-  <circle cx="36" cy="48" r="13" fill="none" stroke="#f5c518" stroke-width="7"/>
-  <rect x="45.5" y="18" width="7" height="43" rx="3.5" fill="#f5c518"/>
-  <!-- outbound signal -->
-  <circle cx="62" cy="21" r="4.5" fill="#e8e6e1"/>
-</svg>

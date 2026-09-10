@@ -37,7 +37,13 @@ link in the tweet body, GitHub link in the first reply, one short per post.
 
 ## Films for X (30–46 s, 1920×1080)
 
-Four longer cuts in `src/Films.tsx`. `FilmThreeWays` (48 s) is the main one:
+`src/Clear.tsx` is the launch cut (36 s, black on white, yellow highlighter):
+who it is for, the four pillars (self-hosted, agent-native, open source,
+Rust), what changes in six struck-through lines, the agent, the setup command.
+`npm run render:clear` → `out/film-clear.mp4`.
+
+Earlier dark cuts live in `src/Films.tsx`. `FilmThreeWays` (48 s) names the
+alternatives:
 who it is for, hosted vs self-hosted Novu vs notifyd (Novu's composition is
 taken from their docker-compose documentation), what changes with each number
 translated into a benefit, the agent, who it is for again. `FilmOne` (three
@@ -49,7 +55,6 @@ npm run render:films                       # out/film-one.mp4, film-talk.mp4, fi
 REMOTION_LOGO=n-dot npm run render:films   # same films with another mark from public/logos/
 ```
 
-`public/logos/` holds the logo candidates (`nd-two`, `nd-tile`, `nd-mono`, plus
-badge, prompt, n-dot, mail-badge; each as dark tile, light tile and bare
-mark); `REMOTION_LOGO` picks one (default `nd-two`). The chosen mark becomes
-`docs/assets/notifyd-logo.svg`.
+`public/logos/` holds the chosen mark (`nd-two`, with and without the small
+"rs"); it is the same drawing as `docs/assets/notifyd-logo.svg` and
+`ui.tsx::Logo`. Change all three together.

@@ -25,9 +25,9 @@ export const FadeOut: React.FC<{ at: number; children: React.ReactNode }> = ({ a
 export const Logo: React.FC<{ size?: number }> = ({ size = 64 }) => (
   <svg viewBox="0 0 80 80" width={size} height={size}>
     <rect width="80" height="80" rx="18" fill="#0f1115" stroke={C.line} strokeWidth="2" />
-    <circle cx="36" cy="48" r="13" fill="none" stroke={C.yellow} strokeWidth="7" />
-    <rect x="45.5" y="18" width="7" height="43" rx="3.5" fill={C.yellow} />
-    <circle cx="62" cy="21" r="4.5" fill={C.text} />
+    <path d="M15 60 V41 C15 30 33 30 33 41 V60" fill="none" stroke={C.text} strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" />
+    <circle cx="54.5" cy="51" r="9" fill="none" stroke={C.yellow} strokeWidth="9" />
+    <path d="M63.5 60 V19" fill="none" stroke={C.yellow} strokeWidth="9" strokeLinecap="round" />
   </svg>
 );
 
