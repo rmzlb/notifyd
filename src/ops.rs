@@ -1253,7 +1253,21 @@ pub struct ProjectPatch {
     pub rate_limit_per_min: Option<i32>,
     /// Daily send window for bulk email, `{start, end, tz?, days?,
     /// applies_to?}`; `null` removes it. Stored in `settings.send_window`.
+    #[serde(default, deserialize_with = "present_even_if_null")]
     pub send_window: Option<Value>,
+    /// Open/click tracking: `false`, `true`, or `{"opens": bool, "clicks": bool}`;
+    /// `null` restores the default (on). Stored in `settings.tracking`.
+    #[serde(default, deserialize_with = "present_even_if_null")]
+    pub tracking: Option<Value>,
+}
+
+/// `Option<Value>` that tells an absent key (`None`) from an explicit
+/// `null` (`Some(Value::Null)`), so that `null` can mean "remove".
+fn present_even_if_null<'de, D>(d: D) -> Result<Option<Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Value::deserialize(d).map(Some)
 }
 
 /// Update a project's settings without touching its keys.
@@ -1289,6 +1303,27 @@ pub async fn update_project(
             (true, v.clone())
         }
     };
+    // tracking: bool or {opens, clicks}; null restores the default.
+    let (set_tracking, tracking_value) = match &patch.tracking {
+        None => (false, Value::Null),
+        Some(Value::Null) => (true, Value::Null),
+        Some(v @ Value::Bool(_)) => (true, v.clone()),
+        Some(v)
+            if v.is_object()
+                && v.as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|k| k == "opens" || k == "clicks")
+                && v.as_object().unwrap().values().all(Value::is_boolean) =>
+        {
+            (true, v.clone())
+        }
+        Some(_) => {
+            return Err(anyhow!(
+                "tracking must be true, false or {{\"opens\": bool, \"clicks\": bool}}"
+            ))
+        }
+    };
     let row = sqlx::query(
         r#"
         UPDATE projects
@@ -1297,11 +1332,21 @@ pub async fn update_project(
             from_email = CASE WHEN $7 THEN NULL ELSE COALESCE($4, from_email) END,
             from_name = COALESCE($5, from_name),
             rate_limit_per_min = COALESCE($6, rate_limit_per_min),
-            settings = CASE
-                WHEN NOT $8 THEN settings
-                WHEN $9::jsonb IS NULL OR $9::jsonb = 'null'::jsonb THEN COALESCE(settings, '{}'::jsonb) - 'send_window'
-                ELSE COALESCE(settings, '{}'::jsonb) || jsonb_build_object('send_window', $9::jsonb)
-            END,
+            settings = (
+                (
+                    CASE
+                        WHEN NOT $8 THEN COALESCE(settings, '{}'::jsonb)
+                        WHEN $9::jsonb IS NULL OR $9::jsonb = 'null'::jsonb THEN COALESCE(settings, '{}'::jsonb) - 'send_window'
+                        ELSE COALESCE(settings, '{}'::jsonb) || jsonb_build_object('send_window', $9::jsonb)
+                    END
+                ) || (
+                    CASE
+                        WHEN NOT $10 THEN '{}'::jsonb
+                        WHEN $11::jsonb IS NULL OR $11::jsonb = 'null'::jsonb THEN '{}'::jsonb
+                        ELSE jsonb_build_object('tracking', $11::jsonb)
+                    END
+                )
+            ) - (CASE WHEN $10 AND ($11::jsonb IS NULL OR $11::jsonb = 'null'::jsonb) THEN 'tracking' ELSE '__none__' END),
             updated_at = now()
         WHERE id = $1
         RETURNING id, name, channels, from_email, from_name, rate_limit_per_min, settings
@@ -1316,6 +1361,8 @@ pub async fn update_project(
     .bind(clear_from_email)
     .bind(set_window)
     .bind(window_value)
+    .bind(set_tracking)
+    .bind(tracking_value)
     .fetch_optional(&state.pool)
     .await?;
     match row {
@@ -1327,6 +1374,7 @@ pub async fn update_project(
             "from_name": r.get::<Option<String>, _>("from_name"),
             "rate_limit_per_min": r.get::<i32, _>("rate_limit_per_min"),
             "send_window": r.get::<Option<Value>, _>("settings").and_then(|s| s.get("send_window").cloned()),
+            "tracking": r.get::<Option<Value>, _>("settings").and_then(|s| s.get("tracking").cloned()),
         })),
         None => Err(anyhow!("project {project_id} not found")),
     }

@@ -232,7 +232,7 @@ Hits become provider_events rows (provider "notifyd", email.opened / email.click
 jobs.clicked_at (first time); GET /v1/jobs/:id returns both, /v1/admin/metrics/templates counts them with the
 provider webhooks. Unsubscribe links (/u/…), mailto: and template placeholders are never wrapped.
 A click event records the link's host only, never the full URL (sign-in and reset links carry tokens).
-Off switches: PATCH /v1/admin/projects/:id {"settings": {"tracking": false}} or {"tracking": {"opens": false}};
+Off switches: PATCH /v1/admin/projects/:id {"tracking": false} or {"tracking": {"opens": false, "clicks": true}} (also the MCP tool update_project);
 per request "track": false (a request can only narrow what the project allows). Opens are approximate (image
 proxies and scanners load pixels); clicks are reliable.
 

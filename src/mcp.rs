@@ -162,10 +162,14 @@ pub fn tools() -> Value {
                 "properties": {
                     "id": {"type": "string"},
                     "name": {"type": "string"},
-                    "channels": {"type": "array", "items": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push"]}},
+                    "channels": {"type": "array", "items": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push", "telegram", "slack", "discord"]}},
                     "from_email": {"type": "string"},
                     "from_name": {"type": "string"},
                     "rate_limit_per_min": {"type": "integer", "minimum": 1},
+                    "tracking": {
+                        "description": "Open/click tracking on this project's emails: false, true, or {\"opens\": bool, \"clicks\": bool}. null restores the default (on when PUBLIC_URL is set).",
+                        "type": ["boolean", "object", "null"]
+                    },
                     "send_window": {
                         "description": "Bulk email waits for this daily window in the recipient's timezone (subscribers.timezone) or tz. Example {\"start\":\"09:00\",\"end\":\"20:00\",\"tz\":\"Europe/Paris\",\"days\":[1,2,3,4,5]}. null removes it.",
                         "type": ["object", "null"],
