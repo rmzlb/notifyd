@@ -8,7 +8,8 @@
 //! Each hit is a `provider_events` row (`provider = 'notifyd'`), the same
 //! table Resend webhooks feed, so the digest and per-template funnel count
 //! them without knowing where they came from; the job gets `opened_at` /
-//! `clicked_at` (first time).
+//! `clicked_at` (first time). A click event stores the link's host only,
+//! never the full URL (sign-in and reset links carry tokens).
 //!
 //! Off switches: project `settings.tracking = false` (or
 //! `{"opens": false, "clicks": false}`), request `"track": false`.
@@ -316,11 +317,19 @@ pub async fn click(State(state): State<Arc<AppState>>, Path(token): Path<String>
         return (StatusCode::NOT_FOUND, "unknown link").into_response();
     }
     if let Ok(job) = Uuid::parse_str(job) {
+        // Only the host is kept: a clicked URL may carry a one-time sign-in
+        // or reset token, which has no business in an events table.
+        let host = url
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .unwrap_or("")
+            .to_string();
         record(
             &state,
             job,
             "email.clicked",
-            serde_json::json!({ "url": url }),
+            serde_json::json!({ "host": host }),
         )
         .await;
     }
