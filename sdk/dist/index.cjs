@@ -215,6 +215,20 @@ function segmentToWire(s) {
     where: s.where
   };
 }
+function pushToWire(p) {
+  if (!p) return void 0;
+  return {
+    badge: p.badge,
+    sound: p.sound,
+    thread_id: p.threadId,
+    category: p.category,
+    collapse_id: p.collapseId,
+    mutable_content: p.mutableContent,
+    background: p.background,
+    ttl_secs: p.ttlSecs,
+    data: p.data
+  };
+}
 function sendWindowToWire(w) {
   if (w === void 0) return void 0;
   if (w === false) return false;
@@ -270,7 +284,8 @@ function createNotifydClient(config) {
           email_headers: input.emailHeaders,
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
-          track: input.track
+          track: input.track,
+          push: pushToWire(input.push)
         }
       });
       return {
@@ -303,7 +318,8 @@ function createNotifydClient(config) {
           idempotency_key: input.idempotencyKey,
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
-          track: input.track
+          track: input.track,
+          push: pushToWire(input.push)
         }
       });
       return {

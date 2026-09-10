@@ -55,6 +55,21 @@ interface SendNotificationInput {
         opens?: boolean;
         clicks?: boolean;
     };
+    /** Push extras (APNs, FCM, Web Push). */
+    push?: PushExtras;
+}
+interface PushExtras {
+    badge?: number;
+    /** `default`, `none`, or a sound file name. */
+    sound?: string;
+    threadId?: string;
+    category?: string;
+    collapseId?: string;
+    mutableContent?: boolean;
+    /** Silent push (`content-available`), low priority. */
+    background?: boolean;
+    ttlSecs?: number;
+    data?: Record<string, unknown>;
 }
 type NotifydPriority = 'critical' | 'high' | 'normal' | 'low' | 'bulk' | number;
 interface SendWindow {
@@ -120,6 +135,7 @@ interface BatchNotificationInput {
         opens?: boolean;
         clicks?: boolean;
     };
+    push?: PushExtras;
 }
 interface BatchNotificationResponse {
     success: boolean;
@@ -484,4 +500,4 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     openInboxStream(subscriberId: string, options?: OpenInboxStreamOptions): Promise<OpenInboxStreamResult>;
 };
 
-export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushToken, type PushTokensResponse, type Segment, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };
+export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushExtras, type PushToken, type PushTokensResponse, type Segment, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };

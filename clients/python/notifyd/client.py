@@ -49,6 +49,7 @@ def _send_body(
     url: Optional[str],
     topic: Optional[str],
     track: Optional[Union[Mapping[str, bool], bool]],
+    push: Optional[Mapping[str, Any]],
 ) -> Json:
     if channel is None and not channels:
         raise ValueError("send() needs `channel` or `channels`")
@@ -76,6 +77,7 @@ def _send_body(
             "url": url,
             "topic": topic,
             "track": track,
+            "push": dict(push) if push else None,
         }
     )
 
@@ -176,8 +178,12 @@ class Notifyd(_Base):
         url: Optional[str] = None,
         topic: Optional[str] = None,
         track: Optional[Union[Mapping[str, bool], bool]] = None,
+        push: Optional[Mapping[str, Any]] = None,
     ) -> Json:
         """Queue one notification on one or several channels.
+
+        `push` carries APNs/FCM extras: `{"badge": 3, "sound": "default", "thread_id": "orders",
+        "collapse_id": "order-42", "mutable_content": True, "background": False, "ttl_secs": 3600, "data": {...}}`.
 
         `topic` names the stream ("tips", "billing"); it defaults to the template's topic and subscribers can
         opt out of it per channel. Returns `{"success": true, "job_ids": [...], "scheduled_at": ..., "channels": [...],
@@ -188,7 +194,7 @@ class Notifyd(_Base):
             channel=channel, channels=channels, to=to, subscriber_id=subscriber_id, template=template, subject=subject,
             body=body, body_html=body_html, vars=vars, scheduled_at=scheduled_at, idempotency_key=idempotency_key,
             priority=priority, tags=tags, email_headers=email_headers, attachments=attachments, cc=cc, reply_to=reply_to,
-            send_window=send_window, icon=icon, url=url, topic=topic, track=track,
+            send_window=send_window, icon=icon, url=url, topic=topic, track=track, push=push,
         )
         return self._request("POST", "/v1/send", json=payload)
 
@@ -212,6 +218,7 @@ class Notifyd(_Base):
         url: Optional[str] = None,
         topic: Optional[str] = None,
         track: Optional[Union[Mapping[str, bool], bool]] = None,
+        push: Optional[Mapping[str, Any]] = None,
     ) -> Json:
         """Send the same message to many subscribers in one call (one job per subscriber and channel).
 
@@ -242,6 +249,7 @@ class Notifyd(_Base):
                 "url": url,
                 "topic": topic,
                 "track": track,
+                "push": dict(push) if push else None,
             }
         )
         return self._request("POST", "/v1/batch", json=payload)

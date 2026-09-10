@@ -52,6 +52,22 @@ export interface SendNotificationInput {
   topic?: string;
   /** Open/click tracking for this email: `false`, or per flag. Can only narrow the project setting. */
   track?: false | { opens?: boolean; clicks?: boolean };
+  /** Push extras (APNs, FCM, Web Push). */
+  push?: PushExtras;
+}
+
+export interface PushExtras {
+  badge?: number;
+  /** `default`, `none`, or a sound file name. */
+  sound?: string;
+  threadId?: string;
+  category?: string;
+  collapseId?: string;
+  mutableContent?: boolean;
+  /** Silent push (`content-available`), low priority. */
+  background?: boolean;
+  ttlSecs?: number;
+  data?: Record<string, unknown>;
 }
 
 export type NotifydPriority = 'critical' | 'high' | 'normal' | 'low' | 'bulk' | number;
@@ -116,6 +132,7 @@ export interface BatchNotificationInput {
   sendWindow?: SendWindow | false;
   topic?: string;
   track?: false | { opens?: boolean; clicks?: boolean };
+  push?: PushExtras;
 }
 
 export interface BatchNotificationResponse {
@@ -676,6 +693,21 @@ function segmentToWire(s: Segment | undefined): unknown {
   };
 }
 
+function pushToWire(p: PushExtras | undefined): unknown {
+  if (!p) return undefined;
+  return {
+    badge: p.badge,
+    sound: p.sound,
+    thread_id: p.threadId,
+    category: p.category,
+    collapse_id: p.collapseId,
+    mutable_content: p.mutableContent,
+    background: p.background,
+    ttl_secs: p.ttlSecs,
+    data: p.data,
+  };
+}
+
 function sendWindowToWire(w: SendWindow | false | undefined): unknown {
   if (w === undefined) return undefined;
   if (w === false) return false;
@@ -757,6 +789,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
           track: input.track,
+          push: pushToWire(input.push),
         },
       });
 
@@ -800,6 +833,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           send_window: sendWindowToWire(input.sendWindow),
           topic: input.topic,
           track: input.track,
+          push: pushToWire(input.push),
         },
       });
 

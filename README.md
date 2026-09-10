@@ -59,7 +59,7 @@ your agent ───▶  │ POST /mcp ─▶ digest · jobs · retry · suppres
   Retries, idempotency and quiet hours in each recipient's time zone are
   built in.
 - **Your providers, your data.** Resend, Cloudflare Email, any SMTP,
-  AgentMail, Telnyx, Twilio, Web Push, FCM. Self-hosted, MIT.
+  AgentMail, Telnyx, Twilio, APNs, Web Push, FCM. Self-hosted, MIT.
 - **Operated by an API or an AI agent.** No admin UI: a digest endpoint says
   what needs attention and what to do, and the same operations are MCP
   tools, so the person on call can be an agent.
@@ -171,7 +171,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 - **Email** — Resend, Cloudflare Email Service, AgentMail, any SMTP (`lettre`), attachments, per-project sender identity
 - **SMS** — Telnyx or Twilio, swap with one variable
 - **WhatsApp** — Telnyx
-- **Push** — Web Push (VAPID) or FCM
+- **Push** — APNs natively (`.p8` token auth, HTTP/2, badge, sound, thread id, silent pushes, dead tokens dropped), Web Push (VAPID), FCM
 - **In-app inbox** — REST + realtime SSE (`EventSource`), read / archive / star, unread badge, multi-replica through Postgres `NOTIFY`
 
 **Delivery engine**
@@ -441,10 +441,9 @@ idle, 23 MB while draining 100 000 jobs. → [docs/ARCHITECTURE.md](docs/ARCHITE
 
 ## Status
 
-notifyd is a 0.x running in production for three companies. What it does not
-do yet: native APNs (Web Push and FCM today), topic-level preferences,
-segments, own open tracking; no dashboard, A/B testing or inbound email by
-design. Order and sizes in [docs/ROADMAP.md](docs/ROADMAP.md). Breaking
+notifyd is a 0.x running in production for three companies. Not done yet: a
+`notifyd` CLI, Swift and Kotlin packages; no dashboard, A/B testing or
+inbound email by design. Order and sizes in [docs/ROADMAP.md](docs/ROADMAP.md). Breaking
 changes are announced in release notes; the queue schema is migrated
 automatically.
 
