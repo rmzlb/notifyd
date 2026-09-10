@@ -14,3 +14,23 @@ npm run gif                           # docs/assets/notifyd-explainer.gif (880 p
 ```
 
 The MP4 is attached to the release it was made for (`gh release upload vX.Y.Z out/notifyd-explainer.mp4`) and the README links to that asset; the GIF is embedded in the README. Keep both under 10 MB.
+
+## Shorts for X (15 s, 1920×1080)
+
+Four compositions in `src/Shorts.tsx`, one idea each, terminal ambience but
+readable by non-technical viewers. Same invented data policy as the explainer.
+
+| Composition | Idea | Output |
+|---|---|---|
+| `ShortOneCall` | One call, four channels delivered | `out/short-one-call.mp4` |
+| `ShortNothingLost` | A campaign hits a provider 429; nothing is lost | `out/short-nothing-lost.mp4` |
+| `ShortAgentOnCall` | An agent handles the on-call over MCP | `out/short-agent-on-call.mp4` |
+| `ShortLess` | Six services replaced by one binary | `out/short-less.mp4` |
+
+```bash
+npm run render:shorts                 # all four
+npx remotion render src/index.ts ShortNothingLost out/short-nothing-lost.mp4 --codec h264 --crf 20
+```
+
+Post rules that worked for comparable launches: upload the MP4 natively, no
+link in the tweet body, GitHub link in the first reply, one short per post.
