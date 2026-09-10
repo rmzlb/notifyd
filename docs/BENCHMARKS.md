@@ -20,6 +20,34 @@ Postgres**, not Resend. On a real provider the ceiling is the provider's
 quota (Resend: 100 recipients per batch call, 2 requests/s by default) and
 the pacer will hold the line there; see `docs/CONNECTORS.md`.
 
+## Compared with Novu, measured on the same machine
+
+Measured on 2026-09-10 on the same 8 vCPU / 30 GB Linux host, with the same
+tool (`docker stats --no-stream`, i.e. cgroup memory minus page cache), both
+stacks idle: started, healthy, no traffic. Novu is the community
+`docker/community/docker-compose.yml` of `novuhq/novu` at tag 3.19.0 with the
+secrets its `setup.sh` generates; host port mappings were removed so it could
+run isolated (no effect on memory). Two samples at 6 and 9 minutes, identical
+to the megabyte.
+
+| | Novu 3.19.0 (community compose) | notifyd 0.2.2 |
+|---|---:|---:|
+| Containers | 6 (api, worker, ws, dashboard, MongoDB, Redis) | 1 (+ the Postgres you already run) |
+| Images to pull | 1 393 MB (api 346, worker 325, ws 318, dashboard 91, mongo 276, redis 37) | 44 MB (+ 109 MB `postgres:16-alpine` if you need one) |
+| Memory at idle, `docker stats` | 1 116 MB (api 425, worker 277, ws 269, mongodb 118, dashboard 17, redis 8) | 2 MB for notifyd, 34 MB for its Postgres |
+| Memory at idle, `ps` RSS | not sampled | 13 MB |
+
+Two remarks so this stays fair. Novu ships a full web dashboard and an
+in-app widget server in those containers; notifyd ships neither by design
+(an API, a digest, MCP tools). And this is an idle footprint, not a
+throughput comparison: we did not load-test Novu. The numbers are here
+because a self-hoster's first question is "what will this cost me to run",
+and the answer differs by two orders of magnitude.
+
+Reproduce: `git clone --depth 1 https://github.com/novuhq/novu`, follow
+`docker/community/setup.sh`, wait for `healthy`, run `docker stats
+--no-stream` and `docker image inspect --format '{{.Size}}'` on the six images.
+
 ## Footprint
 
 | Metric | Value |

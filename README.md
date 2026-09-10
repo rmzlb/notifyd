@@ -308,10 +308,11 @@ Inbox endpoints also accept a subscriber JWT.
 
 | | **Novu** | **Knock / Courier / SuprSend** | **notifyd** |
 |---|---|---|---|
-| **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only, one 44 MB image |
+| **Infra** | MongoDB + Redis + 4 app containers | Hosted SaaS | Postgres only, one 44 MB image |
 | **Setup** | 30+ min | Signup + dashboard | `docker compose up` (2 min) |
 | **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
-| **Memory** | not measured by us | N/A | 13 MB idle, 23 MB draining 100k jobs ([method](docs/BENCHMARKS.md)) |
+| **Memory at idle** | 1.1 GB across 6 containers ([measured](docs/BENCHMARKS.md#compared-with-novu-measured-on-the-same-machine)) | N/A | 13 MB, 23 MB while draining 100k jobs ([method](docs/BENCHMARKS.md)) |
+| **Images to pull** | 1.4 GB | N/A | 44 MB |
 | **Throughput** | — | quota-bound | 44k jobs/s enqueued, 3.5k jobs/s drained ([benchmarks](docs/BENCHMARKS.md)) |
 | **Provider 429** | job fails | managed | channel paused for `Retry-After`, attempt not consumed, failover provider tried first |
 | **Priorities / send windows** | ❌ | ✅ | ✅ critical → bulk lanes, per-subscriber timezone windows |
@@ -320,8 +321,9 @@ Inbox endpoints also accept a subscriber JWT.
 | **Self-hosted** | ✅ (heavy) | ❌ | ✅ one container per company |
 | **Cost** | Free tier / paid | per notification | Free forever, MIT |
 
-We only publish numbers we measured on notifyd itself; the rest of the table
-describes shape, not performance. Method, hardware and bias disclaimer in
+Every number in this table was measured by us; the Novu figures come from
+its own community docker-compose, idle, on the same machine and with the same
+tool as ours. Method, hardware and bias disclaimer in
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ---
