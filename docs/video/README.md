@@ -37,7 +37,15 @@ link in the tweet body, GitHub link in the first reply, one short per post.
 
 ## Films for X (30–46 s, 1920×1080)
 
-`src/Clear.tsx` is the launch cut (36 s, black on white, yellow highlighter):
+`src/Sober.tsx` holds the two launch cuts in the "product on screen" grammar:
+a serif title card, a real terminal whose outputs were captured on a live
+instance (fake Resend answering 429 once, fake Telegram), one serif caption per
+shot, an end card with the command. `SoberTerminal` (49 s, dark) and
+`SoberDiagram` (38 s, light, a diagram that builds itself). Fonts in
+`public/fonts` (Source Serif 4, JetBrains Mono, Inter, all OFL).
+`npm run render:sober`.
+
+`src/Clear.tsx` is the earlier launch cut (36 s, black on white, yellow highlighter):
 who it is for, the four pillars (self-hosted, agent-native, open source,
 Rust), what changes in six struck-through lines, the agent, the setup command.
 `npm run render:clear` → `out/film-clear.mp4`.

@@ -7,10 +7,12 @@
     "gif": "ffmpeg -y -i out/notifyd-explainer.mp4 -vf \"fps=10,scale=880:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=96[p];[s1][p]paletteuse=dither=bayer:bayer_scale=4\" ../assets/notifyd-explainer.gif",
     "render:shorts": "for c in ShortOneCall ShortNothingLost ShortAgentOnCall ShortLess; do remotion render src/index.ts $c out/$(echo $c | sed 's/Short//; s/\\([A-Z]\\)/-\\L\\1/g; s/^-//; s/^/short/').mp4 --codec h264 --crf 20; done",
     "render:films": "for c in FilmThreeWays:film-three-ways FilmOne:film-one FilmTalk:film-talk FilmNumbers:film-numbers; do remotion render src/index.ts ${c%%:*} out/${c##*:}.mp4 --codec h264 --crf 20; done",
-    "render:clear": "remotion render src/index.ts Clear out/film-clear.mp4 --codec h264 --crf 20"
+    "render:clear": "remotion render src/index.ts Clear out/film-clear.mp4 --codec h264 --crf 20",
+    "render:sober": "remotion render src/index.ts SoberTerminal out/film-terminal.mp4 --codec h264 --crf 19 && remotion render src/index.ts SoberDiagram out/film-diagram.mp4 --codec h264 --crf 19"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.521",
+    "@remotion/fonts": "^4.0.523",
     "react": "^19",
     "react-dom": "^19",
     "remotion": "^4.0.521"
