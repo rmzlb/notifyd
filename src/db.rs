@@ -163,3 +163,60 @@ pub enum WorkflowStep {
         body: Option<String>,
     },
 }
+
+/// Schema smoke test: every `FromRow` struct must be loadable with the
+/// column list the code actually uses. Runs when `DATABASE_URL` points at a
+/// Postgres (CI does), applies the migrations, and executes each `SELECT`
+/// against an empty table, which is enough for sqlx to check the columns.
+/// Caught in the wild: a struct gaining a field while one SELECT kept the old
+/// column list ("no column found for name: topic").
+#[cfg(test)]
+mod schema_smoke {
+    use super::*;
+
+    #[tokio::test]
+    async fn from_row_structs_match_their_selects() {
+        let Ok(url) = std::env::var("DATABASE_URL") else {
+            eprintln!("DATABASE_URL not set: schema smoke test skipped");
+            return;
+        };
+        let pool = sqlx::PgPool::connect(&url).await.expect("connect");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+
+        sqlx::query_as::<_, Job>(&format!("SELECT {JOB_COLUMNS} FROM jobs LIMIT 1"))
+            .fetch_optional(&pool)
+            .await
+            .expect("Job columns");
+        sqlx::query_as::<_, Template>(&format!("SELECT {TEMPLATE_COLUMNS} FROM templates LIMIT 1"))
+            .fetch_optional(&pool)
+            .await
+            .expect("Template columns");
+        sqlx::query_as::<_, Subscriber>(
+            "SELECT id, project_id, email, phone, first_name, last_name, locale, data, created_at, updated_at FROM subscribers LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Subscriber columns");
+        sqlx::query_as::<_, SubscriberPreference>(
+            "SELECT project_id, subscriber_id, channel, workflow_id, enabled FROM subscriber_preferences LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("SubscriberPreference columns");
+        sqlx::query_as::<_, Workflow>(
+            "SELECT id, project_id, name, description, trigger_event, steps, enabled, created_at, updated_at FROM workflows LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("Workflow columns");
+        sqlx::query_as::<_, WorkflowRun>(
+            "SELECT id, project_id, workflow_id, subscriber_id, trigger_payload, current_step, status, step_state, resume_at, created_at, updated_at FROM workflow_runs LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .expect("WorkflowRun columns");
+    }
+}
