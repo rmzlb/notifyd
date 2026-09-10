@@ -42,11 +42,11 @@ all of it, so your code makes **one call** and never has to think about
 providers, rate limits, retries or time zones again.
 
 ```
-                       ┌─────────────────────── notifyd ────────────────────────┐
-  your app ── POST /v1/send ──▶ queue ─▶ priority ─▶ pacing ─▶ retry / failover ──▶ email · sms · whatsapp · push · in-app
-                       │            │                                            │
-  your agent ─ POST /mcp ─────▶ digest · jobs · retries · suppressions · settings │
-                       └──────────────────── PostgreSQL only ────────────────────┘
+                 ┌───────────────────────────── notifyd ──────────────────────────────┐
+your app ─────▶  │ POST /v1/send ─▶ queue ─▶ priority ─▶ pacing ─▶ retry ─▶ failover  │ ─▶ email · sms · whatsapp
+                 │                                                                    │    push · in-app inbox
+your agent ───▶  │ POST /mcp ─▶ digest · jobs · retry · suppressions · settings       │
+                 └───────────────────────── PostgreSQL only ──────────────────────────┘
 ```
 
 - **Small and fast.** One 10 MB binary, a 42 MB image, 13 MB of RAM idle. It
