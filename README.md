@@ -438,9 +438,12 @@ idle, 23 MB while draining 100 000 jobs. → [docs/ARCHITECTURE.md](docs/ARCHITE
 
 ## Status
 
-notifyd is a 0.x used in production by its authors. What it does not do yet:
-no dashboard (by design), no A/B testing, no APNs, no inbound email parsing, no multi-tenant billing. Breaking changes are announced
-in release notes; the queue schema is migrated automatically.
+notifyd is a 0.x running in production for three companies. What it does not
+do yet: native APNs (Web Push and FCM today), topic-level preferences,
+segments, own open tracking; no dashboard, A/B testing or inbound email by
+design. Order and sizes in [docs/ROADMAP.md](docs/ROADMAP.md). Breaking
+changes are announced in release notes; the queue schema is migrated
+automatically.
 
 ---
 
@@ -458,6 +461,7 @@ in release notes; the queue schema is migrated automatically.
 | 📈 **[Benchmarks](docs/BENCHMARKS.md)** | Footprint, throughput, how to reproduce |
 | 🚀 **[Deployments](docs/DEPLOYMENTS.md)** | One instance per company, runbook |
 | 📝 **[Writing](https://rmzlb.github.io/notifyd/)** | [A notification queue on PostgreSQL alone: what `SKIP LOCKED` does not give you](docs/articles/postgres-queue-what-skip-locked-does-not-give-you.md) |
+| 🗺️ **[Roadmap](docs/ROADMAP.md)** | What comes next, in order, with sizes; what is deliberately not planned |
 | 📣 **[Visibility](docs/VISIBILITY.md)** | Registries and launch channels |
 | 🤖 **[llms.txt](docs/llms.txt)** | The API in plain text for agents |
 

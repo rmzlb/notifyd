@@ -38,6 +38,10 @@ acting, they move.
 | GitHub MCP Registry inclusion mail | sent to partnerships@github.com |
 | Announcement on X (@Rmzlb) | posted |
 | Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
+| TypeScript client `notifyd-sdk` on npm | package built and pack-tested (2026-09-10), `npm publish` needs the author's npm account |
+| Python client `notifyd-sdk` on PyPI | wheel and sdist built and tested (2026-09-10), `uv publish` needs the author's PyPI token |
+| Four 15 s shorts for X (Remotion) | rendered (2026-09-10), `docs/video/src/Shorts.tsx`, one idea per video, GitHub link in the first reply |
+| `examples/`, `docs/ROADMAP.md`, README first screen rewritten (efficiency first) | done (2026-09-10) |
 | Glama "Add Server" | needs a GitHub login in a browser |
 | awesome-selfhosted | eligible from 2027-01-06 (4 months after the first release) |
 | awesome-rust | eligible at 50 stars or 2 000 crate downloads |
