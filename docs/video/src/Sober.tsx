@@ -245,11 +245,11 @@ export const SoberTerminal: React.FC = () => (
 // ══════════════════════════════════════════════════════════════════════════════
 export const SOBER_DIAGRAM_FRAMES = S(38);
 
-const Node: React.FC<{ x: number; y: number; w?: number; h?: number; at: number; label: string; sub?: string; accent?: string; mono?: boolean }> = ({ x, y, w = 260, h = 88, at, label, sub, accent, mono }) => (
+const Node: React.FC<{ x: number; y: number; w?: number; h?: number; at: number; label: string; sub?: string; accent?: string; mono?: boolean; dark?: boolean }> = ({ x, y, w = 260, h = 88, at, label, sub, accent, mono, dark }) => (
   <Fade at={at} style={{ position: "absolute", left: x, top: y, width: w, height: h }} dy={6}>
-    <div style={{ width: "100%", height: "100%", background: L.panel, border: `1.5px solid ${accent ?? L.line}`, borderRadius: 12, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", boxShadow: "0 8px 30px rgba(28,28,28,.06)" }}>
-      <div style={{ fontFamily: mono ? MONO : SANS, fontSize: 26, fontWeight: 600, color: L.ink }}>{label}</div>
-      {sub && <div style={{ fontFamily: MONO, fontSize: 18, color: accent ?? L.muted, marginTop: 4 }}>{sub}</div>}
+    <div style={{ width: "100%", height: "100%", background: dark ? D.panel : L.panel, border: `1.5px solid ${accent ?? (dark ? D.line : L.line)}`, borderRadius: 12, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", boxShadow: dark ? "0 8px 30px rgba(0,0,0,.35)" : "0 8px 30px rgba(28,28,28,.06)" }}>
+      <div style={{ fontFamily: mono ? MONO : SANS, fontSize: 26, fontWeight: 600, color: dark ? D.text : L.ink }}>{label}</div>
+      {sub && <div style={{ fontFamily: MONO, fontSize: 18, color: accent ?? (dark ? D.muted : L.muted), marginTop: 4 }}>{sub}</div>}
     </div>
   </Fade>
 );
@@ -341,3 +341,118 @@ export const SoberDiagram: React.FC = () => {
     </AbsoluteFill>
   );
 };
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Film 3 · « Mix » — 34 s : terminal d'abord, schéma à la fin, sombre partout.
+// ══════════════════════════════════════════════════════════════════════════════
+export const SOBER_MIX_FRAMES = S(34);
+
+export const SoberMix: React.FC = () => (
+  <AbsoluteFill style={{ background: D.bg, color: D.text, fontFamily: SANS }}>
+    <Shot from={0} dur={S(2.6)} zoom={false}>
+      <TitleCard title="One binary for every notification." sub={<>docker compose up -d <span style={{ color: "#555" }}>· email, sms, push, in-app, telegram, slack, discord</span></>} />
+    </Shot>
+
+    {/* 1 · up, 5 s */}
+    <Shot from={S(2.6)} dur={S(5)}>
+      <Screen>
+        <Terminal>
+          <Line at={0} type="docker compose up -d" cps={70} />
+          <Line at={S(0.8)}><M> Container notifyd-notifyd-db-1  Healthy</M></Line>
+          <Line at={S(1)}><M> Container notifyd-notifyd-1     Started</M></Line>
+          <Line at={S(1.4)} type="curl localhost:3400/v1/health" cps={70} />
+          <Line at={S(2.2)}>{"{"}<K>"status"</K>: <V>"ok"</V>, <K>"db"</K>: <V>"ok"</V>, <K>"version"</K>: <V>"0.2.2"</V>{"}"}</Line>
+        </Terminal>
+      </Screen>
+      <Caption at={S(2.6)}>Postgres is the only dependency. Up in the time it takes to read this.</Caption>
+    </Shot>
+
+    {/* 2 · send, 5.4 s */}
+    <Shot from={S(7.6)} dur={S(5.4)}>
+      <Screen>
+        <Terminal>
+          <Line at={0} type="curl -X POST localhost:3400/v1/send -d '{" cps={80} />
+          <Line at={S(0.8)}>{"  "}<K>"subscriber_id"</K>: <V>"cust_4821"</V>,</Line>
+          <Line at={S(0.95)}>{"  "}<K>"channels"</K>: [<V>"email"</V>, <V>"in_app"</V>, <V>"telegram"</V>],</Line>
+          <Line at={S(1.1)}>{"  "}<K>"subject"</K>: <V>"Your order shipped"</V>,</Line>
+          <Line at={S(1.25)}>{"  "}<K>"body"</K>: <V>"Hi {"{{first_name}}"}, parcel FR-2041 is on its way."</V> {"}'"}</Line>
+          <Line at={S(2)}>{"{"}<K>"success"</K>: true, <K>"channels"</K>: [<V>"email"</V>, <V>"in_app"</V>, <V>"telegram"</V>],</Line>
+          <Line at={S(2.15)}>{" "}<K>"job_ids"</K>: [<V>"cc67293b-…"</V>, <V>"a1579543-…"</V>, <V>"d98e7597-…"</V>]{"}"}</Line>
+        </Terminal>
+      </Screen>
+      <Caption at={S(2.6)}>One call. The customer's email, inbox and Telegram, from the record you already keep.</Caption>
+    </Shot>
+
+    {/* 3 · campaign + 429 + digest, 7 s */}
+    <Shot from={S(13)} dur={S(7)}>
+      <Screen>
+        <Terminal>
+          <Line at={0} type={`curl -X POST localhost:3400/v1/batch -d '{"segment": {"has_email": true}, "template": "september-news"}'`} cps={110} />
+          <Line at={S(1.4)}>{"{"}<K>"jobs_created"</K>: 41, <K>"subscribers"</K>: 41{"}"}</Line>
+          <Line at={S(2)} type="notifyd digest" cps={70} />
+          <Line at={S(2.6)}><M>Instance: email resend · </M><A>paused lanes: email</A></Line>
+          <Line at={S(2.9)}><A>warning</A> — Lane email is paused after a provider 429.</Line>
+          <Line at={S(3.1)}><M>  Transient. If it repeats, lower the lane's rate or ask the provider for a higher limit.</M></Line>
+          <Line at={S(3.5)}><M>Queue</M>  pending 41 · retry 1 · processing 0</Line>
+          <Line at={S(4.6)} type="notifyd jobs --status sent --since 1m" cps={70} />
+          <Line at={S(5.4)}><V>44 job(s)</V><M> · email 42 via resend · in_app 1 · telegram 1</M></Line>
+        </Terminal>
+      </Screen>
+      <Caption at={S(3.8)}>The provider says slow down. The lane waits exactly 47 seconds, urgent mail first. Nothing is dropped.</Caption>
+    </Shot>
+
+    {/* 4 · diagram, dark, 5.4 s */}
+    <Shot from={S(20)} dur={S(5.4)} zoom={false}>
+      <div style={{ position: "absolute", inset: 0, transform: "translateX(200px)" }}>
+        <Node dark x={140} y={440} at={0} label="your app" sub="POST /v1/send" />
+        <Wire x={400} y={484} w={160} at={4} color={D.line} />
+        <Node dark x={560} y={400} w={360} h={170} at={6} label="notifyd" sub="one binary · Postgres" accent={D.text} />
+        <Wire x={920} y={484} w={140} at={10} color={D.line} />
+        <Fade at={12} style={{ position: "absolute", left: 1059, top: 202, height: 646, borderLeft: `2px solid ${D.line}` }} dy={0}><span /></Fade>
+        {CHANNELS.map((c, i) => (
+          <React.Fragment key={c}>
+            <Wire x={1060} y={202 + i * 92} w={120} at={12 + i * 2} color={D.line} />
+            <Node dark x={1180} y={170 + i * 92} w={240} h={64} at={14 + i * 3} label={c} mono accent={c === "email" ? D.green : undefined} sub={c === "email" ? "41 sent" : undefined} />
+          </React.Fragment>
+        ))}
+        <Node dark x={560} y={140} w={360} h={88} at={S(1.6)} label="your agent" sub="MCP tools" accent={D.yellow} />
+        <Fade at={S(1.8)} style={{ position: "absolute", left: 739, top: 228, height: 172, borderLeft: `2px dashed ${D.yellow}` }} dy={0}><span /></Fade>
+        <Fade at={S(2.4)} style={{ position: "absolute", left: 140, top: 150, width: 380 }}>
+          <div style={{ background: D.panel, border: `1.5px solid ${D.line}`, borderRadius: 14, padding: "16px 20px", fontFamily: SANS, fontSize: 21, lineHeight: 1.4, color: D.text }}>
+            <div style={{ fontFamily: MONO, fontSize: 16, color: D.muted, marginBottom: 6 }}>Telegram · 19:07 · notifyd</div>
+            notifyd: 1 warning. Lane email paused after a provider 429. Transient, nothing lost.
+          </div>
+        </Fade>
+      </div>
+      <Caption at={S(2.8)}>No dashboard. Your agent operates it over MCP, and the digest lands in your chat.</Caption>
+    </Shot>
+
+    {/* 5 · measured, 4.6 s */}
+    <Shot from={S(25.4)} dur={S(4.6)} zoom={false}>
+      <AbsoluteFill style={{ justifyContent: "center", alignItems: "center" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "300px 420px 420px", rowGap: 22, columnGap: 40, fontFamily: SANS, fontSize: 34, alignItems: "baseline" }}>
+          <Fade at={0}><span /></Fade>
+          <Fade at={0}><div style={{ fontFamily: MONO, fontSize: 24, color: D.muted, letterSpacing: 2 }}>NOVU 3.19</div></Fade>
+          <Fade at={4}><div style={{ fontFamily: MONO, fontSize: 24, color: D.yellow, letterSpacing: 2 }}>NOTIFYD 0.2.2</div></Fade>
+          {[
+            ["containers", "6", "1"],
+            ["images to pull", "1.4 GB", "44 MB"],
+            ["memory, idle", "1.1 GB", "13 MB"],
+          ].map(([k, a, b], i) => (
+            <React.Fragment key={k}>
+              <Fade at={8 + i * 6}><div style={{ color: D.muted }}>{k}</div></Fade>
+              <Fade at={10 + i * 6}><div style={{ fontFamily: SERIF, fontSize: 56, color: D.muted }}>{a}</div></Fade>
+              <Fade at={12 + i * 6}><div style={{ fontFamily: SERIF, fontSize: 56, color: D.text }}>{b}</div></Fade>
+            </React.Fragment>
+          ))}
+        </div>
+      </AbsoluteFill>
+      <Caption at={S(1.4)}>Novu's own docker-compose, idle, measured on the same machine with the same tool. Method in docs/BENCHMARKS.md.</Caption>
+    </Shot>
+
+    <Shot from={S(30)} dur={S(4)} zoom={false}>
+      <EndCard />
+    </Shot>
+  </AbsoluteFill>
+);

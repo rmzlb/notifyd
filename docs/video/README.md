@@ -40,8 +40,9 @@ link in the tweet body, GitHub link in the first reply, one short per post.
 `src/Sober.tsx` holds the two launch cuts in the "product on screen" grammar:
 a serif title card, a real terminal whose outputs were captured on a live
 instance (fake Resend answering 429 once, fake Telegram), one serif caption per
-shot, an end card with the command. `SoberTerminal` (49 s, dark) and
-`SoberDiagram` (38 s, light, a diagram that builds itself). Fonts in
+shot, an end card with the command. `SoberMix` (34 s, dark, terminal first then a
+diagram: the launch cut), `SoberTerminal` (49 s, dark) and `SoberDiagram`
+(38 s, light, a diagram that builds itself). Fonts in
 `public/fonts` (Source Serif 4, JetBrains Mono, Inter, all OFL).
 `npm run render:sober`.
 
