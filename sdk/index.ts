@@ -179,6 +179,107 @@ export interface PushTokensResponse {
   tokens: PushToken[];
 }
 
+export type JobStatus = 'pending' | 'processing' | 'sent' | 'retry' | 'failed' | 'cancelled' | (string & {});
+
+export interface ProviderEvent {
+  provider: string;
+  type: string;
+  occurredAt: string;
+  providerMessageId?: string | null;
+  recipients: unknown;
+  error?: unknown;
+}
+
+export interface Job {
+  id: string;
+  status: JobStatus;
+  channel: string;
+  subscriberId?: string | null;
+  recipient?: string | null;
+  templateId?: string | null;
+  priority?: number;
+  attempts: number;
+  maxAttempts?: number;
+  provider?: string | null;
+  providerMessageId?: string | null;
+  scheduledAt?: string | null;
+  createdAt?: string;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  bouncedAt?: string | null;
+  error?: string | null;
+  providerEvents: ProviderEvent[];
+}
+
+export interface TemplateInput {
+  id: string;
+  channel: NotifydChannel;
+  subject?: string;
+  body: string;
+  bodyHtml?: string;
+}
+
+export interface Template extends TemplateInput {}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Steps run in order; `condition` jumps to a step index. Durations are in seconds. */
+export type WorkflowStep =
+  | { type: 'send'; channel: NotifydChannel; template?: string; subject?: string; body?: string; bodyHtml?: string }
+  | { type: 'delay'; durationSecs: number }
+  | { type: 'condition'; field: string; operator: 'eq' | 'neq' | 'gt' | 'lt'; value: unknown; onTrue?: number; onFalse?: number }
+  | { type: 'digest'; durationSecs: number; channel: NotifydChannel; template?: string; subject?: string; body?: string };
+
+export interface WorkflowInput {
+  id: string;
+  name: string;
+  description?: string;
+  triggerEvent: string;
+  steps: WorkflowStep[];
+  enabled?: boolean;
+}
+
+export interface Workflow extends WorkflowInput {
+  createdAt?: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflowId: string;
+  subscriberId: string;
+  status: string;
+  currentStep: number;
+  resumeAt?: string | null;
+  createdAt?: string;
+}
+
+export interface TriggerWorkflowInput {
+  event: string;
+  subscriberId: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface Preference {
+  channel: NotifydChannel | '*';
+  /** A workflow id, or `'*'` for every workflow on that channel. */
+  workflowId: string;
+  enabled: boolean;
+}
+
+export interface Suppression {
+  id: string;
+  email: string;
+  reason: string;
+  detail?: string | null;
+  createdAt: string;
+  releasedAt?: string | null;
+}
+
 export interface NotifydErrorDetails {
   error?: string;
   [key: string]: unknown;
@@ -279,7 +380,7 @@ function mapSubscriber(raw: Record<string, unknown>): Subscriber {
     firstName: asOptionalString(raw.first_name),
     lastName: asOptionalString(raw.last_name),
     locale: asOptionalString(raw.locale),
-    data: asRecord(raw.data),
+    data: asRecord(raw.data) ?? undefined,
     projectId: asOptionalString(raw.project_id),
     createdAt: asOptionalString(raw.created_at),
   };
@@ -334,6 +435,148 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+type WireStep = Record<string, unknown> & { type: string };
+
+function stepToWire(step: WorkflowStep): WireStep {
+  switch (step.type) {
+    case 'send':
+      return { type: 'send', channel: step.channel, template: step.template, subject: step.subject, body: step.body, body_html: step.bodyHtml };
+    case 'delay':
+      return { type: 'delay', duration_secs: step.durationSecs };
+    case 'condition':
+      return { type: 'condition', field: step.field, operator: step.operator, value: step.value, on_true: step.onTrue, on_false: step.onFalse };
+    case 'digest':
+      return { type: 'digest', duration_secs: step.durationSecs, channel: step.channel, template: step.template, subject: step.subject, body: step.body };
+  }
+}
+
+function stepFromWire(w: WireStep): WorkflowStep {
+  const str = (k: string) => (typeof w[k] === 'string' ? (w[k] as string) : undefined);
+  const num = (k: string) => (typeof w[k] === 'number' ? (w[k] as number) : undefined);
+  switch (w.type) {
+    case 'delay':
+      return { type: 'delay', durationSecs: num('duration_secs') ?? 0 };
+    case 'condition':
+      return { type: 'condition', field: str('field') ?? '', operator: (str('operator') ?? 'eq') as 'eq' | 'neq' | 'gt' | 'lt', value: w.value, onTrue: num('on_true'), onFalse: num('on_false') };
+    case 'digest':
+      return { type: 'digest', durationSecs: num('duration_secs') ?? 0, channel: (str('channel') ?? 'email') as NotifydChannel, template: str('template'), subject: str('subject'), body: str('body') };
+    default:
+      return { type: 'send', channel: (str('channel') ?? 'email') as NotifydChannel, template: str('template'), subject: str('subject'), body: str('body'), bodyHtml: str('body_html') };
+  }
+}
+
+interface WireWorkflow {
+  id: string;
+  name: string;
+  description?: string | null;
+  trigger_event: string;
+  steps: WireStep[];
+  enabled?: boolean;
+  created_at?: string;
+}
+
+function workflowFromWire(w: WireWorkflow): Workflow {
+  return {
+    id: w.id,
+    name: w.name,
+    description: w.description ?? undefined,
+    triggerEvent: w.trigger_event,
+    steps: (w.steps ?? []).map(stepFromWire),
+    enabled: w.enabled,
+    createdAt: w.created_at,
+  };
+}
+
+interface WireRun {
+  id: string;
+  workflow_id: string;
+  subscriber_id: string;
+  status: string;
+  current_step: number;
+  resume_at?: string | null;
+  created_at?: string;
+}
+
+function runFromWire(r: WireRun): WorkflowRun {
+  return { id: r.id, workflowId: r.workflow_id, subscriberId: r.subscriber_id, status: r.status, currentStep: r.current_step, resumeAt: r.resume_at ?? null, createdAt: r.created_at };
+}
+
+interface WireJob {
+  id: string;
+  status: JobStatus;
+  channel: string;
+  subscriber_id?: string | null;
+  recipient?: string | null;
+  template_id?: string | null;
+  priority?: number;
+  attempts?: number;
+  max_attempts?: number;
+  provider?: string | null;
+  provider_message_id?: string | null;
+  scheduled_at?: string | null;
+  created_at?: string;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  bounced_at?: string | null;
+  error?: string | null;
+  provider_events?: Array<{ provider: string; type: string; occurred_at: string; provider_message_id?: string | null; recipients: unknown; error?: unknown }>;
+}
+
+function jobFromWire(j: WireJob): Job {
+  return {
+    id: j.id,
+    status: j.status,
+    channel: j.channel,
+    subscriberId: j.subscriber_id ?? null,
+    recipient: j.recipient ?? null,
+    templateId: j.template_id ?? null,
+    priority: j.priority,
+    attempts: j.attempts ?? 0,
+    maxAttempts: j.max_attempts,
+    provider: j.provider ?? null,
+    providerMessageId: j.provider_message_id ?? null,
+    scheduledAt: j.scheduled_at ?? null,
+    createdAt: j.created_at,
+    sentAt: j.sent_at ?? null,
+    deliveredAt: j.delivered_at ?? null,
+    bouncedAt: j.bounced_at ?? null,
+    error: j.error ?? null,
+    providerEvents: (j.provider_events ?? []).map((e) => ({
+      provider: e.provider,
+      type: e.type,
+      occurredAt: e.occurred_at,
+      providerMessageId: e.provider_message_id ?? null,
+      recipients: e.recipients,
+      error: e.error,
+    })),
+  };
+}
+
+interface WireTemplate {
+  id: string;
+  channel: string;
+  subject?: string | null;
+  body: string;
+  body_html?: string | null;
+}
+
+function templateFromWire(t: WireTemplate): Template {
+  return { id: t.id, channel: t.channel as NotifydChannel, subject: t.subject ?? undefined, body: t.body, bodyHtml: t.body_html ?? undefined };
+}
+
+interface WireSuppression {
+  id: string;
+  email: string;
+  reason: string;
+  detail?: string | null;
+  created_at: string;
+  released_at?: string | null;
+}
+
+function suppressionFromWire(s: WireSuppression): Suppression {
+  return { id: s.id, email: s.email, reason: s.reason, detail: s.detail ?? null, createdAt: s.created_at, releasedAt: s.released_at ?? null };
 }
 
 export function createNotifydClient(config: NotifydClientConfig) {
@@ -639,6 +882,138 @@ export function createNotifydClient(config: NotifydClientConfig) {
         ticket: response.ticket,
         expiresInSeconds: response.expires_in_seconds,
       };
+    },
+
+    // ── Jobs ────────────────────────────────────────────────────────────────
+    /** Status of one job returned by `send` or `batch`. */
+    async getJob(id: string): Promise<Job> {
+      return jobFromWire(await request<WireJob>(`/v1/jobs/${encodeURIComponent(id)}`, { auth: 'apiKey' }));
+    },
+
+    /** Cancel a pending or scheduled job. */
+    async cancelJob(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/jobs/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'apiKey' });
+    },
+
+    /** Re-queue a failed job. */
+    async retryJob(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/jobs/${encodeURIComponent(id)}/retry`, { method: 'POST', auth: 'apiKey' });
+    },
+
+    // ── Templates ───────────────────────────────────────────────────────────
+    /** Create or replace a template. `{{variables}}` in subject/body are filled from `send({ data })`. */
+    async upsertTemplate(input: TemplateInput): Promise<{ success: boolean; id: string }> {
+      return request<{ success: boolean; id: string }>('/v1/templates', {
+        method: 'POST',
+        auth: 'apiKey',
+        body: { id: input.id, channel: input.channel, subject: input.subject, body: input.body, body_html: input.bodyHtml },
+      });
+    },
+
+    async listTemplates(options: { limit?: number; offset?: number } = {}): Promise<Page<Template>> {
+      const page = await request<Page<WireTemplate>>('/v1/templates', { auth: 'apiKey', query: options });
+      return { ...page, items: page.items.map(templateFromWire) };
+    },
+
+    async getTemplate(id: string): Promise<Template> {
+      return templateFromWire(await request<WireTemplate>(`/v1/templates/${encodeURIComponent(id)}`, { auth: 'apiKey' }));
+    },
+
+    async deleteTemplate(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/templates/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'apiKey' });
+    },
+
+    // ── Workflows ───────────────────────────────────────────────────────────
+    /** Create or replace a workflow. Runs start when `triggerWorkflow` fires its `triggerEvent`. */
+    async upsertWorkflow(input: WorkflowInput): Promise<{ success: boolean; id: string }> {
+      return request<{ success: boolean; id: string }>('/v1/workflows', {
+        method: 'POST',
+        auth: 'apiKey',
+        body: {
+          id: input.id,
+          name: input.name,
+          description: input.description,
+          trigger_event: input.triggerEvent,
+          steps: input.steps.map(stepToWire),
+          enabled: input.enabled,
+        },
+      });
+    },
+
+    async listWorkflows(): Promise<Workflow[]> {
+      const response = await request<{ workflows: WireWorkflow[] }>('/v1/workflows', { auth: 'apiKey' });
+      return (response.workflows ?? []).map(workflowFromWire);
+    },
+
+    async getWorkflow(id: string): Promise<Workflow> {
+      return workflowFromWire(await request<WireWorkflow>(`/v1/workflows/${encodeURIComponent(id)}`, { auth: 'apiKey' }));
+    },
+
+    async deleteWorkflow(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/workflows/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'apiKey' });
+    },
+
+    /** Fire an event. Every enabled workflow whose `triggerEvent` matches starts a run for the subscriber. */
+    async triggerWorkflow(input: TriggerWorkflowInput): Promise<{ success: boolean; workflowRuns: string[] }> {
+      const response = await request<{ success: boolean; workflow_runs: string[] }>('/v1/workflows/trigger', {
+        method: 'POST',
+        auth: 'apiKey',
+        body: { event: input.event, subscriber_id: input.subscriberId, payload: input.payload },
+      });
+      return { success: response.success, workflowRuns: response.workflow_runs ?? [] };
+    },
+
+    async listWorkflowRuns(options: { status?: string; workflowId?: string; limit?: number; offset?: number } = {}): Promise<Page<WorkflowRun>> {
+      const page = await request<Page<WireRun>>('/v1/workflows/runs', {
+        auth: 'apiKey',
+        query: { status: options.status, workflow_id: options.workflowId, limit: options.limit, offset: options.offset },
+      });
+      return { ...page, items: page.items.map(runFromWire) };
+    },
+
+    async cancelWorkflowRun(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/workflows/runs/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'apiKey' });
+    },
+
+    // ── Preferences ─────────────────────────────────────────────────────────
+    /** Everything is enabled by default. A workflow-specific row wins over the channel-wide `'*'` row. */
+    async getPreferences(subscriberId: string): Promise<Preference[]> {
+      const response = await request<{ preferences: Array<{ channel: string; workflow_id: string | null; enabled: boolean }> }>(
+        `/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`,
+        { auth: 'apiKey' },
+      );
+      return (response.preferences ?? []).map((p) => ({ channel: p.channel as Preference['channel'], workflowId: p.workflow_id ?? '*', enabled: p.enabled }));
+    },
+
+    async setPreferences(subscriberId: string, preferences: Preference[]): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`, {
+        method: 'PUT',
+        auth: 'apiKey',
+        body: { preferences: preferences.map((p) => ({ channel: p.channel, workflow_id: p.workflowId, enabled: p.enabled })) },
+      });
+    },
+
+    // ── Suppressions ────────────────────────────────────────────────────────
+    /** Stop sending to an address. Bounces and complaints are suppressed automatically; this is for manual opt-outs. */
+    async suppress(email: string, options: { scope?: 'all' | 'marketing'; detail?: string } = {}): Promise<{ success: boolean; suppression: Suppression }> {
+      const response = await request<{ success: boolean; suppression: WireSuppression }>('/v1/suppressions', {
+        method: 'POST',
+        auth: 'apiKey',
+        body: { email, scope: options.scope, detail: options.detail },
+      });
+      return { success: response.success, suppression: suppressionFromWire(response.suppression) };
+    },
+
+    /** Active suppressions for the project (most recent 200). */
+    async listSuppressions(): Promise<Suppression[]> {
+      const response = await request<{ data?: WireSuppression[] } | WireSuppression[]>('/v1/suppressions', { auth: 'apiKey' });
+      const rows = Array.isArray(response) ? response : response.data ?? [];
+      return rows.map(suppressionFromWire);
+    },
+
+    /** Allow sending to a suppressed address again. */
+    async releaseSuppression(id: string): Promise<{ success: boolean }> {
+      return request<{ success: boolean }>(`/v1/suppressions/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'apiKey' });
     },
 
     async openInboxStream(

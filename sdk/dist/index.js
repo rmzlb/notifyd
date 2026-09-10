@@ -55,7 +55,7 @@ function mapSubscriber(raw) {
     firstName: asOptionalString(raw.first_name),
     lastName: asOptionalString(raw.last_name),
     locale: asOptionalString(raw.locale),
-    data: asRecord(raw.data),
+    data: asRecord(raw.data) ?? void 0,
     projectId: asOptionalString(raw.project_id),
     createdAt: asOptionalString(raw.created_at)
   };
@@ -99,6 +99,81 @@ function asRecord(value) {
     return null;
   }
   return value;
+}
+function stepToWire(step) {
+  switch (step.type) {
+    case "send":
+      return { type: "send", channel: step.channel, template: step.template, subject: step.subject, body: step.body, body_html: step.bodyHtml };
+    case "delay":
+      return { type: "delay", duration_secs: step.durationSecs };
+    case "condition":
+      return { type: "condition", field: step.field, operator: step.operator, value: step.value, on_true: step.onTrue, on_false: step.onFalse };
+    case "digest":
+      return { type: "digest", duration_secs: step.durationSecs, channel: step.channel, template: step.template, subject: step.subject, body: step.body };
+  }
+}
+function stepFromWire(w) {
+  const str = (k) => typeof w[k] === "string" ? w[k] : void 0;
+  const num = (k) => typeof w[k] === "number" ? w[k] : void 0;
+  switch (w.type) {
+    case "delay":
+      return { type: "delay", durationSecs: num("duration_secs") ?? 0 };
+    case "condition":
+      return { type: "condition", field: str("field") ?? "", operator: str("operator") ?? "eq", value: w.value, onTrue: num("on_true"), onFalse: num("on_false") };
+    case "digest":
+      return { type: "digest", durationSecs: num("duration_secs") ?? 0, channel: str("channel") ?? "email", template: str("template"), subject: str("subject"), body: str("body") };
+    default:
+      return { type: "send", channel: str("channel") ?? "email", template: str("template"), subject: str("subject"), body: str("body"), bodyHtml: str("body_html") };
+  }
+}
+function workflowFromWire(w) {
+  return {
+    id: w.id,
+    name: w.name,
+    description: w.description ?? void 0,
+    triggerEvent: w.trigger_event,
+    steps: (w.steps ?? []).map(stepFromWire),
+    enabled: w.enabled,
+    createdAt: w.created_at
+  };
+}
+function runFromWire(r) {
+  return { id: r.id, workflowId: r.workflow_id, subscriberId: r.subscriber_id, status: r.status, currentStep: r.current_step, resumeAt: r.resume_at ?? null, createdAt: r.created_at };
+}
+function jobFromWire(j) {
+  return {
+    id: j.id,
+    status: j.status,
+    channel: j.channel,
+    subscriberId: j.subscriber_id ?? null,
+    recipient: j.recipient ?? null,
+    templateId: j.template_id ?? null,
+    priority: j.priority,
+    attempts: j.attempts ?? 0,
+    maxAttempts: j.max_attempts,
+    provider: j.provider ?? null,
+    providerMessageId: j.provider_message_id ?? null,
+    scheduledAt: j.scheduled_at ?? null,
+    createdAt: j.created_at,
+    sentAt: j.sent_at ?? null,
+    deliveredAt: j.delivered_at ?? null,
+    bouncedAt: j.bounced_at ?? null,
+    error: j.error ?? null,
+    providerEvents: (j.provider_events ?? []).map((e) => ({
+      provider: e.provider,
+      type: e.type,
+      occurredAt: e.occurred_at,
+      providerMessageId: e.provider_message_id ?? null,
+      recipients: e.recipients,
+      error: e.error
+    }))
+  };
+}
+function templateFromWire(t) {
+  return { id: t.id, channel: t.channel, subject: t.subject ?? void 0, body: t.body, bodyHtml: t.body_html ?? void 0 };
+}
+function suppressionFromWire(s) {
+  return { id: s.id, email: s.email, reason: s.reason, detail: s.detail ?? null, createdAt: s.created_at, releasedAt: s.released_at ?? null };
 }
 function createNotifydClient(config) {
   const baseUrl = normalizeUrl(config.url);
@@ -326,6 +401,119 @@ function createNotifydClient(config) {
         ticket: response.ticket,
         expiresInSeconds: response.expires_in_seconds
       };
+    },
+    // ── Jobs ────────────────────────────────────────────────────────────────
+    /** Status of one job returned by `send` or `batch`. */
+    async getJob(id) {
+      return jobFromWire(await request(`/v1/jobs/${encodeURIComponent(id)}`, { auth: "apiKey" }));
+    },
+    /** Cancel a pending or scheduled job. */
+    async cancelJob(id) {
+      return request(`/v1/jobs/${encodeURIComponent(id)}`, { method: "DELETE", auth: "apiKey" });
+    },
+    /** Re-queue a failed job. */
+    async retryJob(id) {
+      return request(`/v1/jobs/${encodeURIComponent(id)}/retry`, { method: "POST", auth: "apiKey" });
+    },
+    // ── Templates ───────────────────────────────────────────────────────────
+    /** Create or replace a template. `{{variables}}` in subject/body are filled from `send({ data })`. */
+    async upsertTemplate(input) {
+      return request("/v1/templates", {
+        method: "POST",
+        auth: "apiKey",
+        body: { id: input.id, channel: input.channel, subject: input.subject, body: input.body, body_html: input.bodyHtml }
+      });
+    },
+    async listTemplates(options = {}) {
+      const page = await request("/v1/templates", { auth: "apiKey", query: options });
+      return { ...page, items: page.items.map(templateFromWire) };
+    },
+    async getTemplate(id) {
+      return templateFromWire(await request(`/v1/templates/${encodeURIComponent(id)}`, { auth: "apiKey" }));
+    },
+    async deleteTemplate(id) {
+      return request(`/v1/templates/${encodeURIComponent(id)}`, { method: "DELETE", auth: "apiKey" });
+    },
+    // ── Workflows ───────────────────────────────────────────────────────────
+    /** Create or replace a workflow. Runs start when `triggerWorkflow` fires its `triggerEvent`. */
+    async upsertWorkflow(input) {
+      return request("/v1/workflows", {
+        method: "POST",
+        auth: "apiKey",
+        body: {
+          id: input.id,
+          name: input.name,
+          description: input.description,
+          trigger_event: input.triggerEvent,
+          steps: input.steps.map(stepToWire),
+          enabled: input.enabled
+        }
+      });
+    },
+    async listWorkflows() {
+      const response = await request("/v1/workflows", { auth: "apiKey" });
+      return (response.workflows ?? []).map(workflowFromWire);
+    },
+    async getWorkflow(id) {
+      return workflowFromWire(await request(`/v1/workflows/${encodeURIComponent(id)}`, { auth: "apiKey" }));
+    },
+    async deleteWorkflow(id) {
+      return request(`/v1/workflows/${encodeURIComponent(id)}`, { method: "DELETE", auth: "apiKey" });
+    },
+    /** Fire an event. Every enabled workflow whose `triggerEvent` matches starts a run for the subscriber. */
+    async triggerWorkflow(input) {
+      const response = await request("/v1/workflows/trigger", {
+        method: "POST",
+        auth: "apiKey",
+        body: { event: input.event, subscriber_id: input.subscriberId, payload: input.payload }
+      });
+      return { success: response.success, workflowRuns: response.workflow_runs ?? [] };
+    },
+    async listWorkflowRuns(options = {}) {
+      const page = await request("/v1/workflows/runs", {
+        auth: "apiKey",
+        query: { status: options.status, workflow_id: options.workflowId, limit: options.limit, offset: options.offset }
+      });
+      return { ...page, items: page.items.map(runFromWire) };
+    },
+    async cancelWorkflowRun(id) {
+      return request(`/v1/workflows/runs/${encodeURIComponent(id)}`, { method: "DELETE", auth: "apiKey" });
+    },
+    // ── Preferences ─────────────────────────────────────────────────────────
+    /** Everything is enabled by default. A workflow-specific row wins over the channel-wide `'*'` row. */
+    async getPreferences(subscriberId) {
+      const response = await request(
+        `/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`,
+        { auth: "apiKey" }
+      );
+      return (response.preferences ?? []).map((p) => ({ channel: p.channel, workflowId: p.workflow_id ?? "*", enabled: p.enabled }));
+    },
+    async setPreferences(subscriberId, preferences) {
+      return request(`/v1/subscribers/${encodeURIComponent(subscriberId)}/preferences`, {
+        method: "PUT",
+        auth: "apiKey",
+        body: { preferences: preferences.map((p) => ({ channel: p.channel, workflow_id: p.workflowId, enabled: p.enabled })) }
+      });
+    },
+    // ── Suppressions ────────────────────────────────────────────────────────
+    /** Stop sending to an address. Bounces and complaints are suppressed automatically; this is for manual opt-outs. */
+    async suppress(email, options = {}) {
+      const response = await request("/v1/suppressions", {
+        method: "POST",
+        auth: "apiKey",
+        body: { email, scope: options.scope, detail: options.detail }
+      });
+      return { success: response.success, suppression: suppressionFromWire(response.suppression) };
+    },
+    /** Active suppressions for the project (most recent 200). */
+    async listSuppressions() {
+      const response = await request("/v1/suppressions", { auth: "apiKey" });
+      const rows = Array.isArray(response) ? response : response.data ?? [];
+      return rows.map(suppressionFromWire);
+    },
+    /** Allow sending to a suppressed address again. */
+    async releaseSuppression(id) {
+      return request(`/v1/suppressions/${encodeURIComponent(id)}`, { method: "DELETE", auth: "apiKey" });
     },
     async openInboxStream(subscriberId, options = {}) {
       const EventSourceImpl = config.eventSource ?? globalThis.EventSource;

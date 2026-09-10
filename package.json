@@ -1,7 +1,17 @@
 {
   "name": "notifyd-sdk",
   "version": "0.1.0",
-  "description": "TypeScript client for notifyd",
+  "description": "TypeScript client for notifyd, the self-hosted notification server (email, SMS, WhatsApp, push, in-app)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rmzlb/notifyd.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/rmzlb/notifyd/tree/main/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/rmzlb/notifyd/issues"
+  },
   "type": "module",
   "main": "./sdk/dist/index.cjs",
   "module": "./sdk/dist/index.js",
@@ -14,21 +24,33 @@
       "default": "./sdk/dist/index.js"
     }
   },
+  "sideEffects": false,
   "files": [
     "sdk/dist",
-    "README.md",
+    "sdk/README.md",
     "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build:sdk": "tsup sdk/index.ts --format esm,cjs --dts --out-dir sdk/dist"
   },
   "keywords": [
     "notifyd",
     "notifications",
+    "email",
+    "sms",
+    "push",
+    "in-app",
+    "inbox",
+    "self-hosted",
     "typescript",
     "sdk"
   ],
-  "license": "MIT",
   "devDependencies": {
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
