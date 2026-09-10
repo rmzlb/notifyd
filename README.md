@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Send email, SMS, WhatsApp, push and in-app notifications from one API call.</strong><br>
-  One 10 MB Rust binary, PostgreSQL only. Queues, retries, provider failover and quiet hours are handled for you, and an AI agent can run it over MCP.
+  One 12 MB Rust binary, PostgreSQL only. Queues, retries, provider failover and quiet hours are handled for you, and an AI agent can run it over MCP.
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <a href="https://github.com/rmzlb/notifyd/pkgs/container/notifyd"><img src="https://img.shields.io/badge/ghcr.io-rmzlb%2Fnotifyd-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Container image"></a>
   <a href="https://crates.io/crates/notifyd"><img src="https://img.shields.io/crates/v/notifyd?style=flat-square&logo=rust" alt="crates.io"></a>
   <a href="https://github.com/rmzlb/notifyd/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rmzlb/notifyd/ci.yml?branch=main&style=flat-square&label=ci" alt="CI"></a>
-  <img src="https://img.shields.io/badge/image-42_MB-green?style=flat-square" alt="Image size">
+  <img src="https://img.shields.io/badge/image-44_MB-green?style=flat-square" alt="Image size">
   <img src="https://img.shields.io/badge/RSS-13_MB_idle-green?style=flat-square" alt="Memory">
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=notifyd"><img src="https://img.shields.io/badge/MCP_registry-io.github.rmzlb%2Fnotifyd-8A2BE2?style=flat-square" alt="MCP registry"></a>
   <a href="https://skills.sh/rmzlb/notifyd"><img src="https://skills.sh/b/rmzlb/notifyd" alt="Agent Skills"></a>
@@ -49,7 +49,7 @@ your agent ───▶  │ POST /mcp ─▶ digest · jobs · retry · suppres
                  └───────────────────────── PostgreSQL only ──────────────────────────┘
 ```
 
-- **Small and fast.** One 10 MB binary, a 42 MB image, 13 MB of RAM idle. It
+- **Small and fast.** One 12 MB binary, a 44 MB image, 13 MB of RAM idle. It
   accepts 44 000 notifications per second and drains 3 500 per second on a
   laptop ([method](docs/BENCHMARKS.md)). No Redis, no message broker, no
   dashboard to host: PostgreSQL is the only dependency.
@@ -304,7 +304,7 @@ Inbox endpoints also accept a subscriber JWT.
 
 | | **Novu** | **Knock / Courier / SuprSend** | **notifyd** |
 |---|---|---|---|
-| **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only, one 42 MB image |
+| **Infra** | MongoDB + Redis + 4 containers | Hosted SaaS | Postgres only, one 44 MB image |
 | **Setup** | 30+ min | Signup + dashboard | `docker compose up` (2 min) |
 | **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
 | **Memory** | not measured by us | N/A | 13 MB idle, 23 MB draining 100k jobs ([method](docs/BENCHMARKS.md)) |
@@ -450,7 +450,7 @@ flake.nix             # Nix package, devShell, NixOS module
 dist-workspace.toml   # cargo-dist: release binaries and installer
 ```
 
-~12 000 lines of Rust, no `unsafe`. 10.8 MB binary, 42 MB image, 13 MB RSS
+~14 000 lines of Rust, no `unsafe`. 12 MB binary (16 MB static musl in the image), 44 MB image, 13 MB RSS
 idle, 23 MB while draining 100 000 jobs. → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---

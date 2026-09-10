@@ -66,13 +66,13 @@ const PILLARS: Array<[string, string]> = [
   ["Self-hosted.", "your server, your providers, your data"],
   ["Agent-native.", "operated over MCP, no dashboard"],
   ["Open source.", "MIT, no per-notification bill"],
-  ["Rust.", "one 10 MB binary, 13 MB of RAM"],
+  ["Rust.", "one 12 MB binary, 13 MB of RAM"],
 ];
 
 // ── Ce qui change ────────────────────────────────────────────────────────────
 const ROWS: Array<[string, string]> = [
   ["MongoDB + Redis + S3", "the Postgres you already run"],
-  ["7 containers", "1 binary · 10 MB"],
+  ["7 containers", "1 binary · 12 MB"],
   ["a dashboard to log into", "an API, operated by your agent"],
   ["billed per notification", "€0 · pay your providers, nothing else"],
   ["a 429 fails the send", "paused · nothing lost · urgent first"],
@@ -189,7 +189,7 @@ export const Clear: React.FC = () => (
           <Term>
             <span style={{ color: "#8a8f9c" }}>$ </span><Typewriter start={14} cps={75} text="git clone https://github.com/rmzlb/notifyd && cd notifyd" />{"\n"}
             <Sequence from={S(1.5)} layout="none"><span><span style={{ color: "#8a8f9c" }}>$ </span><Typewriter start={0} cps={50} text="docker compose up -d" /></span></Sequence>{"\n"}
-            <Sequence from={S(2.4)} layout="none"><span style={{ color: "#3fb950" }}>→ notifyd listening on :3400 · 42 MB image · Postgres only</span></Sequence>
+            <Sequence from={S(2.4)} layout="none"><span style={{ color: "#3fb950" }}>→ notifyd listening on :3400 · 44 MB image · Postgres only</span></Sequence>
           </Term>
         </In>
         <Sequence from={S(3.4)} layout="none">

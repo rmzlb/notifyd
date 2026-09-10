@@ -42,6 +42,8 @@ acting, they move.
 | Python client `notifyd-sdk` on PyPI | built and tested (2026-09-10); add the pending trusted publisher on pypi.org, then the same tag publishes it (no token) |
 | Four 15 s shorts for X (Remotion) | rendered (2026-09-10), `docs/video/src/Shorts.tsx`, one idea per video, GitHub link in the first reply |
 | `examples/`, `docs/ROADMAP.md`, README first screen rewritten (efficiency first) | done (2026-09-10) |
+| Catch-up plan shipped: topics, own open/click tracking, segments, native APNs, `notifyd` CLI | done (2026-09-10), migrations 021–023 |
+| Logo `nd` (n white, d yellow, small rs), launch film "Clear" (30 s, black on white) | done (2026-09-10) |
 | Glama "Add Server" | needs a GitHub login in a browser |
 | awesome-selfhosted | eligible from 2027-01-06 (4 months after the first release) |
 | awesome-rust | eligible at 50 stars or 2 000 crate downloads |

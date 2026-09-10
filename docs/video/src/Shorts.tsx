@@ -276,7 +276,7 @@ export const ShortLess: React.FC = () => (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
           <Sequence from={S(3.4)} layout="none">
             <Appear><Caption color={C.text}>notifyd</Caption></Appear>
-            <Block label="one 10 MB binary" delay={6} color={C.yellow} small />
+            <Block label="one 12 MB binary" delay={6} color={C.yellow} small />
             <Block label="PostgreSQL" delay={14} small />
             <Appear delay={26}><Caption color={C.green}>13 MB of RAM at idle</Caption></Appear>
           </Sequence>

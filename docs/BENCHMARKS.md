@@ -24,8 +24,8 @@ the pacer will hold the line there; see `docs/CONNECTORS.md`.
 
 | Metric | Value |
 |---|---|
-| Release binary (stripped, musl) | 10.8 MB |
-| Docker image (`alpine:3.22` runtime) | 42 MB |
+| Release binary (stripped) | 12 MB glibc (`cargo build --release`), 16 MB static musl (the image) — measured 2026-09-10 |
+| Docker image (`alpine:3.22` runtime) | 44 MB (2026-09-10; 42 MB before APNs over HTTP/2, topics, tracking, segments, CLI) |
 | RSS at idle (worker polling, SSE hub up) | 13 MB |
 | RSS peak while draining 100 000 jobs | 23 MB |
 | RSS peak while accepting 50 000 jobs through `/v1/batch` | 29 MB |
@@ -64,7 +64,7 @@ entirely for projects without a webhook.
   × 100 recipients, 100 000 emails leave in roughly 8–9 minutes, priority
   the claim order keeps transactional mail ahead of the bulk, and a 429
   pauses the email channel for `Retry-After` without consuming an attempt.
-- One instance per company (see `docs/DEPLOYMENTS.md`) costs one 42 MB
+- One instance per company (see `docs/DEPLOYMENTS.md`) costs one 44 MB
   container and one Postgres database. Three companies = three containers,
   well under 100 MB of RAM in total.
 

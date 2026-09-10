@@ -42,7 +42,7 @@ const Problem: React.FC = () => (
     <div style={{ display: "flex", gap: 24 }}>
       <Box delay={10} title="Hosted SaaS" accent={C.muted} dim lines={["billed per notification", "your data on their side", "dashboard-first"]} />
       <Box delay={20} title="Heavy self-hosted" accent={C.muted} dim lines={["MongoDB + Redis", "4 containers", "React dashboard to babysit"]} />
-      <Box delay={30} title="notifyd" accent={C.yellow} lines={["one 10 MB binary", "PostgreSQL only", "no dashboard: digest + MCP"]} />
+      <Box delay={30} title="notifyd" accent={C.yellow} lines={["one 12 MB binary", "PostgreSQL only", "no dashboard: digest + MCP"]} />
     </div>
   </Pad>
 );
@@ -182,7 +182,7 @@ const Numbers: React.FC = () => (
   <Pad>
     <Appear><Title small>Footprint, measured (8 Arm vCPU, untuned Postgres 16)</Title></Appear>
     <div style={{ display: "flex", gap: 20 }}>
-      <Num v="42 MB" l="container image" delay={8} />
+      <Num v="44 MB" l="container image" delay={8} />
       <Num v="13 MB" l="RSS at idle" delay={14} />
       <Num v="23 MB" l="RSS draining 100k jobs" delay={20} />
     </div>

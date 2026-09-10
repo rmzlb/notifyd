@@ -127,7 +127,7 @@ export const FilmOne: React.FC = () => {
           <Center gap={34}>
             <Slam>
               <div style={{ display: "flex", alignItems: "center", gap: 34 }}>
-                <div style={{ background: C.yellow, color: "#111", borderRadius: 26, padding: "34px 50px", fontSize: 60, fontWeight: 800, boxShadow: `0 0 90px ${C.yellow}55` }}>notifyd <span style={{ fontFamily: mono, fontSize: 40, fontWeight: 600 }}>10 MB</span></div>
+                <div style={{ background: C.yellow, color: "#111", borderRadius: 26, padding: "34px 50px", fontSize: 60, fontWeight: 800, boxShadow: `0 0 90px ${C.yellow}55` }}>notifyd <span style={{ fontFamily: mono, fontSize: 40, fontWeight: 600 }}>12 MB</span></div>
                 <div style={{ fontSize: 60, color: C.muted }}>+</div>
                 <div style={{ background: C.panel, border: `2px solid ${C.line}`, borderRadius: 26, padding: "34px 50px", fontSize: 60, fontWeight: 800 }}>Postgres</div>
               </div>
@@ -271,7 +271,7 @@ export const FilmTalk: React.FC = () => (
         <Time t="17:20" delay={0} />
         <Bubble who="you" delay={6}>What do we actually run for all this?</Bubble>
         <ToolCall delay={S(1.8)} call={`health()`} result={`ok · one binary · postgres · rss 13 MB · uptime 41 d`} />
-        <Bubble who="agent" delay={S(3.6)}>One 10 MB binary and the Postgres you already had. 13 MB of RAM right now. No Redis, no dashboard, no third container.</Bubble>
+        <Bubble who="agent" delay={S(3.6)}>One 12 MB binary and the Postgres you already had. 13 MB of RAM right now. No Redis, no dashboard, no third container.</Bubble>
         <Bubble who="you" delay={S(6.4)}>Perfect.</Bubble>
         <Sequence from={S(7.6)} layout="none">
           <Appear><Caption color={C.text}>Email, SMS, WhatsApp, push, in-app. <span style={{ color: C.green }}>Less to run, nothing missing.</span></Caption></Appear>
@@ -379,7 +379,7 @@ const NOVU = ["api", "worker", "websocket", "web dashboard", "MongoDB", "Redis",
 
 const CHANGES: Array<[string, string, string]> = [
   ["MongoDB + Redis + S3", "just the Postgres you already run", "nothing new to operate"],
-  ["7 containers", "1 binary · 10 MB", "one thing to update"],
+  ["7 containers", "1 binary · 12 MB", "one thing to update"],
   ["a dashboard to log into", "an API, run by your agent over MCP", "no admin UI to host or learn"],
   ["billed per notification", "€0 per notification", "MIT · you pay your providers, nothing else"],
   ["a 429 fails the send", "paused · nothing lost · urgent first", "the engine handles the bad day"],
