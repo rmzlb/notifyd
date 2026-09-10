@@ -180,6 +180,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `tags` | `object[]` | ❌ | Email only. Provider tags `[{ "name", "value" }]`; also drives the default priority (see above). |
 | `email_headers` | `object` | ❌ | Email only. Custom MIME headers such as `List-Unsubscribe`. |
 | `send_window` | `object \| false` | ❌ | `{ "start": "09:00", "end": "20:00", "tz": "Europe/Paris", "days": [1..7], "applies_to": "marketing" \| "all" }`. Bulk email waits for the recipient's daytime (`subscribers.timezone`, else `tz`). Overrides the project's `settings.send_window`; `false` bypasses it. |
+| `transactional` | `bool` | ❌ | Marks a message the subscriber cannot decline: password reset, magic link, email verification, order receipt, security alert. Subscription preferences (topic, workflow, channel and global opt-outs) are not consulted, at enqueue **and** at send, so an opt-out can never lock somebody out of their own account. Suppressions still apply: a hard bounce or a spam complaint keeps blocking the address, because that is a deliverability signal and not a choice. Never set it on marketing — `/v1/batch` rejects the field with `422`. |
 
 **Response:**
 
@@ -318,6 +319,10 @@ timezone. `idempotency_key` (optional) dedupes the whole fan-out: the key is dec
 subscriber and channel, so replaying the same call after a timeout creates no
 second job for anyone already queued or sent. The response reports
 `jobs_created` and `jobs_deduplicated`.
+
+`transactional` is **rejected** here with `422`: a fan-out is marketing by
+definition, and the flag disables the opt-out check. Undeclinable messages go
+out one by one through `/v1/send`.
 
 Send the same notification to multiple subscribers.
 
