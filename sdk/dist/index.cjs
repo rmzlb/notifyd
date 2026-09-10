@@ -202,6 +202,19 @@ function templateFromWire(t) {
 function suppressionFromWire(s) {
   return { id: s.id, email: s.email, reason: s.reason, detail: s.detail ?? null, createdAt: s.created_at, releasedAt: s.released_at ?? null };
 }
+function segmentToWire(s) {
+  if (!s) return void 0;
+  return {
+    locale: s.locale,
+    timezone: s.timezone,
+    has_email: s.hasEmail,
+    has_phone: s.hasPhone,
+    created_after: s.createdAfter,
+    created_before: s.createdBefore,
+    data: s.data,
+    where: s.where
+  };
+}
 function sendWindowToWire(w) {
   if (w === void 0) return void 0;
   if (w === false) return false;
@@ -277,6 +290,7 @@ function createNotifydClient(config) {
           channel: input.channel,
           channels: input.channels,
           subscribers: input.subscribers,
+          segment: segmentToWire(input.segment),
           template: input.template,
           subject: input.subject,
           body: input.body,
@@ -451,6 +465,10 @@ function createNotifydClient(config) {
         ticket: response.ticket,
         expiresInSeconds: response.expires_in_seconds
       };
+    },
+    /** How many subscribers a segment matches, with a few ids, before spending a batch on it. */
+    async previewSegment(segment) {
+      return request("/v1/segments/preview", { method: "POST", auth: "apiKey", body: segmentToWire(segment) });
     },
     // ── Jobs ────────────────────────────────────────────────────────────────
     /** Status of one job returned by `send` or `batch`. */

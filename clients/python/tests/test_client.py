@@ -76,6 +76,18 @@ def test_topic_travels_on_send_batch_template_and_preferences(client):
     assert body(recorded[3]) == {"preferences": [{"channel": "*", "topic": "tips", "enabled": False}]}
 
 
+def test_batch_takes_a_segment_or_a_list(client):
+    nd, recorded = client
+    nd.batch(segment={"data": {"plan": "pro"}, "has_email": True}, channel="email", template="news")
+    assert body(recorded[0]) == {"segment": {"data": {"plan": "pro"}, "has_email": True}, "channel": "email", "template": "news"}
+    nd.preview_segment({"where": [{"field": "data.seats", "op": "gte", "value": 5}]})
+    assert recorded[1].url.path == "/v1/segments/preview"
+    with pytest.raises(ValueError):
+        nd.batch(channel="email", body="x")
+    with pytest.raises(ValueError):
+        nd.batch(subscribers=["a"], segment={}, channel="email", body="x")
+
+
 def test_send_requires_a_channel(client):
     nd, _ = client
     with pytest.raises(ValueError):

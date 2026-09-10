@@ -58,7 +58,8 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 - other 4xx, invalid recipient, suppression list: failed immediately
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
-POST /v1/batch accepts idempotency_key (declined per subscriber and channel) and `topic`; reports jobs_created, jobs_deduplicated and jobs_skipped (opt-outs).
+POST /v1/batch takes "subscribers": [ids] OR "segment": {filter} (see SEGMENTS), accepts idempotency_key (declined per
+subscriber and channel), `topic`, `track`; reports jobs_created, jobs_deduplicated, jobs_skipped (opt-outs), subscribers.
 Send windows: project settings.send_window (PATCH /v1/admin/projects/:id {send_window}) or per request; applies to marketing email
 (priority>=80 / campaign tag) unless applies_to=all; recipient timezone from subscribers.timezone (POST /v1/subscribers {timezone}).
 Bulk email (priority>=80 or tag category=campaign|marketing|newsletter) gets List-Unsubscribe + one-click headers pointing at PUBLIC_URL/u/<token>;
@@ -191,6 +192,21 @@ Response rows: {"channel", "workflow_id", "topic", "enabled"} — `topic` and `w
 Everything is allowed by default. Decision order, most specific first:
 (channel, topic) > ("*", topic) > (channel, workflow or template id) > (channel, "*") > ("*", "*").
 Enforced at enqueue (no job created, listed in `skipped`) and again by the worker.
+
+## SEGMENTS
+
+POST /v1/segments/preview — Body: a segment. Response: {"count": n, "sample": ["id", ...]} (10 ids).
+POST /v1/batch {"segment": {...}, ...} — same filter, one job per matching subscriber and channel.
+Segment:
+{
+  "locale": "fr" | ["fr", "be"],           "timezone": "Europe/Paris",
+  "has_email": true, "has_phone": false,    "created_after": "2026-01-01T00:00:00Z", "created_before": "...",
+  "data": {"plan": "pro", "country": ["FR", "BE"]},        // eq / in on subscriber data keys
+  "where": [{"field": "data.seats", "op": "gte", "value": 5}, {"field": "email", "op": "contains", "value": "@acme.com"}]
+}
+Fields: locale, timezone, email, phone, first_name, last_name, created_at, data.<key> (dots for nesting: data.company.size).
+Operators: eq, neq, in, not_in, exists (value true/false), contains, gt, gte, lt, lte (numbers; RFC 3339 for created_at).
+Everything is bound as a parameter; an empty segment means every subscriber of the project.
 
 ## TRACKING (opens and clicks, provider-independent)
 

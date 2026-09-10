@@ -277,7 +277,11 @@ pub const PRIORITY_BULK: i16 = 80;
 pub struct BatchRequest {
     pub channel: Option<String>,
     pub channels: Option<Vec<String>>,
+    /// Explicit recipients. Either this or `segment`.
+    #[serde(default)]
     pub subscribers: Vec<String>,
+    /// Every subscriber matching a filter (see `segments.rs`). Either this or `subscribers`.
+    pub segment: Option<crate::segments::Segment>,
     pub template: Option<String>,
     pub subject: Option<String>,
     pub body: Option<String>,
@@ -719,6 +723,41 @@ pub async fn batch_notification(
             .collect()
     });
 
+    // Recipients: an explicit list, or a segment resolved to (id, timezone) pairs.
+    let (subscribers, segment_timezones): (Vec<String>, std::collections::HashMap<String, String>) =
+        match (&req.segment, req.subscribers.is_empty()) {
+            (Some(_), false) => {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(json!({"error": "give either 'subscribers' or 'segment', not both"})),
+                ))
+            }
+            (Some(segment), true) => {
+                let rows = crate::segments::resolve(&state.pool, &project.id, segment)
+                    .await
+                    .map_err(|error| {
+                        (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            Json(json!({ "error": error })),
+                        )
+                    })?;
+                let tz = rows
+                    .iter()
+                    .filter_map(|(id, tz)| tz.clone().map(|tz| (id.clone(), tz)))
+                    .collect();
+                (rows.into_iter().map(|(id, _)| id).collect(), tz)
+            }
+            (None, true) => {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(
+                        json!({"error": "'subscribers' (list of ids) or 'segment' (filter) is required"}),
+                    ),
+                ))
+            }
+            (None, false) => (req.subscribers.clone(), Default::default()),
+        };
+
     let requested_at = req.scheduled_at.unwrap_or_else(Utc::now);
     let priority = resolve_priority(req.priority.as_ref(), PRIORITY_BULK).map_err(|error| {
         (
@@ -748,7 +787,7 @@ pub async fn batch_notification(
             Json(json!({ "error": error })),
         )
     })?;
-    let prefs = crate::topics::load_rows(&state.pool, &project.id, &req.subscribers)
+    let prefs = crate::topics::load_rows(&state.pool, &project.id, &subscribers)
         .await
         .map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, {
@@ -768,12 +807,14 @@ pub async fn batch_notification(
     });
 
     // Recipient timezones in one query (only when a window applies).
-    let timezones: std::collections::HashMap<String, String> = if window.is_some() {
+    let timezones: std::collections::HashMap<String, String> = if req.segment.is_some() {
+        segment_timezones
+    } else if window.is_some() {
         sqlx::query_as::<_, (String, Option<String>)>(
             "SELECT id, timezone FROM subscribers WHERE project_id = $1 AND id = ANY($2)",
         )
         .bind(&project.id)
-        .bind(&req.subscribers)
+        .bind(&subscribers)
         .fetch_all(&state.pool)
         .await
         .map_err(|e| {
@@ -798,7 +839,7 @@ pub async fn batch_notification(
     let mut col_scheduled: Vec<DateTime<Utc>> = Vec::new();
     let mut col_idem: Vec<Option<String>> = Vec::new();
     let mut jobs_skipped = 0usize;
-    for subscriber_id in &req.subscribers {
+    for subscriber_id in &subscribers {
         let scheduled_at = windowed_schedule(
             window.as_ref(),
             requested_at,
@@ -854,8 +895,27 @@ pub async fn batch_notification(
         "jobs_created": total,
         "jobs_deduplicated": deduplicated,
         "jobs_skipped": jobs_skipped,
-        "subscribers": req.subscribers.len(),
+        "subscribers": subscribers.len(),
         "channels": channels,
         "topic": topic,
     })))
+}
+
+/// POST /v1/segments/preview — how many subscribers a segment matches, with
+/// a few ids, before spending a batch on it.
+pub async fn preview_segment(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(segment): Json<crate::segments::Segment>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let project = extract_project(&state, &headers).await?;
+    let (count, sample) = crate::segments::preview(&state.pool, &project.id, &segment)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    Ok(Json(json!({ "count": count, "sample": sample })))
 }

@@ -195,7 +195,8 @@ class Notifyd(_Base):
     def batch(
         self,
         *,
-        subscribers: Sequence[str],
+        subscribers: Optional[Sequence[str]] = None,
+        segment: Optional[Mapping[str, Any]] = None,
         channel: Optional[Channel] = None,
         channels: Optional[Sequence[Channel]] = None,
         template: Optional[str] = None,
@@ -214,14 +215,18 @@ class Notifyd(_Base):
     ) -> Json:
         """Send the same message to many subscribers in one call (one job per subscriber and channel).
 
-        Returns `{"success": true, "jobs_created": n, "jobs_deduplicated": n, "jobs_skipped": n, "subscribers": n,
-        "channels": [...], "topic": ...}`; `jobs_skipped` counts subscriber × channel opt-outs.
+        Give `subscribers` (ids) or `segment` (a filter, e.g. `{"data": {"plan": "pro"}, "has_email": True}`;
+        see `preview_segment`). Returns `{"success": true, "jobs_created": n, "jobs_deduplicated": n,
+        "jobs_skipped": n, "subscribers": n, "channels": [...], "topic": ...}`.
         """
         if channel is None and not channels:
             raise ValueError("batch() needs `channel` or `channels`")
+        if (subscribers is None) == (segment is None):
+            raise ValueError("batch() needs exactly one of `subscribers` or `segment`")
         payload = _compact(
             {
-                "subscribers": list(subscribers),
+                "subscribers": list(subscribers) if subscribers is not None else None,
+                "segment": dict(segment) if segment is not None else None,
                 "channel": channel,
                 "channels": list(channels) if channels else None,
                 "template": template,
@@ -240,6 +245,10 @@ class Notifyd(_Base):
             }
         )
         return self._request("POST", "/v1/batch", json=payload)
+
+    def preview_segment(self, segment: Mapping[str, Any]) -> Json:
+        """`{"count": n, "sample": [ids]}` for a segment, before spending a batch on it."""
+        return self._request("POST", "/v1/segments/preview", json=dict(segment))
 
     # ── Jobs ──────────────────────────────────────────────────────────────
     def get_job(self, job_id: str) -> Json:

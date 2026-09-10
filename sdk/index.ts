@@ -77,10 +77,30 @@ export interface SendNotificationResponse {
   skipped: Array<{ channel: string; reason: string }>;
 }
 
+/** Who a batch goes to when it is not an explicit list: a filter on subscribers. */
+export interface Segment {
+  locale?: string | string[];
+  timezone?: string | string[];
+  hasEmail?: boolean;
+  hasPhone?: boolean;
+  createdAfter?: string;
+  createdBefore?: string;
+  /** Equality (scalar) or membership (array) on `data.<key>`. */
+  data?: Record<string, string | number | boolean | Array<string | number | boolean>>;
+  where?: Array<{
+    field: 'locale' | 'timezone' | 'email' | 'phone' | 'first_name' | 'last_name' | 'created_at' | `data.${string}`;
+    op: 'eq' | 'neq' | 'in' | 'not_in' | 'exists' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte';
+    value?: unknown;
+  }>;
+}
+
 export interface BatchNotificationInput {
   channel?: NotifydChannel;
   channels?: NotifydChannel[];
-  subscribers: string[];
+  /** Explicit recipients. Give this or `segment`. */
+  subscribers?: string[];
+  /** Every subscriber matching the filter. Give this or `subscribers`. */
+  segment?: Segment;
   template?: string;
   subject?: string;
   body?: string;
@@ -642,6 +662,20 @@ function suppressionFromWire(s: WireSuppression): Suppression {
   return { id: s.id, email: s.email, reason: s.reason, detail: s.detail ?? null, createdAt: s.created_at, releasedAt: s.released_at ?? null };
 }
 
+function segmentToWire(s: Segment | undefined): unknown {
+  if (!s) return undefined;
+  return {
+    locale: s.locale,
+    timezone: s.timezone,
+    has_email: s.hasEmail,
+    has_phone: s.hasPhone,
+    created_after: s.createdAfter,
+    created_before: s.createdBefore,
+    data: s.data,
+    where: s.where,
+  };
+}
+
 function sendWindowToWire(w: SendWindow | false | undefined): unknown {
   if (w === undefined) return undefined;
   if (w === false) return false;
@@ -752,6 +786,7 @@ export function createNotifydClient(config: NotifydClientConfig) {
           channel: input.channel,
           channels: input.channels,
           subscribers: input.subscribers,
+          segment: segmentToWire(input.segment),
           template: input.template,
           subject: input.subject,
           body: input.body,
@@ -974,6 +1009,11 @@ export function createNotifydClient(config: NotifydClientConfig) {
         ticket: response.ticket,
         expiresInSeconds: response.expires_in_seconds,
       };
+    },
+
+    /** How many subscribers a segment matches, with a few ids, before spending a batch on it. */
+    async previewSegment(segment: Segment): Promise<{ count: number; sample: string[] }> {
+      return request<{ count: number; sample: string[] }>('/v1/segments/preview', { method: 'POST', auth: 'apiKey', body: segmentToWire(segment) });
     },
 
     // ── Jobs ────────────────────────────────────────────────────────────────

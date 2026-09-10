@@ -180,6 +180,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 - **Retries** — 30 s → 2 m → 10 m → 30 m → 2 h with jitter, 4xx fail fast, rejected batches fall back item by item
 - **Failover** — second email provider with a circuit breaker (`EMAIL_FALLBACK_PROVIDER`)
 - **Send windows** — quiet hours per project, evaluated in each subscriber's timezone
+- **Segments** — `batch` to "plan = pro and country in FR, BE" with a small filter vocabulary compiled to bound SQL; preview the count first
 - **Scheduling, idempotency, stuck-job reaper, batch idempotency**
 
 **Governance**
@@ -266,7 +267,8 @@ Inbox endpoints also accept a subscriber JWT.
 | Method | Endpoint | What it does |
 |--------|----------|--------------|
 | `POST` | `/v1/send` | Send on one or several channels |
-| `POST` | `/v1/batch` | Send to many subscribers (bulk lane, idempotent) |
+| `POST` | `/v1/batch` | Send to a list of subscribers or to a `segment` filter (bulk lane, idempotent) |
+| `POST` | `/v1/segments/preview` | Count and sample the subscribers a segment matches |
 | `GET` | `/v1/jobs/:id` | Status, provider, attempts, last error |
 | `GET` | `/v1/inbox/:id` · `/stream` | In-app inbox, SSE realtime stream |
 | `POST` | `/v1/workflows/trigger` | Trigger an event-based workflow |

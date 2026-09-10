@@ -70,6 +70,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/send", post(send::send_notification))
         .route("/schedule", post(send::send_notification))
         .route("/batch", post(send::batch_notification))
+        .route("/segments/preview", post(send::preview_segment))
         // Jobs
         .route("/jobs/:id", get(jobs::get_job).delete(jobs::cancel_job))
         // Subscribers (list + create)

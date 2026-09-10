@@ -10,6 +10,7 @@ mod middleware;
 mod ops;
 mod pacing;
 mod pii;
+mod segments;
 mod send_window;
 mod sse;
 mod templates;

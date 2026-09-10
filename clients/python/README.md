@@ -40,7 +40,7 @@ async with AsyncNotifyd("http://localhost:3400", api_key="nd_...") as nd:
 
 | Area | Methods |
 | --- | --- |
-| Send | `send`, `batch` (one message, many subscribers, deduplicated by `idempotency_key`) |
+| Send | `send`, `batch` (a list of ids or a `segment` filter, deduplicated by `idempotency_key`), `preview_segment` |
 | Jobs | `get_job`, `cancel_job`, `retry_job` |
 | Subscribers | `upsert_subscriber`, `get_subscriber`, `list_subscribers`, `delete_subscriber` |
 | Preferences | `get_preferences`, `set_preferences` (per channel and per topic or workflow; `"*"` = all) |

@@ -79,10 +79,29 @@ interface SendNotificationResponse {
         reason: string;
     }>;
 }
+/** Who a batch goes to when it is not an explicit list: a filter on subscribers. */
+interface Segment {
+    locale?: string | string[];
+    timezone?: string | string[];
+    hasEmail?: boolean;
+    hasPhone?: boolean;
+    createdAfter?: string;
+    createdBefore?: string;
+    /** Equality (scalar) or membership (array) on `data.<key>`. */
+    data?: Record<string, string | number | boolean | Array<string | number | boolean>>;
+    where?: Array<{
+        field: 'locale' | 'timezone' | 'email' | 'phone' | 'first_name' | 'last_name' | 'created_at' | `data.${string}`;
+        op: 'eq' | 'neq' | 'in' | 'not_in' | 'exists' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte';
+        value?: unknown;
+    }>;
+}
 interface BatchNotificationInput {
     channel?: NotifydChannel;
     channels?: NotifydChannel[];
-    subscribers: string[];
+    /** Explicit recipients. Give this or `segment`. */
+    subscribers?: string[];
+    /** Every subscriber matching the filter. Give this or `subscribers`. */
+    segment?: Segment;
     template?: string;
     subject?: string;
     body?: string;
@@ -391,6 +410,11 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     markRead(subscriberId: string, messageId: string, read?: boolean): Promise<UpdateInboxMessageResponse>;
     markAllRead(subscriberId: string): Promise<MarkAllReadResponse>;
     createStreamTicket(subscriberId: string): Promise<StreamTicketResponse>;
+    /** How many subscribers a segment matches, with a few ids, before spending a batch on it. */
+    previewSegment(segment: Segment): Promise<{
+        count: number;
+        sample: string[];
+    }>;
     /** Status of one job returned by `send` or `batch`. */
     getJob(id: string): Promise<Job>;
     /** Cancel a pending or scheduled job. */
@@ -460,4 +484,4 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     openInboxStream(subscriberId: string, options?: OpenInboxStreamOptions): Promise<OpenInboxStreamResult>;
 };
 
-export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushToken, type PushTokensResponse, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };
+export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushToken, type PushTokensResponse, type Segment, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };
