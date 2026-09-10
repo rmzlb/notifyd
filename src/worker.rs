@@ -1005,7 +1005,15 @@ async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
 }
 
 async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
-    if let Some(sub_id) = &job.subscriber_id {
+    // Same exemption as the batch path above: a transactional job carries its
+    // own permission in the payload and must not be re-filtered here. Without
+    // this guard the flag only held for email (which goes through the grouped
+    // path) and a Telegram password reset was still dropped on an opt-out.
+    if let Some(sub_id) = job
+        .subscriber_id
+        .as_ref()
+        .filter(|_| !is_transactional(&job.payload))
+    {
         if !workflow_engine::check_preference(
             state,
             &job.project_id,
