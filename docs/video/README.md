@@ -34,3 +34,19 @@ npx remotion render src/index.ts ShortNothingLost out/short-nothing-lost.mp4 --c
 
 Post rules that worked for comparable launches: upload the MP4 natively, no
 link in the tweet body, GitHub link in the first reply, one short per post.
+
+## Films for X (30–46 s, 1920×1080)
+
+Three longer cuts in `src/Films.tsx` that mix the "one call", "your agent on
+call" and "less to run" angles, efficiency first: `FilmOne` (three chapters,
+42 s), `FilmTalk` (the whole film is a chat with the agent, live counters on
+top, 46 s), `FilmNumbers` (before/after split screen, 33 s).
+
+```bash
+npm run render:films                       # out/film-one.mp4, film-talk.mp4, film-numbers.mp4
+REMOTION_LOGO=n-dot npm run render:films   # same films with another mark from public/logos/
+```
+
+`public/logos/` holds the logo candidates (badge, prompt, n-dot, mail-badge,
+each as dark tile, light tile and bare mark); `REMOTION_LOGO` picks one
+(default `badge`). The chosen mark becomes `docs/assets/notifyd-logo.svg`.

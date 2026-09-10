@@ -11,7 +11,7 @@ const FPS = 30;
 const S = (sec: number) => Math.round(sec * FPS);
 export const SHORT_FRAMES = S(15);
 
-const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+export const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <AbsoluteFill style={{ background: C.bg, color: C.text, fontFamily: font, overflow: "hidden" }}>
     <Grid />
     {children}
@@ -19,7 +19,7 @@ const Stage: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 /** Fine grille de fond, façon terminal, qui donne de la profondeur sans distraire. */
-const Grid: React.FC = () => (
+export const Grid: React.FC = () => (
   <AbsoluteFill
     style={{
       backgroundImage: `linear-gradient(${C.line}22 1px, transparent 1px), linear-gradient(90deg, ${C.line}22 1px, transparent 1px)`,
@@ -29,19 +29,19 @@ const Grid: React.FC = () => (
   />
 );
 
-const Center: React.FC<{ children: React.ReactNode; gap?: number; pad?: number }> = ({ children, gap = 36, pad = 120 }) => (
+export const Center: React.FC<{ children: React.ReactNode; gap?: number; pad?: number }> = ({ children, gap = 36, pad = 120 }) => (
   <AbsoluteFill style={{ padding: pad, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap, textAlign: "center" }}>{children}</AbsoluteFill>
 );
 
-const Big: React.FC<{ children: React.ReactNode; size?: number; color?: string; weight?: number }> = ({ children, size = 84, color = C.text, weight = 800 }) => (
+export const Big: React.FC<{ children: React.ReactNode; size?: number; color?: string; weight?: number }> = ({ children, size = 84, color = C.text, weight = 800 }) => (
   <div style={{ fontSize: size, fontWeight: weight, letterSpacing: -2.5, lineHeight: 1.05, color }}>{children}</div>
 );
 
-const Caption: React.FC<{ children: React.ReactNode; color?: string }> = ({ children, color = C.muted }) => (
+export const Caption: React.FC<{ children: React.ReactNode; color?: string }> = ({ children, color = C.muted }) => (
   <div style={{ fontSize: 40, color, lineHeight: 1.3, maxWidth: 1500 }}>{children}</div>
 );
 
-const Term: React.FC<{ children: React.ReactNode; width?: number; size?: number; title?: string }> = ({ children, width = 1500, size = 34, title = "shell" }) => (
+export const Term: React.FC<{ children: React.ReactNode; width?: number; size?: number; title?: string }> = ({ children, width = 1500, size = 34, title = "shell" }) => (
   <div style={{ width, background: C.panel, border: `2px solid ${C.line}`, borderRadius: 18, boxShadow: "0 30px 80px rgba(0,0,0,.5)", overflow: "hidden" }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 20px", borderBottom: `1px solid ${C.line}`, background: "#12151c" }}>
       <span style={{ width: 14, height: 14, borderRadius: 7, background: "#ff5f57" }} />
@@ -53,20 +53,20 @@ const Term: React.FC<{ children: React.ReactNode; width?: number; size?: number;
   </div>
 );
 
-const Y: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.yellow }}>{children}</span>;
-const G: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.green }}>{children}</span>;
-const R: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.red }}>{children}</span>;
-const M: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.muted }}>{children}</span>;
-const B: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.blue }}>{children}</span>;
+export const Y: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.yellow }}>{children}</span>;
+export const G: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.green }}>{children}</span>;
+export const R: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.red }}>{children}</span>;
+export const M: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.muted }}>{children}</span>;
+export const B: React.FC<{ children: React.ReactNode }> = ({ children }) => <span style={{ color: C.blue }}>{children}</span>;
 
 /** Compteur qui monte avec une courbe douce. */
-const Count: React.FC<{ from: number; to: number; start: number; end: number; suffix?: string; color?: string; size?: number }> = ({ from, to, start, end, suffix = "", color = C.text, size = 120 }) => {
+export const Count: React.FC<{ from: number; to: number; start: number; end: number; suffix?: string; color?: string; size?: number }> = ({ from, to, start, end, suffix = "", color = C.text, size = 120 }) => {
   const frame = useCurrentFrame();
   const v = Math.round(interpolate(frame, [start, end], [from, to], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: (t) => 1 - Math.pow(1 - t, 3) }));
   return <div style={{ fontFamily: mono, fontSize: size, fontWeight: 800, color, letterSpacing: -3, fontVariantNumeric: "tabular-nums" }}>{v.toLocaleString("en").replace(/,/g, " ")}{suffix}</div>;
 };
 
-const Outro: React.FC<{ line: string }> = ({ line }) => (
+export const Outro: React.FC<{ line: string }> = ({ line }) => (
   <Center gap={28}>
     <Appear><div style={{ display: "flex", alignItems: "center", gap: 30 }}><Logo size={120} /><div style={{ fontSize: 132, fontWeight: 800, letterSpacing: -6 }}>notify<Y>d</Y></div></div></Appear>
     <Appear delay={8}><Caption color={C.text}>{line}</Caption></Appear>
@@ -75,7 +75,7 @@ const Outro: React.FC<{ line: string }> = ({ line }) => (
 );
 
 /** Fondu de sortie d'une scène, pour enchaîner sans coupe sèche. */
-const Scene: React.FC<{ from: number; dur: number; children: React.ReactNode }> = ({ from, dur, children }) => {
+export const Scene: React.FC<{ from: number; dur: number; children: React.ReactNode }> = ({ from, dur, children }) => {
   const Inner: React.FC = () => {
     const frame = useCurrentFrame();
     const o = interpolate(frame, [0, 8, dur - 10, dur], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
@@ -86,7 +86,7 @@ const Scene: React.FC<{ from: number; dur: number; children: React.ReactNode }> 
 
 // ── 1 · Un appel, quatre canaux ──────────────────────────────────────────────
 /** Icônes vectorielles (le navigateur de rendu n'a pas de police emoji). */
-const Icon: React.FC<{ kind: "mail" | "sms" | "push" | "inbox"; size?: number; color?: string }> = ({ kind, size = 72, color = C.yellow }) => {
+export const Icon: React.FC<{ kind: "mail" | "sms" | "push" | "inbox"; size?: number; color?: string }> = ({ kind, size = 72, color = C.yellow }) => {
   const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (kind === "mail") return <svg {...common}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3.5 7.5 12 13l8.5-5.5" /></svg>;
   if (kind === "sms") return <svg {...common}><path d="M20 12.5a7.5 7.5 0 0 1-7.5 7.5H5l-1.5 1.5V12.5A7.5 7.5 0 0 1 11 5h1.5a7.5 7.5 0 0 1 7.5 7.5Z" /><path d="M8.5 12.5h7" /></svg>;
@@ -94,7 +94,7 @@ const Icon: React.FC<{ kind: "mail" | "sms" | "push" | "inbox"; size?: number; c
   return <svg {...common}><path d="M6 17V11a6 6 0 1 1 12 0v6l1.5 2H4.5L6 17Z" /><path d="M10 21a2 2 0 0 0 4 0" /></svg>;
 };
 
-const Channel: React.FC<{ icon: "mail" | "sms" | "push" | "inbox"; name: string; detail: string; delay: number }> = ({ icon, name, detail, delay }) => {
+export const Channel: React.FC<{ icon: "mail" | "sms" | "push" | "inbox"; name: string; detail: string; delay: number }> = ({ icon, name, detail, delay }) => {
   const p = useIn(delay);
   const done = useIn(delay + 18);
   return (
@@ -150,7 +150,7 @@ export const ShortOneCall: React.FC = () => (
 );
 
 // ── 2 · Rien ne se perd ──────────────────────────────────────────────────────
-const Provider: React.FC<{ name: string; state: "ok" | "down" | "idle" | "active"; delay?: number }> = ({ name, state, delay = 0 }) => {
+export const Provider: React.FC<{ name: string; state: "ok" | "down" | "idle" | "active"; delay?: number }> = ({ name, state, delay = 0 }) => {
   const p = useIn(delay);
   const color = state === "down" ? C.red : state === "active" ? C.yellow : state === "ok" ? C.green : C.muted;
   const label = state === "down" ? "429 · refusing" : state === "active" ? "delivering" : state === "ok" ? "delivering" : "standby";
@@ -213,7 +213,7 @@ export const ShortNothingLost: React.FC = () => {
 };
 
 // ── 3 · Ton agent est d'astreinte ────────────────────────────────────────────
-const Bubble: React.FC<{ who: "you" | "agent"; children: React.ReactNode; delay: number }> = ({ who, children, delay }) => {
+export const Bubble: React.FC<{ who: "you" | "agent"; children: React.ReactNode; delay: number }> = ({ who, children, delay }) => {
   const p = useIn(delay);
   const you = who === "you";
   return (
@@ -223,7 +223,7 @@ const Bubble: React.FC<{ who: "you" | "agent"; children: React.ReactNode; delay:
   );
 };
 
-const ToolCall: React.FC<{ delay: number; call: string; result: string; ok?: boolean }> = ({ delay, call, result, ok = true }) => {
+export const ToolCall: React.FC<{ delay: number; call: string; result: string; ok?: boolean }> = ({ delay, call, result, ok = true }) => {
   const p = useIn(delay);
   const r = useIn(delay + 16);
   return (
@@ -255,7 +255,7 @@ export const ShortAgentOnCall: React.FC = () => (
 );
 
 // ── 4 · Moins ───────────────────────────────────────────────────────────────
-const Block: React.FC<{ label: string; delay: number; color?: string; small?: boolean }> = ({ label, delay, color = C.line, small }) => {
+export const Block: React.FC<{ label: string; delay: number; color?: string; small?: boolean }> = ({ label, delay, color = C.line, small }) => {
   const p = useIn(delay);
   return (
     <div style={{ opacity: p, transform: `translateY(${(1 - p) * -40}px)`, width: small ? 320 : 460, padding: small ? "18px 26px" : "22px 30px", background: C.panel, border: `2px solid ${color}`, borderRadius: 16, fontFamily: mono, fontSize: small ? 30 : 34, textAlign: "center" }}>
