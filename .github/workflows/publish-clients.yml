@@ -1,0 +1,94 @@
+# Publish the TypeScript client to npm and the Python client to PyPI without
+# any long-lived token: both registries trust this workflow through GitHub's
+# OIDC identity ("trusted publishing"). Trigger: push a tag `clients-vX.Y.Z`
+# whose version matches package.json and clients/python/pyproject.toml, or run
+# it by hand for one registry.
+#
+# One-time setup (registry side, done by the package owner):
+# - PyPI: Account → Publishing → add a *pending publisher* for project
+#   `notifyd-sdk`, owner `rmzlb`, repository `notifyd`, workflow
+#   `publish-clients.yml`, environment `pypi`. Works before the first upload.
+# - npm: trusted publishers are configured in the package's settings page, so
+#   the very first `notifyd-sdk` version is published by hand
+#   (`pnpm build:sdk && npm publish --access public`); then add GitHub Actions
+#   as trusted publisher (`rmzlb` / `notifyd` / `publish-clients.yml`,
+#   environment `npm`) and every later tag publishes itself with provenance.
+name: publish-clients
+
+on:
+  push:
+    tags: ["clients-v*"]
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: "npm, pypi or both"
+        default: both
+        type: choice
+        options: [both, npm, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          npm_v=$(node -p "require('./package.json').version")
+          py_v=$(grep -E '^version = ' clients/python/pyproject.toml | sed -E 's/version = "(.*)"/\1/')
+          [ "$npm_v" = "$py_v" ] || { echo "package.json ($npm_v) and pyproject.toml ($py_v) disagree"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            [ "${GITHUB_REF_NAME}" = "clients-v${npm_v}" ] || { echo "tag ${GITHUB_REF_NAME} does not match version ${npm_v}"; exit 1; }
+          fi
+          echo "version=$npm_v" >> "$GITHUB_OUTPUT"
+
+  npm:
+    needs: check-version
+    if: github.event_name == 'push' || inputs.registry == 'both' || inputs.registry == 'npm'
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:sdk
+      - run: git diff --exit-code -- sdk/dist
+      - run: npm publish --access public
+
+  pypi:
+    needs: check-version
+    if: github.event_name == 'push' || inputs.registry == 'both' || inputs.registry == 'pypi'
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Test and build
+        working-directory: clients/python
+        run: |
+          uv venv
+          uv pip install -e . pytest pytest-asyncio
+          .venv/bin/python -m pytest -q
+          uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/python/dist
