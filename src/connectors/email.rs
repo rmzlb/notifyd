@@ -9,6 +9,16 @@ use tracing::{info, warn};
 /// https://resend.com/docs/api-reference/emails/send-batch-emails
 pub const RESEND_BATCH_MAX: usize = 100;
 
+/// `RESEND_API_BASE` (default `https://api.resend.com`): a proxy or a fake
+/// Resend for local runs and demos.
+fn resend_base() -> String {
+    std::env::var("RESEND_API_BASE")
+        .ok()
+        .map(|b| b.trim().trim_end_matches('/').to_string())
+        .filter(|b| b.starts_with("http"))
+        .unwrap_or_else(|| "https://api.resend.com".to_string())
+}
+
 /// Create the email connector selected by `config.provider`.
 pub fn create_email_connector(config: EmailConfig) -> Box<dyn Connector> {
     match config.provider.as_str() {
@@ -158,7 +168,7 @@ impl Connector for ResendConnector {
         let body = self.build_email_body(req);
         let response = self
             .client
-            .post("https://api.resend.com/emails")
+            .post(format!("{}/emails", resend_base()))
             .bearer_auth(&self.config.api_key)
             .json(&body)
             .send()
@@ -212,7 +222,7 @@ impl Connector for ResendConnector {
         let bodies: Vec<Value> = reqs.iter().map(|r| self.build_email_body(r)).collect();
         let response = match self
             .client
-            .post("https://api.resend.com/emails/batch")
+            .post(format!("{}/emails/batch", resend_base()))
             .bearer_auth(&self.config.api_key)
             .json(&Value::Array(bodies))
             .send()

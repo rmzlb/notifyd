@@ -1282,27 +1282,47 @@ fn job_has_attachments(job: &Job) -> bool {
         .unwrap_or(false)
 }
 
+/// Inline subject/body/body_html from the request, with `{{vars}}` filled in
+/// exactly as for a stored template (`vars` object, else the payload itself).
 fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<String>) {
+    let vars = payload.get("vars").cloned().unwrap_or(payload.clone());
+    let text = |key: &str| {
+        payload
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|t| templates::render(t, &vars))
+    };
     (
-        payload
-            .get("subject")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        payload
-            .get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        payload
-            .get("body_html")
-            .and_then(|v| v.as_str())
-            .map(String::from),
+        text("subject"),
+        text("body").unwrap_or_default(),
+        text("body_html"),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_bodies_get_their_variables() {
+        let payload = serde_json::json!({
+            "subject": "Order {{order}} shipped",
+            "body": "Hi {{first_name}}, parcel {{parcel}} is on its way.",
+            "body_html": "<p>Hi {{first_name}}</p>",
+            "vars": {"first_name": "Alice", "parcel": "FR-2041", "order": 2041}
+        });
+        let (subject, body, html) = inline_from_payload(&payload);
+        assert_eq!(subject.as_deref(), Some("Order 2041 shipped"));
+        assert_eq!(body, "Hi Alice, parcel FR-2041 is on its way.");
+        assert_eq!(html.as_deref(), Some("<p>Hi Alice</p>"));
+        // Without `vars`, top-level keys still fill placeholders (old behaviour kept).
+        let flat = serde_json::json!({"body": "Hello {{name}}", "name": "Bob"});
+        assert_eq!(inline_from_payload(&flat).1, "Hello Bob");
+        assert_eq!(
+            inline_from_payload(&serde_json::json!({"body": "no vars {{x}}"})).1,
+            "no vars {{x}}"
+        );
+    }
 
     #[test]
     fn retry_schedule_grows_and_caps() {
