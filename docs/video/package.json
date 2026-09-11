@@ -10,6 +10,7 @@
     "render:clear": "remotion render src/index.ts Clear out/film-clear.mp4 --codec h264 --crf 20",
     "render:sober": "remotion render src/index.ts SoberTerminal out/film-terminal.mp4 --codec h264 --crf 19 && remotion render src/index.ts SoberDiagram out/film-diagram.mp4 --codec h264 --crf 19",
     "render:mix": "remotion render src/index.ts SoberMix out/film-mix.mp4 --codec h264 --crf 19",
+    "render:final:quiet": "remotion render src/index.ts SoberFinalQuiet out/film-final-quiet-raw.mp4 --codec h264 --crf 18 && ffmpeg -y -i out/film-final-quiet-raw.mp4 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 -shortest -c:v libx264 -pix_fmt yuv420p -color_range tv -profile:v high -level 4.1 -crf 18 -preset slow -c:a aac -b:a 64k -movflags +faststart out/film-final-quiet.mp4",
     "render:final": "remotion render src/index.ts SoberFinal out/film-final-raw.mp4 --codec h264 --crf 18 && ffmpeg -y -i out/film-final-raw.mp4 -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=48000 -shortest -c:v libx264 -pix_fmt yuv420p -color_range tv -profile:v high -level 4.1 -crf 18 -preset slow -c:a aac -b:a 64k -movflags +faststart out/film-final.mp4"
   },
   "dependencies": {

@@ -3,7 +3,7 @@ import { Composition } from "remotion";
 import { Explainer, TOTAL_FRAMES } from "./Explainer";
 import { SHORT_FRAMES, ShortAgentOnCall, ShortLess, ShortNothingLost, ShortOneCall } from "./Shorts";
 import { CLEAR_FRAMES, Clear } from "./Clear";
-import { SOBER_DIAGRAM_FRAMES, SOBER_FINAL_FRAMES, SOBER_MIX_FRAMES, SOBER_TERMINAL_FRAMES, SoberDiagram, SoberFinal, SoberMix, SoberTerminal } from "./Sober";
+import { SOBER_DIAGRAM_FRAMES, SOBER_FINAL_FRAMES, SOBER_MIX_FRAMES, SOBER_TERMINAL_FRAMES, SoberDiagram, SoberFinal, SoberFinalQuiet, SoberMix, SoberTerminal } from "./Sober";
 import { FILM_NUMBERS_FRAMES, FILM_ONE_FRAMES, FILM_TALK_FRAMES, FILM_THREE_WAYS_FRAMES, FilmNumbers, FilmOne, FilmTalk, FilmThreeWays } from "./Films";
 
 export const Root: React.FC = () => (
@@ -16,6 +16,7 @@ export const Root: React.FC = () => (
     <Composition id="FilmOne" component={FilmOne} durationInFrames={FILM_ONE_FRAMES} fps={30} width={1920} height={1080} />
     <Composition id="FilmTalk" component={FilmTalk} durationInFrames={FILM_TALK_FRAMES} fps={30} width={1920} height={1080} />
     <Composition id="SoberFinal" component={SoberFinal} durationInFrames={SOBER_FINAL_FRAMES} fps={30} width={1920} height={1080} />
+    <Composition id="SoberFinalQuiet" component={SoberFinalQuiet} durationInFrames={SOBER_FINAL_FRAMES} fps={30} width={1920} height={1080} />
     <Composition id="SoberMix" component={SoberMix} durationInFrames={SOBER_MIX_FRAMES} fps={30} width={1920} height={1080} />
     <Composition id="SoberTerminal" component={SoberTerminal} durationInFrames={SOBER_TERMINAL_FRAMES} fps={30} width={1920} height={1080} />
     <Composition id="SoberDiagram" component={SoberDiagram} durationInFrames={SOBER_DIAGRAM_FRAMES} fps={30} width={1920} height={1080} />
