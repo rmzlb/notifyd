@@ -26,15 +26,15 @@ acting, they move.
 |---|---|
 | Repository metadata (topics, description, homepage, Discussions) | done |
 | Release `v0.2.0`, image `ghcr.io/rmzlb/notifyd` public (amd64, arm64), GitHub Release | done |
-| Official MCP registry `io.github.rmzlb/notifyd` 0.2.0 | done, status `active` |
-| PR punkpeye/awesome-mcp-servers | open, #13725 |
+| Official MCP registry `io.github.rmzlb/notifyd` | 0.2.0, 0.2.1, 0.2.2 `active`; 0.3.0 published from the `mcp-registry` workflow on 2026-09-11 |
+| PR punkpeye/awesome-mcp-servers | open, #13725, checks green; the maintainer now requires the server to be listed on Glama with its score badge in the entry, so it waits for the Glama step below |
 | mcpservers.org (free submission, Communication) | submitted, review within 12 h |
 | selfh.st, Self-Host Weekly "Project Launch" | submitted |
 | Social preview image | uploaded |
 | Technical article + GitHub Pages site | published: https://rmzlb.github.io/notifyd/ |
 | Explainer video (Remotion) | GIF in README, MP4 on release v0.2.1 |
 | Release binaries, installer, Nix flake | v0.2.1 |
-| crates.io `notifyd` 0.2.0 | published (`cargo install notifyd`), lib.rs indexes it automatically |
+| crates.io `notifyd` | 0.3.0 published 2026-09-11 (`cargo install notifyd`); the crate now packages only the root README and LICENSE (the `include` patterns were matching every `node_modules` and `.venv` copy) |
 | GitHub MCP Registry inclusion mail | sent to partnerships@github.com |
 | Announcement on X (@Rmzlb) | v0.2.0: posted 2026-09-06. Launch thread with the 31 s film and the measured Novu comparison: a first attempt on 2026-09-11 11:26 UTC (link in the first post, US asleep) was deleted after 65 impressions; scheduled again for 2026-09-15 16:00 UTC, first post without link and ending on a question, repo and numbers in the replies |
 | Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
@@ -44,7 +44,7 @@ acting, they move.
 | `examples/`, `docs/ROADMAP.md`, README first screen rewritten (efficiency first) | done (2026-09-10) |
 | Catch-up plan shipped: topics, own open/click tracking, segments, native APNs, `notifyd` CLI | done (2026-09-10), migrations 021–023 |
 | Logo `nd` (n white, d yellow, small rs), launch film "Clear" (30 s, black on white) | done (2026-09-10) |
-| Glama "Add Server" | needs a GitHub login in a browser |
+| Glama "Add Server" | needs a GitHub login in a browser (rmzlb); unblocks #13725 once the badge `https://glama.ai/mcp/servers/rmzlb/notifyd/badges/score.svg` renders a score |
 | awesome-selfhosted | eligible from 2027-01-06 (4 months after the first release) |
 | awesome-rust | eligible at 50 stars or 2 000 crate downloads |
 
