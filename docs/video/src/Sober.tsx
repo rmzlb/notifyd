@@ -248,8 +248,8 @@ export const SOBER_DIAGRAM_FRAMES = S(38);
 const Node: React.FC<{ x: number; y: number; w?: number; h?: number; at: number; label: string; sub?: string; accent?: string; mono?: boolean; dark?: boolean }> = ({ x, y, w = 260, h = 88, at, label, sub, accent, mono, dark }) => (
   <Fade at={at} style={{ position: "absolute", left: x, top: y, width: w, height: h }} dy={6}>
     <div style={{ width: "100%", height: "100%", background: dark ? D.panel : L.panel, border: `1.5px solid ${accent ?? (dark ? D.line : L.line)}`, borderRadius: 12, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", boxShadow: dark ? "0 8px 30px rgba(0,0,0,.35)" : "0 8px 30px rgba(28,28,28,.06)" }}>
-      <div style={{ fontFamily: mono ? MONO : SANS, fontSize: 26, fontWeight: 600, color: dark ? D.text : L.ink }}>{label}</div>
-      {sub && <div style={{ fontFamily: MONO, fontSize: 18, color: accent ?? (dark ? D.muted : L.muted), marginTop: 4 }}>{sub}</div>}
+      <div style={{ fontFamily: mono ? MONO : SANS, fontSize: dark ? 30 : 26, fontWeight: 600, color: dark ? D.text : L.ink }}>{label}</div>
+      {sub && <div style={{ fontFamily: MONO, fontSize: dark ? 20 : 18, color: accent ?? (dark ? D.muted : L.muted), marginTop: 4 }}>{sub}</div>}
     </div>
   </Fade>
 );
@@ -453,6 +453,181 @@ export const SoberMix: React.FC = () => (
 
     <Shot from={S(30)} dur={S(4)} zoom={false}>
       <EndCard />
+    </Shot>
+  </AbsoluteFill>
+);
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Film 4 · « Final » — 31 s, chaque image est le schéma ou le terminal ; le
+// titre est en surimpression du schéma ; gros caractères pour le fil X mobile.
+// ══════════════════════════════════════════════════════════════════════════════
+export const SOBER_FINAL_FRAMES = S(31);
+
+const BigCaption: React.FC<{ children: React.ReactNode; at?: number }> = ({ children, at = 16 }) => (
+  <Fade at={at} style={{ position: "absolute", left: 0, right: 0, bottom: 64, textAlign: "center", fontFamily: SERIF, fontSize: 48, lineHeight: 1.3, color: D.text, padding: "0 200px" }}>
+    {children}
+  </Fade>
+);
+
+/** Terminal du film final : 30 px, lignes courtes. */
+const BigTerminal: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div style={{ width: 1720, background: D.panel, border: `1px solid ${D.line}`, borderRadius: 14, boxShadow: "0 40px 120px rgba(0,0,0,.55)", overflow: "hidden" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: `1px solid ${D.line}`, background: "#202020" }}>
+      <span style={{ width: 12, height: 12, borderRadius: 6, background: "#3a3a3a" }} />
+      <span style={{ width: 12, height: 12, borderRadius: 6, background: "#3a3a3a" }} />
+      <span style={{ width: 12, height: 12, borderRadius: 6, background: "#3a3a3a" }} />
+      <span style={{ marginLeft: "auto", marginRight: "auto", fontFamily: MONO, fontSize: 20, color: D.muted }}>Terminal — notifyd</span>
+    </div>
+    <pre style={{ margin: 0, padding: "28px 32px", fontFamily: MONO, fontSize: 34, lineHeight: 1.5, color: D.text, whiteSpace: "pre-wrap", textAlign: "left", minHeight: 560 }}>{children}</pre>
+  </div>
+);
+
+const BigLine: React.FC<{ at: number; children?: React.ReactNode; type?: string; cps?: number }> = ({ at, children, type, cps = 90 }) => {
+  const f = useCurrentFrame();
+  if (f < at) return null;
+  if (type !== undefined) {
+    const n = Math.min(type.length, Math.floor(((f - at) / FPS) * cps));
+    return (
+      <div>
+        <span style={{ color: D.muted }}>$ </span>
+        {type.slice(0, n)}
+        {n < type.length && <span style={{ display: "inline-block", width: 16, height: 34, background: D.text, verticalAlign: "-6px", marginLeft: 2 }} />}
+      </div>
+    );
+  }
+  const p = ease(interpolate(f, [at, at + 6], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  return <div style={{ opacity: p }}>{children}</div>;
+};
+
+/** Le schéma sombre, réutilisé en ouverture et en fin. `agent` ajoute la couche MCP. */
+const DarkDiagram: React.FC<{ agent?: boolean; emailSub?: string }> = ({ agent, emailSub }) => (
+  <div style={{ position: "absolute", inset: 0, transform: "translateX(180px) translateY(40px)" }}>
+    <Node dark x={120} y={440} w={280} h={96} at={0} label="your app" sub="POST /v1/send" />
+    <Wire x={400} y={488} w={160} at={4} color={D.line} />
+    <Node dark x={560} y={396} w={380} h={184} at={6} label="notifyd" sub="one binary · Postgres" accent={D.text} />
+    <Wire x={940} y={488} w={120} at={10} color={D.line} />
+    <Fade at={12} style={{ position: "absolute", left: 1059, top: 206, height: 646, borderLeft: `2px solid ${D.line}` }} dy={0}><span /></Fade>
+    {CHANNELS.map((c, i) => (
+      <React.Fragment key={c}>
+        <Wire x={1060} y={206 + i * 92} w={120} at={12 + i * 2} color={D.line} />
+        <Node dark x={1180} y={172 + i * 92} w={280} h={68} at={14 + i * 3} label={c} mono accent={c === "email" && emailSub ? D.green : undefined} sub={c === "email" ? emailSub : undefined} />
+      </React.Fragment>
+    ))}
+    {agent && (
+      <>
+        <Node dark x={560} y={150} w={380} h={92} at={S(0.6)} label="your agent" sub="MCP tools" accent={D.yellow} />
+        <Fade at={S(0.8)} style={{ position: "absolute", left: 749, top: 242, height: 154, borderLeft: `2px dashed ${D.yellow}` }} dy={0}><span /></Fade>
+        <Fade at={S(1.3)} style={{ position: "absolute", left: 100, top: 130, width: 420 }}>
+          <div style={{ background: D.panel, border: `1.5px solid ${D.line}`, borderRadius: 14, padding: "18px 22px", fontFamily: SANS, fontSize: 27, lineHeight: 1.4, color: D.text }}>
+            <div style={{ fontFamily: MONO, fontSize: 20, color: D.muted, marginBottom: 6 }}>Telegram · 19:07 · notifyd</div>
+            1 warning. Lane email paused after a provider 429. Transient, nothing lost.
+          </div>
+        </Fade>
+      </>
+    )}
+  </div>
+);
+
+export const SoberFinal: React.FC = () => (
+  <AbsoluteFill style={{ background: D.bg, color: D.text, fontFamily: SANS }}>
+    {/* 0 · schéma + titre en surimpression, 3 s */}
+    <Shot from={0} dur={S(3)} zoom={false}>
+      <div style={{ position: "absolute", inset: 0, opacity: 0.6, transform: "translate(520px, 140px) scale(0.72)", transformOrigin: "0 0" }}><DarkDiagram /></div>
+      <Fade at={4} style={{ position: "absolute", left: 120, top: 110, display: "flex", flexDirection: "column", gap: 22 }}>
+        <Mark size={52} />
+        <div style={{ fontFamily: SERIF, fontSize: 96, lineHeight: 1.08, color: D.text, letterSpacing: -1, maxWidth: 1100 }}>One binary for every notification.</div>
+        <div style={{ fontFamily: MONO, fontSize: 30, color: D.muted }}>self-hosted · Postgres only · operated by your agent</div>
+      </Fade>
+    </Shot>
+
+    {/* 1 · up */}
+    <Shot from={S(3)} dur={S(4.4)}>
+      <Screen>
+        <BigTerminal>
+          <BigLine at={0} type="docker compose up -d" />
+          <BigLine at={S(0.6)}><M> Container notifyd-db  Healthy</M></BigLine>
+          <BigLine at={S(0.8)}><M> Container notifyd     Started</M></BigLine>
+          <BigLine at={S(1.2)} type="curl localhost:3400/v1/health" />
+          <BigLine at={S(1.9)}>{"{"}<K>"status"</K>: <V>"ok"</V>, <K>"db"</K>: <V>"ok"</V>, <K>"version"</K>: <V>"0.2.2"</V>{"}"}</BigLine>
+        </BigTerminal>
+      </Screen>
+      <BigCaption at={S(2.2)}>Postgres is the only dependency.</BigCaption>
+    </Shot>
+
+    {/* 2 · send */}
+    <Shot from={S(7.4)} dur={S(4.8)}>
+      <Screen>
+        <BigTerminal>
+          <BigLine at={0} type="curl -X POST localhost:3400/v1/send -d '{" cps={110} />
+          <BigLine at={S(0.6)}>{"  "}<K>"subscriber_id"</K>: <V>"cust_4821"</V>,</BigLine>
+          <BigLine at={S(0.75)}>{"  "}<K>"channels"</K>: [<V>"email"</V>, <V>"in_app"</V>, <V>"telegram"</V>],</BigLine>
+          <BigLine at={S(0.9)}>{"  "}<K>"subject"</K>: <V>"Your order shipped"</V>,</BigLine>
+          <BigLine at={S(1.05)}>{"  "}<K>"body"</K>: <V>"Hi {"{{first_name}}"}, parcel FR-2041 is on its way."</V> {"}'"}</BigLine>
+          <BigLine at={S(1.7)}>{"{"}<K>"success"</K>: true, <K>"channels"</K>: [<V>"email"</V>, <V>"in_app"</V>, <V>"telegram"</V>],</BigLine>
+          <BigLine at={S(1.85)}>{" "}<K>"job_ids"</K>: [<V>"cc67293b…"</V>, <V>"a1579543…"</V>, <V>"d98e7597…"</V>]{"}"}</BigLine>
+        </BigTerminal>
+      </Screen>
+      <BigCaption at={S(2.2)}>One call. Email, inbox and Telegram, from the customer you already know.</BigCaption>
+    </Shot>
+
+    {/* 3 · campaign, 429, digest, jobs */}
+    <Shot from={S(12.2)} dur={S(6.6)}>
+      <Screen>
+        <BigTerminal>
+          <BigLine at={0} type={`curl -X POST localhost:3400/v1/batch -d '{"segment": {"has_email": true}, "template": "news"}'`} cps={140} />
+          <BigLine at={S(1)}>{"{"}<K>"jobs_created"</K>: 41, <K>"subscribers"</K>: 41{"}"}</BigLine>
+          <BigLine at={S(1.5)} type="notifyd digest" />
+          <BigLine at={S(2)}><A>warning</A>  Lane email is paused after a provider 429.</BigLine>
+          <BigLine at={S(2.2)}><M>         Transient. Nothing lost, urgent mail goes first.</M></BigLine>
+          <BigLine at={S(2.5)}><M>queue</M>    pending 41 · retry 1 · processing 0</BigLine>
+          <BigLine at={S(3.6)} type="notifyd jobs --status sent --since 1m" />
+          <BigLine at={S(4.3)}><V>44 job(s)</V><M>  email 42 via resend · in_app 1 · telegram 1</M></BigLine>
+        </BigTerminal>
+      </Screen>
+      <BigCaption at={S(3)}>The provider says slow down. The lane waits exactly 47 seconds. Nothing is dropped.</BigCaption>
+    </Shot>
+
+    {/* 4 · schéma : agent + Telegram */}
+    <Shot from={S(18.8)} dur={S(4.6)} zoom={false}>
+      <DarkDiagram agent emailSub="41 sent" />
+      <BigCaption at={S(2)}>No dashboard. Your agent runs it over MCP. The digest lands in your chat.</BigCaption>
+    </Shot>
+
+    {/* 5 · schéma + mesure */}
+    <Shot from={S(23.4)} dur={S(4.4)} zoom={false}>
+      <div style={{ position: "absolute", inset: 0, opacity: 0.35 }}><DarkDiagram emailSub="41 sent" /></div>
+      <Fade at={0} style={{ position: "absolute", left: 0, right: 0, top: 150, display: "flex", justifyContent: "center" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "340px 380px 380px", rowGap: 18, columnGap: 40, alignItems: "baseline", background: "rgba(20,20,20,.92)", border: `1px solid ${D.line}`, borderRadius: 18, padding: "34px 44px" }}>
+          <span />
+          <div style={{ fontFamily: MONO, fontSize: 26, color: D.muted, letterSpacing: 2 }}>NOVU 3.19</div>
+          <div style={{ fontFamily: MONO, fontSize: 26, color: D.yellow, letterSpacing: 2 }}>NOTIFYD</div>
+          {[["containers", "6", "1"], ["images to pull", "1.4 GB", "44 MB"], ["memory, idle", "1.1 GB", "13 MB"]].map(([k, a, b], i) => (
+            <React.Fragment key={k}>
+              <Fade at={6 + i * 6}><div style={{ fontFamily: SANS, fontSize: 34, color: D.muted }}>{k}</div></Fade>
+              <Fade at={8 + i * 6}><div style={{ fontFamily: SERIF, fontSize: 64, color: D.muted }}>{a}</div></Fade>
+              <Fade at={10 + i * 6}><div style={{ fontFamily: SERIF, fontSize: 64, color: D.text }}>{b}</div></Fade>
+            </React.Fragment>
+          ))}
+        </div>
+      </Fade>
+      <BigCaption at={S(1.6)}>Novu's own compose, idle, same machine, same tool. Method in docs/BENCHMARKS.md.</BigCaption>
+    </Shot>
+
+    {/* 6 · terminal : la commande */}
+    <Shot from={S(27.8)} dur={S(3.2)} zoom={false}>
+      <Screen>
+        <BigTerminal>
+          <BigLine at={0} type="git clone https://github.com/rmzlb/notifyd && cd notifyd" cps={120} />
+          <BigLine at={S(0.9)} type="docker compose up -d" cps={120} />
+          <BigLine at={S(1.5)}><V>→ notifyd listening on :3400</V></BigLine>
+        </BigTerminal>
+      </Screen>
+      <Fade at={S(1.2)} style={{ position: "absolute", left: 0, right: 0, bottom: 64, display: "flex", justifyContent: "center", alignItems: "center", gap: 22 }}>
+        <Mark size={56} />
+        <div style={{ fontFamily: SERIF, fontSize: 52, color: D.text }}>notifyd</div>
+        <div style={{ fontFamily: MONO, fontSize: 28, color: D.muted }}>MIT · github.com/rmzlb/notifyd</div>
+      </Fade>
     </Shot>
   </AbsoluteFill>
 );
