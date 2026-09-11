@@ -36,7 +36,7 @@ acting, they move.
 | Release binaries, installer, Nix flake | v0.2.1 |
 | crates.io `notifyd` 0.2.0 | published (`cargo install notifyd`), lib.rs indexes it automatically |
 | GitHub MCP Registry inclusion mail | sent to partnerships@github.com |
-| Announcement on X (@Rmzlb) | posted |
+| Announcement on X (@Rmzlb) | v0.2.0: posted 2026-09-06. Launch thread with the 31 s film and the measured Novu comparison: posted 2026-09-11, https://x.com/Rmzlb/status/2098372579656405463 |
 | Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
 | TypeScript client `notifyd-sdk` on npm | built and pack-tested (2026-09-10); first version by hand (`npm publish --access public`), then tags `clients-v*` publish through `.github/workflows/publish-clients.yml` (OIDC, provenance) |
 | Python client `notifyd-sdk` on PyPI | built and tested (2026-09-10); add the pending trusted publisher on pypi.org, then the same tag publishes it (no token) |
