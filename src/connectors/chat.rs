@@ -51,6 +51,24 @@ fn url_of(req: &SendRequest) -> Option<&str> {
         .filter(|u| u.starts_with("http://") || u.starts_with("https://"))
 }
 
+/// Forum topic id for a Telegram group (`chat.telegram_thread_id`), accepted as
+/// a number or a decimal string so a caller can pass it straight from JSON.
+///
+/// This matters more than it looks: in a forum group Telegram does not reject a
+/// message that omits `message_thread_id`, it posts it to General. So the
+/// failure mode is silent and looks like "the notification never arrived" to
+/// anyone watching the topic. Non-positive or unparseable values return `None`
+/// rather than being coerced, because a wrong topic is as invisible as none.
+fn thread_id_of(req: &SendRequest) -> Option<i64> {
+    let value = req.metadata.get("chat")?.get("telegram_thread_id")?;
+    let id = match value {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }?;
+    (id > 0).then_some(id)
+}
+
 pub struct ChatConnector {
     channel: Channel,
     config: ChatConfig,
@@ -108,6 +126,9 @@ impl ChatConnector {
             "text": plain_text(req),
             "disable_web_page_preview": true,
         });
+        if let Some(thread) = thread_id_of(req) {
+            body["message_thread_id"] = json!(thread);
+        }
         if let Some(url) = url_of(req) {
             let label = req
                 .metadata
@@ -414,6 +435,23 @@ mod tests {
         assert_eq!(slack_mrkdwn(&custom), "exact text");
     }
 
+    /// A forum topic id is read from `chat.telegram_thread_id`, as a number or a
+    /// string, and anything that is not a positive integer is dropped rather
+    /// than coerced: a wrong topic is as invisible as no topic at all.
+    #[test]
+    fn thread_ids() {
+        let mut r = req("-1003803857627", None);
+        assert_eq!(thread_id_of(&r), None);
+        r.metadata = json!({ "chat": { "telegram_thread_id": 2 } });
+        assert_eq!(thread_id_of(&r), Some(2));
+        r.metadata = json!({ "chat": { "telegram_thread_id": " 2 " } });
+        assert_eq!(thread_id_of(&r), Some(2));
+        for bad in [json!(0), json!(-2), json!("general"), json!(null), json!(true)] {
+            r.metadata = json!({ "chat": { "telegram_thread_id": bad } });
+            assert_eq!(thread_id_of(&r), None, "{bad}");
+        }
+    }
+
     #[test]
     fn classifications() {
         assert!(
@@ -510,6 +548,10 @@ mod tests {
         let dead = telegram.send(&req("gone", None)).await.unwrap_err();
         assert!(dead.dead_recipient, "{dead:?}");
 
+        let mut in_topic = req("-1003803857627", None);
+        in_topic.metadata = json!({ "chat": { "telegram_thread_id": 2 } });
+        telegram.send(&in_topic).await.unwrap();
+
         let slack = ChatConnector::with_bases(Channel::Slack, cfg(), base.clone(), base.clone());
         let ok = slack.send(&req("C123", None)).await.unwrap();
         assert_eq!(ok.provider_message_id.as_deref(), Some("1700000000.000100"));
@@ -528,7 +570,12 @@ mod tests {
             body["reply_markup"]["inline_keyboard"][0][0]["url"],
             "https://shop.example.com/o/1"
         );
-        let (_, headers, body) = &seen[2];
+        // The plain send omits the field entirely; the forum send carries it.
+        assert!(seen[0].2.get("message_thread_id").is_none());
+        assert_eq!(seen[2].2["chat_id"], "-1003803857627");
+        assert_eq!(seen[2].2["message_thread_id"], 2);
+
+        let (_, headers, body) = &seen[3];
         assert_eq!(headers["authorization"], "Bearer xoxb-test");
         assert_eq!(body["channel"], "C123");
         assert!(body["text"]
