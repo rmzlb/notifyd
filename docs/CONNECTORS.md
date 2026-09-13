@@ -117,6 +117,29 @@ webhook fail the job for good and log why; a 429 pauses the lane for the
 time the service asks. Pacing: `TELEGRAM_RATE_PER_SEC` (20),
 `SLACK_RATE_PER_SEC` (1), `DISCORD_RATE_PER_SEC` (0.5).
 
+### Telegram forum topics
+
+A Telegram group with topics enabled needs the topic id, or the message lands
+in **General**. Telegram does not reject a message that omits it, so the
+failure is silent and looks like "the notification never arrived" to whoever
+watches the topic:
+
+```bash
+curl -X POST http://localhost:3400/v1/send \
+  -H "x-api-key: sk_…" -H 'content-type: application/json' \
+  -d '{
+    "channel": "telegram",
+    "to": "-1003803857627",
+    "subject": "SQX-304 created",
+    "body": "New issue in Square.",
+    "chat": { "telegram_thread_id": 2 }
+  }'
+```
+
+The id is a positive integer (a decimal string is accepted); anything else is
+ignored rather than coerced, because a wrong topic is as invisible as none.
+The topic id is the `message_thread_id` of any message in that topic.
+
 ### The digest in your chat
 
 `DIGEST_NOTIFY=telegram:<chat id>` (or `slack:<webhook or channel id>`,

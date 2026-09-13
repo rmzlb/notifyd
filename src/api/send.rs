@@ -155,6 +155,11 @@ pub struct SendRequest {
     /// Push extras: `{"badge", "sound", "thread_id", "category", "collapse_id",
     /// "mutable_content", "background", "ttl_secs", "data"}` (see connectors/apns.rs).
     pub push: Option<Value>,
+    /// Chat extras: `{"text", "telegram_thread_id"}` (see connectors/chat.rs).
+    /// `text` replaces the built message; `telegram_thread_id` targets a topic
+    /// of a Telegram forum group, which Telegram silently ignores when absent
+    /// by posting to General instead of failing.
+    pub chat: Option<Value>,
     /// Marks a message the subscriber cannot decline: password reset, magic
     /// link, email verification, order receipt, security alert. Subscription
     /// preferences (topic, workflow, channel and global opt-outs) are skipped
@@ -322,6 +327,8 @@ pub struct BatchRequest {
     pub transactional: Option<bool>,
     /// Push extras, see `/v1/send`.
     pub push: Option<Value>,
+    /// Chat extras, see `/v1/send`.
+    pub chat: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -546,6 +553,12 @@ pub async fn send_notification(
     if let Some(push) = &req.push {
         if let Some(p) = payload.as_object_mut() {
             p.insert("push".to_string(), push.clone());
+        }
+    }
+
+    if let Some(chat) = &req.chat {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("chat".to_string(), chat.clone());
         }
     }
 
@@ -989,6 +1002,7 @@ pub async fn batch_notification(
         "url": req.url,
         "track": req.track,
         "push": req.push,
+        "chat": req.chat,
     });
 
     // Addresses and timezones of every recipient in one query: each job
