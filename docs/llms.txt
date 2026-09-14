@@ -444,3 +444,77 @@ docker run -p 3400:3400 -e DATABASE_URL=postgres://... -v ./notifyd.toml:/app/no
 
 Built in Grenoble, France. MIT licensed.
 Source: https://github.com/rmzlb/notifyd
+
+---
+
+## TELEGRAM PER-USER CREDENTIALS
+
+Each project/owner registers its own bot token (AES-256-GCM encrypted). Requires TELEGRAM_ENCRYPTION_KEY env var (32-byte base64).
+
+PUT /v1/telegram/:project_id/:owner/credentials   – upsert bot_token + bot_username → returns webhook_connection_id
+GET /v1/telegram/:project_id/:owner/credentials   – read metadata (no token)
+DELETE /v1/telegram/:project_id/:owner/credentials – delete (cascades)
+PUT /v1/telegram/:project_id/:owner/destination   – set chat address + optional thread_id (verified=false)
+DELETE /v1/telegram/:project_id/:owner/destination – remove destination
+POST /v1/telegram/:project_id/:owner/link          – generate one-time link token (kind: private|group, expires 24h)
+POST /v1/telegram/webhooks/:webhook_connection_id  – Telegram Bot API webhook (public, secret-validated)
+
+Link flow: POST /link → send link_url to user → user clicks → bot receives /start <token> → destination verified automatically.
+
+Dispatch override: include {"chat": {"telegram_route_id": "project_id/owner"}} in job payload; worker resolves the encrypted token at runtime.
+
+## Telegram per-user credentials (v0.4.0)
+
+Routes (project x-api-key auth; owner = trusted opaque id from caller):
+
+GET /v1/telegram/:owner
+  Response: {data:{bot:BotInfo|null, destination:Destination|null}}
+  BotInfo: {bot_username, owned:bool, source:"personal"|"instance", webhook_registered:bool, can_link:bool}
+  Destination: {channel:"telegram", address_masked, verified:bool, created_at, telegram_thread_id:number|null, telegram_bot_username:string|null}
+
+PUT /v1/telegram/:owner
+  Body: {bot_token:string, webhook_base:string}
+  webhook_base = Baaton API_URL + /api/v1/public/telegram/webhook (notifyd appends /<connection_uuid>)
+  Validates: HTTPS webhook_base, getMe token check, getWebhookInfo foreign-webhook check (409), never touches instance bot.
+  503 if TELEGRAM_ENCRYPTION_KEY absent. Response: same as GET.
+
+DELETE /v1/telegram/:owner
+  Removes credential (best-effort deleteWebhook), destination, link tokens. 204. 404 if none.
+
+PUT /v1/telegram/:owner/destination
+  Body: {address:string, telegram_thread_id?:number|null}
+  Validates address via getChat (personal bot or instance bot). telegram_thread_id requires is_forum:true chat.
+  verified:true = getChat succeeded (reachability, not identity).
+  Response: {data:Destination}
+
+DELETE /v1/telegram/:owner/destination  →  204
+
+POST /v1/telegram/:owner/link
+  Body: {kind:"private"|"group"} (default private)
+  Personal bot only. Rate-limited: one active token per owner, 60s between generations.
+  Token expires in 15 min. Consumed atomically on /start.
+  Response: {data:{deep_link:string, expires_at:string, command:string}}
+  deep_link private: https://t.me/<bot>?start=<token>
+  deep_link group:   https://t.me/<bot>?startgroup=<token>
+
+POST /v1/telegram/lookup
+  Body: {owners:[string]}  (max 100)
+  Response: {data:[{owner, route_id:UUID, address:string, telegram_thread_id:number|null, bot_username:string, verified:bool}]}
+  Only verified destinations. Project-isolated. One query.
+
+POST /v1/telegram/webhooks/:id  (public, no project auth)
+  Baaton proxy target for Telegram webhook callbacks.
+  Authenticates via X-Telegram-Bot-Api-Secret-Token header (per-bot, decrypted).
+  Handles /start <token> for link pairing. Returns 2xx always; 503 on DB failure.
+  Registered public path on Baaton: /api/v1/public/telegram/webhook/:id
+
+Worker integration:
+  Job payload chat.telegram_route_id (UUID = telegram_credentials.id) → worker loads credentials
+  by (route_id, project_id). Missing/cross-project → permanent failure, never falls back to instance bot.
+  route_id from POST /v1/telegram/lookup response.
+
+Crypto:
+  TELEGRAM_ENCRYPTION_KEY: base64-encoded 32 bytes → AES-256-GCM.
+  Blob layout: [nonce(12) | ciphertext | tag(16)].
+  Key absent: registration fails 503; queued jobs with missing key fail permanently.
+  Instance bot (TELEGRAM_BOT_TOKEN) unchanged; works without this key.

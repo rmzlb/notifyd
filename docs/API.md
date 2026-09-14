@@ -739,3 +739,205 @@ curl -X DELETE https://notifyd.example.com/v1/suppressions/<id> \
 
 If the address bounces again after a release, a fresh suppression is created
 next to the released one — the history tells the whole story.
+
+---
+
+## Telegram per-user credentials
+
+Per-user Telegram lets each owner (Baaton user) register their own bot, destination (chat), and deep-link pairing flow. The instance default bot (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_API_BASE`) is unchanged.
+
+**Auth**: project `x-api-key` on all management routes. The `owner` path parameter is a trusted opaque id supplied by Baaton after its own auth.
+
+**Encryption**: bot tokens and webhook secrets are encrypted at rest using AES-256-GCM (`TELEGRAM_ENCRYPTION_KEY`, base64-encoded 32 bytes). Key absent → registration fails 503, no plaintext fallback.
+
+---
+
+### GET /v1/telegram/:owner
+
+Return current bot and destination for an owner.
+
+```bash
+curl https://notifyd.example.com/v1/telegram/alice \
+  -H "x-api-key: $PROJECT_KEY"
+```
+
+```json
+{
+  "data": {
+    "bot": {
+      "bot_username": "my_notify_bot",
+      "owned": true,
+      "source": "personal",
+      "webhook_registered": true,
+      "can_link": true
+    },
+    "destination": {
+      "channel": "telegram",
+      "address_masked": "***6789",
+      "verified": true,
+      "created_at": "2026-09-14T17:00:00Z",
+      "telegram_thread_id": null,
+      "telegram_bot_username": "my_notify_bot"
+    }
+  }
+}
+```
+
+---
+
+### PUT /v1/telegram/:owner
+
+Register or update a personal bot. Notifyd calls `getMe` to validate the token, `getWebhookInfo` to check for a foreign webhook (409 if one exists that we did not register), then `setWebhook`.
+
+`webhook_base` is `<baaton_api_url>/api/v1/public/telegram/webhook` — notifyd appends `/<connection_uuid>`.
+
+```bash
+curl -X PUT https://notifyd.example.com/v1/telegram/alice \
+  -H "x-api-key: $PROJECT_KEY" \
+  -H "content-type: application/json" \
+  -d '{"bot_token":"1234567:AAHsometoken","webhook_base":"https://api.baaton.dev/api/v1/public/telegram/webhook"}'
+```
+
+Response: same shape as GET.
+
+**Rules**
+- `webhook_base` must start with `https://`
+- Cannot register the instance `TELEGRAM_BOT_TOKEN`
+- 409 if the bot already has a non-notifyd webhook
+- 503 if `TELEGRAM_ENCRYPTION_KEY` is absent
+
+---
+
+### DELETE /v1/telegram/:owner
+
+Remove personal bot (best-effort `deleteWebhook`), destination, and link tokens. Returns 204.
+
+```bash
+curl -X DELETE https://notifyd.example.com/v1/telegram/alice \
+  -H "x-api-key: $PROJECT_KEY"
+```
+
+Silently fails if no bot is registered (404).
+
+---
+
+### PUT /v1/telegram/:owner/destination
+
+Validate and store a destination (chat id or username). Calls `getChat` on the personal bot; validates `telegram_thread_id` requires a forum supergroup.
+
+```bash
+curl -X PUT https://notifyd.example.com/v1/telegram/alice/destination \
+  -H "x-api-key: $PROJECT_KEY" \
+  -H "content-type: application/json" \
+  -d '{"address":"@mygroup","telegram_thread_id":42}'
+```
+
+```json
+{
+  "data": {
+    "channel": "telegram",
+    "address_masked": "***1234",
+    "verified": true,
+    "created_at": "2026-09-14T17:01:00Z",
+    "telegram_thread_id": 42,
+    "telegram_bot_username": "my_notify_bot"
+  }
+}
+```
+
+`verified: true` means getChat succeeded — reachability, not identity.
+
+---
+
+### DELETE /v1/telegram/:owner/destination
+
+Remove the destination record. Returns 204.
+
+---
+
+### POST /v1/telegram/:owner/link
+
+Generate a one-time deep link so the owner can connect a private chat or group.
+
+```bash
+curl -X POST https://notifyd.example.com/v1/telegram/alice/link \
+  -H "x-api-key: $PROJECT_KEY" \
+  -H "content-type: application/json" \
+  -d '{"kind":"private"}'
+```
+
+```json
+{
+  "data": {
+    "deep_link": "https://t.me/my_notify_bot?start=abcdef1234567890abcdef1234567890",
+    "expires_at": "2026-09-14T17:16:00Z",
+    "command": "/start abcdef1234567890abcdef1234567890"
+  }
+}
+```
+
+- `kind`: `"private"` (default) or `"group"`
+- One active link per owner; rate-limited (60s minimum between generations)
+- Expires in 15 minutes; consumed atomically on `/start`
+- Requires a personal bot to be registered first
+
+---
+
+### POST /v1/telegram/lookup
+
+Batch-resolve verified destinations by owner list. Returns raw addresses for worker routing (internal API).
+
+```bash
+curl -X POST https://notifyd.example.com/v1/telegram/lookup \
+  -H "x-api-key: $PROJECT_KEY" \
+  -H "content-type: application/json" \
+  -d '{"owners":["alice","bob","carol"]}'
+```
+
+```json
+{
+  "data": [
+    {
+      "owner": "alice",
+      "route_id": "01234567-89ab-cdef-0123-456789abcdef",
+      "address": "123456789",
+      "telegram_thread_id": null,
+      "bot_username": "my_notify_bot",
+      "verified": true
+    }
+  ]
+}
+```
+
+- Max 100 owners per request
+- Only verified destinations returned
+- Project isolation enforced (project_id from API key)
+
+---
+
+### POST /v1/telegram/webhooks/:id (public)
+
+Telegram update callback. Not project-auth'd; authenticates via `X-Telegram-Bot-Api-Secret-Token` header (per-bot, decrypted at request time).
+
+Baaton proxies transparently: `POST /api/v1/public/telegram/webhook/:id` → notifyd `POST /v1/telegram/webhooks/:id`.
+
+Handles `/start <token>` commands to complete the link pairing flow. Always returns 2xx (Telegram retries on non-2xx). Returns 503 on DB failure.
+
+---
+
+### Sending via a personal route
+
+Include `chat.telegram_route_id` (the `route_id` UUID from `/v1/telegram/lookup`) in the `/v1/send` call:
+
+```json
+{
+  "channel": "telegram",
+  "to": "123456789",
+  "body": "Hello Alice!",
+  "chat": { "telegram_route_id": "01234567-89ab-cdef-0123-456789abcdef" }
+}
+```
+
+The worker loads credentials by `(route_id, project_id)`. A missing, unverified, or cross-project route fails permanently — never falls back to the instance bot.
+
+---

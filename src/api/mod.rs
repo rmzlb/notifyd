@@ -8,6 +8,7 @@ pub mod projects;
 pub mod push_tokens;
 pub mod send;
 pub mod subscribers;
+pub mod telegram;
 pub mod templates;
 pub mod webhooks;
 pub mod workflows;
@@ -174,6 +175,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
             delete(admin_ops::admin_release_suppression),
         )
         .route("/jobs/:id/retry", post(admin_ops::project_retry_job))
+        // Telegram per-user credentials, destinations, links, and webhook ingestion
         // Webhooks
         .route(
             "/admin/webhooks",

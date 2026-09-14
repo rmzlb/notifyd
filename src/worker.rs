@@ -1033,7 +1033,50 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
         }
     }
 
-    let req = build_send_request(state, job, None).await?;
+    let mut req = build_send_request(state, job, None).await?;
+
+    // Per-user Telegram route: payload chat.telegram_route_id (UUID = credential id)
+    // overrides the instance bot. Present but invalid/missing → permanent failure, no fallback.
+    if job.channel == "telegram" {
+        if let Some(rid_str) = job.payload.get("chat")
+            .and_then(|v| v.get("telegram_route_id"))
+            .and_then(Value::as_str)
+        {
+            let route_id = match uuid::Uuid::parse_str(rid_str) {
+                Ok(id) => id,
+                Err(_) => return Err(ProviderError::permanent("telegram", "invalid telegram_route_id: not a UUID")),
+            };
+            return match crate::api::telegram::load_telegram_route(
+                &state.pool, route_id, &job.project_id,
+            ).await {
+                None => Err(ProviderError::permanent("telegram", "route not found, unverified, or credential unavailable")),
+                Some(r) => {
+                    if r.address != job.recipient {
+                        return Err(ProviderError::permanent("telegram", "route address mismatch"));
+                    }
+                    if let Some(tid) = r.telegram_thread_id {
+                        if let Some(obj) = req.metadata.as_object_mut() {
+                            let chat = obj.entry("chat").or_insert_with(|| serde_json::json!({}));
+                            if let Some(c) = chat.as_object_mut() {
+                                c.entry("telegram_thread_id").or_insert(serde_json::json!(tid));
+                            }
+                        }
+                    }
+                    let cfg = crate::config::ChatConfig {
+                        telegram_bot_token: Some(r.bot_token),
+                        telegram_api_base: state.config.connectors.chat.telegram_api_base.clone(),
+                        ..Default::default()
+                    };
+                    let connector = crate::connectors::chat::ChatConnector::new(Channel::Telegram, cfg);
+                    state.pacer.acquire("telegram").await;
+                    let started = Instant::now();
+                    let result = connector.send(&req).await;
+                    metrics::observe_latency("telegram", connector.provider(), started.elapsed().as_secs_f64());
+                    result
+                }
+            };
+        }
+    }
 
     let connector: Box<dyn Connector> = match Channel::from_str(&job.channel) {
         Some(Channel::Email) => {

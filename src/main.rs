@@ -3,6 +3,7 @@ mod api;
 mod cli;
 mod config;
 mod connectors;
+mod crypto;
 mod db;
 mod deliverability;
 mod digest_notify;
