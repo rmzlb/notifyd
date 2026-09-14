@@ -182,5 +182,11 @@ fn api_routes(state: Arc<AppState>) -> Router {
             post(webhooks::create_webhook).get(webhooks::list_webhooks),
         )
         .route("/admin/webhooks/:id", delete(webhooks::delete_webhook))
+        // Per-user Telegram (credentials, destinations, linking, lookup, webhooks)
+        .route("/telegram/:owner", axum::routing::get(telegram::get_owner).put(telegram::put_owner).delete(telegram::delete_owner))
+        .route("/telegram/:owner/destination", axum::routing::put(telegram::put_destination).delete(telegram::delete_destination))
+        .route("/telegram/:owner/link", axum::routing::post(telegram::post_link))
+        .route("/telegram/lookup", axum::routing::post(telegram::lookup))
+        .route("/telegram/webhooks/:id", axum::routing::post(telegram::webhook_handler))
         .with_state(state)
 }
