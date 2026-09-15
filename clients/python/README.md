@@ -5,7 +5,8 @@ server: email, SMS, WhatsApp, push and in-app from one API, with queue, retries,
 failover and send windows handled server-side.
 
 ```bash
-pip install notifyd-sdk
+pip install notifyd-sdk            # once on PyPI (this week); until then:
+pip install "git+https://github.com/rmzlb/notifyd.git#subdirectory=clients/python"
 ```
 
 ```python

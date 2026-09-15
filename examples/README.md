@@ -11,8 +11,8 @@ export NOTIFYD_API_KEY=sk_myapp_…        # from POST /v1/admin/projects
 | File | What it shows | Needs |
 |---|---|---|
 | [`send.sh`](send.sh) | One call, email + in-app, then poll the job | `curl`, `jq` |
-| [`send.ts`](send.ts) | Same with the TypeScript client | Node 18+, `npm i notifyd-sdk` |
-| [`send.py`](send.py) | Same with the Python client | Python 3.9+, `pip install notifyd-sdk` |
+| [`send.ts`](send.ts) | Same with the TypeScript client | Node 18+, `npm i github:rmzlb/notifyd` (npm package this week) |
+| [`send.py`](send.py) | Same with the Python client | Python 3.9+, `pip install "git+https://github.com/rmzlb/notifyd.git#subdirectory=clients/python"` (PyPI this week) |
 | [`campaign.py`](campaign.py) | 10 000 recipients in one `batch` call, bulk lane, recipients' daytime only, unsubscribe handled | Python |
 | [`welcome-series.sh`](welcome-series.sh) | A 3-step workflow: welcome, wait a day, nudge unless the user upgraded | `curl` |
 | [`inbox.html`](inbox.html) | A browser inbox with live updates over `EventSource` | a browser |

@@ -334,7 +334,7 @@ Both clients cover the whole API (send, batch, jobs, subscribers, preferences,
 templates, workflows, suppressions, inbox) and raise a typed error on any
 non-2xx answer.
 
-**TypeScript / JavaScript** — `npm i notifyd-sdk` (Node 18+, browsers, edge runtimes; zero dependencies)
+**TypeScript / JavaScript** — `npm i github:rmzlb/notifyd` until the `notifyd-sdk` package lands on npm this week; the package name and the import below do not change (Node 18+, browsers, edge runtimes; zero dependencies)
 
 ```typescript
 import { createNotifydClient } from 'notifyd-sdk';
@@ -357,7 +357,7 @@ const stream = await inbox.openInboxStream('user-42', { onMessage: (e) => {
 } });
 ```
 
-**Python** — `pip install notifyd-sdk` (3.9+, sync and asyncio, `httpx` only) — [`clients/python`](clients/python)
+**Python** — `pip install "git+https://github.com/rmzlb/notifyd.git#subdirectory=clients/python"` until `notifyd-sdk` lands on PyPI this week (3.9+, sync and asyncio, `httpx` only) — [`clients/python`](clients/python)
 
 ```python
 from notifyd import Notifyd

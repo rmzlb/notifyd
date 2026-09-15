@@ -5,7 +5,8 @@ notification server (email, SMS, WhatsApp, push, in-app). Zero dependencies, wor
 Node 18+, browsers and edge runtimes (`fetch` + `EventSource`).
 
 ```bash
-npm i notifyd-sdk
+npm i notifyd-sdk            # once on npm (this week); until then:
+npm i github:rmzlb/notifyd
 ```
 
 ```typescript
