@@ -224,7 +224,7 @@ export const SoberTerminal: React.FC = () => (
           <Fade at={4}><div style={{ fontFamily: MONO, fontSize: 24, color: D.yellow, letterSpacing: 2 }}>NOTIFYD 0.2.2</div></Fade>
           {[
             ["containers", "6", "1"],
-            ["images to pull", "1.4 GB", "44 MB"],
+            ["images to pull", "1.4 GB", "14 MB"],
             ["memory, idle", "1.1 GB", "13 MB"],
           ].map(([k, a, b], i) => (
             <React.Fragment key={k}>
@@ -331,7 +331,7 @@ export const SoberDiagram: React.FC = () => {
               <div style={{ fontFamily: MONO, fontSize: 18, color: L.muted, letterSpacing: 2 }}>NOVU 3.19</div>
               <div style={{ fontFamily: MONO, fontSize: 18, color: L.ink, letterSpacing: 2 }}>NOTIFYD</div>
               <div style={{ color: L.muted }}>containers</div><div style={{ fontFamily: SERIF, fontSize: 40, color: L.muted }}>6</div><div style={{ fontFamily: SERIF, fontSize: 40 }}>1</div>
-              <div style={{ color: L.muted }}>images</div><div style={{ fontFamily: SERIF, fontSize: 40, color: L.muted }}>1.4 GB</div><div style={{ fontFamily: SERIF, fontSize: 40 }}>44 MB</div>
+              <div style={{ color: L.muted }}>images</div><div style={{ fontFamily: SERIF, fontSize: 40, color: L.muted }}>1.4 GB</div><div style={{ fontFamily: SERIF, fontSize: 40 }}>14 MB</div>
               <div style={{ color: L.muted }}>memory, idle</div><div style={{ fontFamily: SERIF, fontSize: 40, color: L.muted }}>1.1 GB</div><div style={{ fontFamily: SERIF, fontSize: 40 }}>13 MB</div>
             </div>
           </Fade>
@@ -441,7 +441,7 @@ export const SoberMix: React.FC = () => (
           <Fade at={4}><div style={{ fontFamily: MONO, fontSize: 24, color: D.yellow, letterSpacing: 2 }}>NOTIFYD 0.2.2</div></Fade>
           {[
             ["containers", "6", "1"],
-            ["images to pull", "1.4 GB", "44 MB"],
+            ["images to pull", "1.4 GB", "14 MB"],
             ["memory, idle", "1.1 GB", "13 MB"],
           ].map(([k, a, b], i) => (
             <React.Fragment key={k}>
@@ -566,7 +566,7 @@ const Final: React.FC<{ quiet?: boolean }> = ({ quiet = false }) => {
           <BigLine at={S(0.6)}><M> Container notifyd-db  Healthy</M></BigLine>
           <BigLine at={S(0.8)}><M> Container notifyd     Started</M></BigLine>
           <BigLine at={S(1.2)} type="curl localhost:3400/v1/health" />
-          <BigLine at={S(1.9)}>{"{"}<K>"status"</K>: <Hi>"ok"</Hi>, <K>"db"</K>: <Hi>"ok"</Hi>, <K>"version"</K>: <V>"0.2.2"</V>{"}"}</BigLine>
+          <BigLine at={S(1.9)}>{"{"}<K>"status"</K>: <Hi>"ok"</Hi>, <K>"db"</K>: <Hi>"ok"</Hi>, <K>"version"</K>: <V>"0.4.0"</V>{"}"}</BigLine>
         </BigTerminal>
       </Screen>
       <BigCaption at={S(2.2)}>Postgres is the only dependency.</BigCaption>
@@ -619,7 +619,7 @@ const Final: React.FC<{ quiet?: boolean }> = ({ quiet = false }) => {
           <span />
           <div style={{ fontFamily: MONO, fontSize: 26, color: D.muted, letterSpacing: 2 }}>NOVU 3.19</div>
           <div style={{ fontFamily: MONO, fontSize: 26, color: D.yellow, letterSpacing: 2 }}>NOTIFYD</div>
-          {[["containers", "6", "1"], ["images to pull", "1.4 GB", "44 MB"], ["memory, idle", "1.1 GB", "13 MB"]].map(([k, a, b], i) => (
+          {[["containers", "6", "1"], ["images to pull", "1.4 GB", "14 MB"], ["memory, idle", "1.1 GB", "13 MB"]].map(([k, a, b], i) => (
             <React.Fragment key={k}>
               <Fade at={6 + i * 6}><div style={{ fontFamily: PROSE, fontSize: quiet ? 38 : 34, color: D.muted }}>{k}</div></Fade>
               <Fade at={8 + i * 6}><div style={{ fontFamily: SERIF, fontSize: quiet ? 76 : 64, color: D.muted }}>{a}</div></Fade>

@@ -49,7 +49,7 @@ your agent ───▶  │ POST /mcp ─▶ digest · jobs · retry · suppres
                  └───────────────────────── PostgreSQL only ──────────────────────────┘
 ```
 
-- **Small and fast.** One 12 MB binary, a 44 MB image, 13 MB of RAM idle. It
+- **Small and fast.** One 12 MB binary, a 14 MB image to pull, 13 MB of RAM idle. It
   accepts 44 000 notifications per second and drains 3 500 per second on a
   laptop ([method](docs/BENCHMARKS.md)). No Redis, no message broker, no
   dashboard to host: PostgreSQL is the only dependency.
@@ -308,11 +308,11 @@ Inbox endpoints also accept a subscriber JWT.
 
 | | **Novu** | **Knock / Courier / SuprSend** | **notifyd** |
 |---|---|---|---|
-| **Infra** | MongoDB + Redis + 4 app containers | Hosted SaaS | Postgres only, one 44 MB image |
+| **Infra** | MongoDB + Redis + 4 app containers | Hosted SaaS | Postgres only, one 14 MB image |
 | **Setup** | 30+ min | Signup + dashboard | `docker compose up` (2 min) |
 | **Language** | Node.js (multiple services) | N/A (hosted) | Rust (single binary) |
 | **Memory at idle** | 1.1 GB across 6 containers ([measured](docs/BENCHMARKS.md#compared-with-novu-measured-on-the-same-machine)) | N/A | 13 MB, 23 MB while draining 100k jobs ([method](docs/BENCHMARKS.md)) |
-| **Images to pull** | 1.4 GB | N/A | 44 MB |
+| **Images to pull** | 1.4 GB | N/A | 14 MB |
 | **Throughput** | — | quota-bound | 44k jobs/s enqueued, 3.5k jobs/s drained ([benchmarks](docs/BENCHMARKS.md)) |
 | **Provider 429** | job fails | managed | channel paused for `Retry-After`, attempt not consumed, failover provider tried first |
 | **Priorities / send windows** | ❌ | ✅ | ✅ critical → bulk lanes, per-subscriber timezone windows |
@@ -456,7 +456,7 @@ flake.nix             # Nix package, devShell, NixOS module
 dist-workspace.toml   # cargo-dist: release binaries and installer
 ```
 
-~14 000 lines of Rust, no `unsafe`. 12 MB binary (16 MB static musl in the image), 44 MB image, 13 MB RSS
+~14 000 lines of Rust, no `unsafe`. 12 MB binary (16 MB static musl in the image), 14 MB image to pull and 31 MB on disk, 13 MB RSS
 idle, 23 MB while draining 100 000 jobs. → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---

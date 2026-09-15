@@ -36,7 +36,7 @@ acting, they move.
 | Release binaries, installer, Nix flake | v0.2.1 |
 | crates.io `notifyd` | 0.3.0 published 2026-09-11 (`cargo install notifyd`); the crate now packages only the root README and LICENSE (the `include` patterns were matching every `node_modules` and `.venv` copy) |
 | GitHub MCP Registry inclusion mail | sent to partnerships@github.com |
-| Announcement on X (@Rmzlb) | v0.2.0: posted 2026-09-06. Launch thread with the 31 s film and the measured Novu comparison: a first attempt on 2026-09-11 11:26 UTC (link in the first post, US asleep) was deleted after 65 impressions; scheduled again for 2026-09-15 16:00 UTC, first post without link and ending on a question, repo and numbers in the replies |
+| Announcement on X (@Rmzlb) | v0.2.0: posted 2026-09-06. Launch thread with the 31 s film and the measured Novu comparison: a first attempt on 2026-09-11 11:26 UTC (link in the first post, US asleep) was deleted after 65 impressions; scheduled for 2026-09-16 16:00 UTC (moved from the 15th, the author was unavailable at post time), first post without link and ending on a question, repo and numbers in the replies |
 | Show HN, r/rust, r/selfhosted | drafts ready, need the author's accounts |
 | TypeScript client `notifyd-sdk` on npm | built and pack-tested (2026-09-10); first version by hand (`npm publish --access public`), then tags `clients-v*` publish through `.github/workflows/publish-clients.yml` (OIDC, provenance) |
 | Python client `notifyd-sdk` on PyPI | built and tested (2026-09-10); add the pending trusted publisher on pypi.org, then the same tag publishes it (no token) |

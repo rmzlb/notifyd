@@ -30,12 +30,20 @@ secrets its `setup.sh` generates; host port mappings were removed so it could
 run isolated (no effect on memory). Two samples at 6 and 9 minutes, identical
 to the megabyte.
 
-| | Novu 3.19.0 (community compose) | notifyd 0.2.2 |
+| | Novu 3.19.0 (community compose) | notifyd 0.4.0 |
 |---|---:|---:|
 | Containers | 6 (api, worker, ws, dashboard, MongoDB, Redis) | 1 (+ the Postgres you already run) |
-| Images to pull | 1 393 MB (api 346, worker 325, ws 318, dashboard 91, mongo 276, redis 37) | 44 MB (+ 109 MB `postgres:16-alpine` if you need one) |
-| Memory at idle, `docker stats` | 1 116 MB (api 425, worker 277, ws 269, mongodb 118, dashboard 17, redis 8) | 2 MB for notifyd, 34 MB for its Postgres |
-| Memory at idle, `ps` RSS | not sampled | 13 MB |
+| Images to pull (compressed, what `docker pull` downloads) | 1 393 MB (api 346, worker 325, ws 318, dashboard 91, mongo 276, redis 37) | 13.5 MB (`ghcr.io/rmzlb/notifyd:0.4.0`, amd64 manifest; + 40 MB for `postgres:16-alpine` if you need one) |
+| Image on disk once pulled | not re-measured (Node images unpack to two to three times their pull size) | 30.7 MB (sum of `docker history` layers: 9.2 MB Alpine, 4.8 MB ca-certificates and wget, 16.6 MB static binary) |
+| Memory at idle, `docker stats` | 1 116 MB (api 425, worker 277, ws 269, mongodb 118, dashboard 17, redis 8) | 1.9 MB for notifyd, 55 MB for its Postgres |
+| Memory at idle, process RSS (`/proc/<pid>/status`) | not sampled | 9.5 MB (2026-09-15, arm64 host, after 60 s idle); 13 MB on 2026-09-10 (0.2.2) |
+
+The Novu column is from 2026-09-10; the notifyd column was re-measured on
+2026-09-15 with the published 0.4.0 image, on the same host. The 44 MB image
+size quoted here until then came from a locally built image reported by the
+containerd image store, which is not the size anyone downloads; the pull size
+above is what `docker pull` transfers and is the figure comparable with the
+Novu column (also pull sizes).
 
 Two remarks so this stays fair. Novu ships a full web dashboard and an
 in-app widget server in those containers; notifyd ships neither by design
@@ -46,15 +54,19 @@ and the answer differs by two orders of magnitude.
 
 Reproduce: `git clone --depth 1 https://github.com/novuhq/novu`, follow
 `docker/community/setup.sh`, wait for `healthy`, run `docker stats
---no-stream` and `docker image inspect --format '{{.Size}}'` on the six images.
+--no-stream` and `docker image inspect --format '{{.Size}}'` on the six images
+(for pulled images the containerd store reports the compressed size). For
+notifyd: `docker run` the published image against a `postgres:16-alpine`,
+wait for `/v1/health`, then `docker stats --no-stream`, `docker history` and
+`grep VmRSS /proc/$(docker top <container> -o pid | tail -1)/status`.
 
 ## Footprint
 
 | Metric | Value |
 |---|---|
 | Release binary (stripped) | 12 MB glibc (`cargo build --release`), 16 MB static musl (the image) — measured 2026-09-10 |
-| Docker image (`alpine:3.22` runtime) | 44 MB (2026-09-10; 42 MB before APNs over HTTP/2, topics, tracking, segments, CLI) |
-| RSS at idle (worker polling, SSE hub up) | 13 MB |
+| Docker image (`alpine:3.22` runtime) | 13.5 MB to pull, 30.7 MB on disk (0.4.0, 2026-09-15). The 44 MB quoted on 2026-09-10 was a local build as reported by the containerd store |
+| RSS at idle (worker polling, SSE hub up) | 13 MB (2026-09-10, 0.2.2); 9.5 MB (2026-09-15, 0.4.0, arm64) |
 | RSS peak while draining 100 000 jobs | 23 MB |
 | RSS peak while accepting 50 000 jobs through `/v1/batch` | 29 MB |
 | Postgres `jobs` table + indexes for 100 000 sent jobs | 84 MB (≈ 0.85 kB per job, body included) |
@@ -92,8 +104,8 @@ entirely for projects without a webhook.
   × 100 recipients, 100 000 emails leave in roughly 8–9 minutes, priority
   the claim order keeps transactional mail ahead of the bulk, and a 429
   pauses the email channel for `Retry-After` without consuming an attempt.
-- One instance per company (see `docs/DEPLOYMENTS.md`) costs one 44 MB
-  container and one Postgres database. Three companies = three containers,
+- One instance per company (see `docs/DEPLOYMENTS.md`) costs one container
+  of about 30 MB on disk and one Postgres database. Three companies = three containers,
   well under 100 MB of RAM in total.
 
 ## How the numbers compare
