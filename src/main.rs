@@ -203,7 +203,9 @@ async fn main() -> anyhow::Result<()> {
 
     let app = api::router(state)
         .layer(axum::middleware::from_fn(request_id_middleware))
-        .layer(axum::extract::DefaultBodyLimit::max(1_048_576))
+        // 5 Mo : un e-mail transactionnel avec une facture PDF en pièce jointe
+        // (base64) doit passer ; Resend accepte 40 Mo par message.
+        .layer(axum::extract::DefaultBodyLimit::max(5 * 1_048_576))
         .layer(cors)
         .layer(tower_http::trace::TraceLayer::new_for_http());
 

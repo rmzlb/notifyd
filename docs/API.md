@@ -173,7 +173,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `vars` | `object` | ❌ | Template variables |
 | `scheduled_at` | `ISO 8601` | ❌ | Schedule for future delivery (default: now) |
 | `idempotency_key` | `string` | ❌ | Dedupes sends: reusing a key held by a live or succeeded job returns that job untouched (no re-send); a `failed`/`cancelled` job releases its key, so retrying after a failure creates a fresh job |
-| `attachments` | `object[]` | ❌ | Email only. `[{ "filename", "content" (base64), "content_type"? }]`. Forces single-send (Resend batch rejects attachments). |
+| `attachments` | `object[]` | ❌ | Email only. `[{ "filename", "content" (base64), "content_type"? }]`. Forces single-send (Resend batch rejects attachments). The whole request body is capped at 5 MB (`413` beyond), so keep attachments under ~3.5 MB once base64-encoded. |
 | `cc` | `string[]` | ❌ | Email only. Up to 10 carbon-copy recipients; duplicates are removed. |
 | `reply_to` | `string` | ❌ | Email only. Address that receives replies. |
 | `priority` | `string \| int` | ❌ | Queue lane: `critical` (10), `high` (30), `normal` (50, default), `low` (70), `bulk` (80) or `0–100`. Lower goes first. An email tagged `{"name":"category","value":"campaign"\|"marketing"\|"newsletter"}` defaults to `bulk`. |
