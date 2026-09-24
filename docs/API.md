@@ -95,6 +95,7 @@ All responses are JSON.
 |--------|----------|------|-------------|
 | **POST** | `/v1/send` | API Key | Send notification (immediate or scheduled) |
 | **POST** | `/v1/batch` | API Key | Send to multiple subscribers |
+| **GET** | `/v1/channels` | API Key | Channels this project may send and this instance can deliver |
 | **GET** | `/v1/jobs/:id` | API Key | Get job status |
 | **DELETE** | `/v1/jobs/:id` | API Key | Cancel pending/scheduled job |
 | **POST** | `/v1/subscribers` | API Key | Create or update subscriber |
@@ -364,6 +365,31 @@ curl -X POST http://localhost:3400/v1/batch \
 ```
 
 `icon` and `url` are optional and are forwarded to in-app notifications for batch sends too.
+
+---
+
+### GET /v1/channels
+
+What the calling project can send on this instance. `allowed` means the channel
+is in the project's channel list; `configured` means this instance has its
+connector, so `/v1/send` will not answer `422 channel_not_configured` for it.
+Offer a channel to users only when both are `true`.
+
+```bash
+curl http://localhost:3400/v1/channels -H "X-Api-Key: sk_myapp_xxx"
+```
+
+```json
+{
+  "channels": {
+    "email": {"allowed": true, "configured": true},
+    "sms": {"allowed": true, "configured": false},
+    "whatsapp": {"allowed": false, "configured": false},
+    "push": {"allowed": true, "configured": true},
+    "in_app": {"allowed": true, "configured": true}
+  }
+}
+```
 
 ---
 

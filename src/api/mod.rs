@@ -1,5 +1,6 @@
 pub mod admin_ops;
 pub mod auth;
+pub mod channels;
 pub mod health;
 pub mod inbox;
 pub mod jobs;
@@ -72,6 +73,8 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/schedule", post(send::send_notification))
         .route("/batch", post(send::batch_notification))
         .route("/segments/preview", post(send::preview_segment))
+        // What this project can send on this instance
+        .route("/channels", get(channels::list_channels))
         // Jobs
         .route("/jobs/:id", get(jobs::get_job).delete(jobs::cancel_job))
         // Subscribers (list + create)
