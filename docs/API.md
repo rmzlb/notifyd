@@ -81,6 +81,7 @@ All responses are JSON.
 | 401 | Missing or invalid API key |
 | 403 | Forbidden (wrong subscriber, wrong project) |
 | 404 | Resource not found |
+| 422 | Invalid field, or a channel this instance has no connector for (`channel_not_configured`) |
 | 429 | Rate limited |
 | 500 | Internal server error |
 
@@ -187,12 +188,30 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 ```json
 {
   "success": true,
-  "jobs": [
-    {"id": "uuid", "channel": "email", "status": "pending"},
-    {"id": "uuid", "channel": "in_app", "status": "pending"}
-  ]
+  "job_ids": ["uuid", "uuid"],
+  "scheduled_at": "2026-03-25T14:00:00Z",
+  "channels": ["email", "in_app"],
+  "topic": null,
+  "skipped": [{"channel": "sms", "reason": "sms connector not configured"}]
 }
 ```
+
+`skipped` lists every requested channel that got no job, with the reason: no
+address for it, an opt-out, or no connector on this instance. A channel
+without a connector is refused at enqueue instead of queued to fail later.
+When no job is created and at least one channel lacked a connector, the answer
+is `422`:
+
+```json
+{
+  "error": "channel_not_configured",
+  "message": "sms connector not configured",
+  "skipped": [{"channel": "sms", "reason": "sms connector not configured"}]
+}
+```
+
+A `2xx` with an empty `job_ids` means nothing was queued: every channel was
+skipped for an address or an opt-out.
 
 ### GET /v1/jobs/:id
 
@@ -323,6 +342,9 @@ second job for anyone already queued or sent. The response reports
 `transactional` is **rejected** here with `422`: a fan-out is marketing by
 definition, and the flag disables the opt-out check. Undeclinable messages go
 out one by one through `/v1/send`.
+
+A channel this instance has no connector for fails the whole batch with
+`422 channel_not_configured` before any job is created.
 
 Send the same notification to multiple subscribers.
 

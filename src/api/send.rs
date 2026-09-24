@@ -379,8 +379,21 @@ pub async fn send_notification(
         _ => None,
     };
     let mut skipped: Vec<Value> = Vec::new();
+    let mut unconfigured: Vec<String> = Vec::new();
     let mut recipients: Vec<(String, String)> = Vec::with_capacity(channels.len());
     for channel in &channels {
+        // Queued, it would only fail "not configured" in the worker while the
+        // caller took the 200 for a send.
+        if !state.config.connectors.delivers(channel) {
+            tracing::warn!(
+                "project {} asked for {} but no connector is configured",
+                project.id,
+                channel
+            );
+            skipped.push(json!({ "channel": channel, "reason": not_configured(channel) }));
+            unconfigured.push(channel.clone());
+            continue;
+        }
         let address = match (&req.to, &addresses, req.subscriber_id.as_deref()) {
             (Some(to), _, _) => Some(to.clone()),
             (None, Some(sub), _) => sub.for_channel(channel),
@@ -491,6 +504,9 @@ pub async fn send_notification(
         }
         None => channels,
     };
+    if channels.is_empty() && !unconfigured.is_empty() {
+        return Err(channel_not_configured(&unconfigured, skipped));
+    }
     let marketing =
         priority >= PRIORITY_BULK || default_priority_from_tags(req.tags.as_ref()) == PRIORITY_BULK;
     let scheduled_at = windowed_schedule(
@@ -667,6 +683,31 @@ pub async fn send_notification(
     })))
 }
 
+fn not_configured(channel: &str) -> String {
+    format!("{channel} connector not configured")
+}
+
+/// 422 for a request whose every job would have failed for want of a
+/// connector: nothing was queued, and the caller must not report a send.
+fn channel_not_configured(
+    unconfigured: &[String],
+    skipped: Vec<Value>,
+) -> (StatusCode, Json<Value>) {
+    let message = unconfigured
+        .iter()
+        .map(|channel| not_configured(channel))
+        .collect::<Vec<_>>()
+        .join("; ");
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({
+            "error": "channel_not_configured",
+            "message": message,
+            "skipped": skipped,
+        })),
+    )
+}
+
 /// Channels the subscriber still accepts, recording each refusal in `skipped`.
 /// A transactional message is undeclinable: preferences are not consulted at
 /// all, so a password reset or an order receipt goes out even to somebody who
@@ -781,8 +822,11 @@ mod priority_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::channel_not_configured;
     use super::permitted_channels;
     use super::validate_email_envelope;
+    use axum::{http::StatusCode, Json};
+    use serde_json::json;
 
     fn prefs(items: &[(&str, &str, bool)]) -> Vec<crate::topics::PreferenceRow> {
         items
@@ -847,6 +891,20 @@ mod tests {
         );
         assert_eq!(allowed, requested);
         assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn missing_connector_is_a_422_that_names_the_channel() {
+        let skipped = vec![
+            json!({"channel": "email", "reason": "no email address"}),
+            json!({"channel": "sms", "reason": "sms connector not configured"}),
+        ];
+        let (status, Json(body)) = channel_not_configured(&["sms".to_string()], skipped);
+
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["error"], "channel_not_configured");
+        assert_eq!(body["message"], "sms connector not configured");
+        assert_eq!(body["skipped"].as_array().map(Vec::len), Some(2));
     }
 
     #[test]
@@ -923,6 +981,21 @@ pub async fn batch_notification(
                 "error": "'transactional' is not accepted on /v1/batch: a fan-out must honour opt-outs. Send undeclinable messages one by one through /v1/send."
             })),
         ));
+    }
+
+    // Stricter than /v1/send: a campaign is refused whole rather than sent on
+    // part of the channels it names.
+    let unconfigured: Vec<String> = channels
+        .iter()
+        .filter(|channel| !state.config.connectors.delivers(channel))
+        .cloned()
+        .collect();
+    if !unconfigured.is_empty() {
+        let skipped = unconfigured
+            .iter()
+            .map(|channel| json!({ "channel": channel, "reason": not_configured(channel) }))
+            .collect();
+        return Err(channel_not_configured(&unconfigured, skipped));
     }
 
     // Recipients: an explicit list, or a segment resolved to (id, timezone) pairs.

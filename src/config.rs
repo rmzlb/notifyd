@@ -147,6 +147,25 @@ pub struct ConnectorsConfig {
     pub chat: ChatConfig,
 }
 
+impl ConnectorsConfig {
+    /// Whether the worker can deliver `channel` on this instance, by the rule
+    /// it applies when it claims the job. The API refuses at enqueue what
+    /// would otherwise fail "not configured" one step later. Chat channels
+    /// and unknown names are not judged here: a project can bring its own
+    /// Telegram bot, and the worker reports an unknown channel itself.
+    pub fn delivers(&self, channel: &str) -> bool {
+        use crate::connectors::Channel;
+        match Channel::from_str(channel) {
+            Some(Channel::Email) => self.email.is_some(),
+            Some(Channel::Sms) => self.sms.is_some(),
+            Some(Channel::Whatsapp) => self.whatsapp.is_some(),
+            // Both config paths fill `push` from the environment at startup.
+            Some(Channel::Push) => self.push.is_some() || self.apns.is_some(),
+            _ => true,
+        }
+    }
+}
+
 /// Email provider. `provider` selects the connector:
 /// - `resend`     : `api_key` = Resend key
 /// - `agentmail`  : `api_key` = AgentMail token, `from` = inbox address
@@ -596,5 +615,47 @@ impl Config {
             projects: HashMap::new(),
         };
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConnectorsConfig;
+
+    fn connectors(text: &str) -> ConnectorsConfig {
+        toml::from_str(text).expect("valid connectors table")
+    }
+
+    #[test]
+    fn delivers_only_the_channels_it_has_a_connector_for() {
+        let email_only = connectors(
+            r#"
+            [email]
+            provider = "log"
+            from = "noreply@example.com"
+            "#,
+        );
+        assert!(email_only.delivers("email"));
+        assert!(!email_only.delivers("sms"));
+        assert!(!email_only.delivers("whatsapp"));
+        assert!(!email_only.delivers("push"));
+        // Always available, or checked by the worker itself.
+        assert!(email_only.delivers("in_app"));
+        assert!(email_only.delivers("telegram"));
+
+        let sms_and_push = connectors(
+            r#"
+            [sms]
+            provider = "telnyx"
+            api_key = "KEY"
+            from = "Helmai"
+
+            [push]
+            vapid_public_key = "PUBLIC"
+            "#,
+        );
+        assert!(sms_and_push.delivers("sms"));
+        assert!(sms_and_push.delivers("push"));
+        assert!(!sms_and_push.delivers("email"));
     }
 }
