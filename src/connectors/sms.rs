@@ -43,6 +43,20 @@ impl Connector for SmsConnector {
     }
 }
 
+impl SmsConfig {
+    /// Why the provider would refuse `from` as the sender. The API checks it
+    /// at enqueue, so the caller gets the refusal instead of a job that the
+    /// worker fails later.
+    pub fn sender_refusal(&self, from: &str) -> Option<&'static str> {
+        // Telnyx sends an alphanumeric sender only through the messaging
+        // profile that carries it.
+        (self.provider == "telnyx"
+            && is_alphanumeric_sender(from)
+            && self.messaging_profile_id.is_none())
+        .then_some("an alphanumeric sender needs TELNYX_MESSAGING_PROFILE_ID")
+    }
+}
+
 impl SmsConnector {
     /// The message's own sender (`sms.from`, checked at enqueue), else the
     /// instance's `SMS_FROM`.
@@ -104,13 +118,8 @@ impl SmsConnector {
             .ok_or_else(|| ProviderError::permanent("telnyx", "api_key required"))?;
 
         let from = self.sender(req);
-        // Telnyx sends an alphanumeric sender only through the messaging
-        // profile that carries it.
-        if is_alphanumeric_sender(from) && self.config.messaging_profile_id.is_none() {
-            return Err(ProviderError::permanent(
-                "telnyx",
-                "an alphanumeric sender needs TELNYX_MESSAGING_PROFILE_ID",
-            ));
+        if let Some(why) = self.config.sender_refusal(from) {
+            return Err(ProviderError::permanent("telnyx", why));
         }
 
         let mut body = serde_json::json!({

@@ -44,13 +44,19 @@ Body:
   "cc": ["copy@example.com"], "reply_to": "support@example.com",
   "send_window": {"start":"09:00","end":"20:00","tz":"Europe/Paris","days":[1,2,3,4,5]},  // bulk waits for recipient daytime; false bypasses the project window
   "topic": "tips",                   // optional stream name; defaults to the template's topic. See TOPICS.
-  "track": false                     // or {"opens": false, "clicks": true}; see TRACKING. Default: project setting (on).
+  "track": false,                    // or {"opens": false, "clicks": true}; see TRACKING. Default: project setting (on).
+  "sms": {"from": "MyShop"}          // optional per-message SMS sender: E.164, or 1-11 letters/digits/spaces with a letter (one-way)
 }
 
 Channels: "email", "sms", "whatsapp", "in_app", "push", "telegram", "slack", "discord"
 Response: {"success": true, "job_ids": ["uuid", ...], "scheduled_at": "...", "channels": ["email", "in_app"], "topic": "tips"|null,
            "skipped": [{"channel": "email", "reason": "subscriber opted out of topic 'tips' on email"}]}
-(one job per channel actually queued, same order; channels the subscriber opted out of are listed in `skipped`, no job is created)
+(one job per channel actually queued, same order; channels skipped for an opt-out, a missing address or no connector are
+listed in `skipped`, no job is created for them. A 2xx with empty job_ids means nothing was queued.)
+A channel this instance cannot deliver (no connector; alphanumeric SMS sender on Telnyx without TELNYX_MESSAGING_PROFILE_ID)
+is refused at enqueue. If no job was created because of that: 422 {"error": "channel_not_configured", "message", "skipped"}.
+/v1/batch refuses the whole batch with that 422. GET /v1/channels -> {"channels": {"sms": {"allowed": bool, "configured": bool}, ...}}
+tells which channels the project lists and this instance can deliver.
 
 Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed.
 - provider accepted: sent, provider + provider_message_id stored

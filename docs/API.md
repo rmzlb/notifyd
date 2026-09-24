@@ -182,7 +182,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `tags` | `object[]` | ❌ | Email only. Provider tags `[{ "name", "value" }]`; also drives the default priority (see above). |
 | `email_headers` | `object` | ❌ | Email only. Custom MIME headers such as `List-Unsubscribe`. |
 | `send_window` | `object \| false` | ❌ | `{ "start": "09:00", "end": "20:00", "tz": "Europe/Paris", "days": [1..7], "applies_to": "marketing" \| "all" }`. Bulk email waits for the recipient's daytime (`subscribers.timezone`, else `tz`). Overrides the project's `settings.send_window`; `false` bypasses it. |
-| `sms` | `object` | ❌ | SMS only. `{ "from" }` replaces the instance's `SMS_FROM` for this message: an E.164 number, or an alphanumeric sender of 1 to 11 letters, digits or spaces with at least one letter (one-way, the recipient cannot reply). Anything else is refused with `422`. |
+| `sms` | `object` | ❌ | `{ "from" }` replaces the instance's `SMS_FROM` for this message: an E.164 number, or an alphanumeric sender of 1 to 11 letters, digits or spaces with at least one letter (one-way, the recipient cannot reply). Checked on every request, whatever the channels: anything else is refused with `422`. |
 | `transactional` | `bool` | ❌ | Marks a message the subscriber cannot decline: password reset, magic link, email verification, order receipt, security alert. Subscription preferences (topic, workflow, channel and global opt-outs) are not consulted, at enqueue **and** at send, so an opt-out can never lock somebody out of their own account. Suppressions still apply: a hard bounce or a spam complaint keeps blocking the address, because that is a deliverability signal and not a choice. Never set it on marketing — `/v1/batch` rejects the field with `422`. |
 
 **Response:**
@@ -199,10 +199,11 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 ```
 
 `skipped` lists every requested channel that got no job, with the reason: no
-address for it, an opt-out, or no connector on this instance. A channel
-without a connector is refused at enqueue instead of queued to fail later.
-When no job is created and at least one channel lacked a connector, the answer
-is `422`:
+address for it, an opt-out, or no way to deliver it on this instance (no
+connector, or an alphanumeric SMS sender on Telnyx without
+`TELNYX_MESSAGING_PROFILE_ID`). Such a channel is refused at enqueue instead
+of queued to fail later. When no job is created and at least one channel was
+refused that way, the answer is `422`:
 
 ```json
 {
@@ -345,8 +346,8 @@ second job for anyone already queued or sent. The response reports
 definition, and the flag disables the opt-out check. Undeclinable messages go
 out one by one through `/v1/send`.
 
-A channel this instance has no connector for fails the whole batch with
-`422 channel_not_configured` before any job is created.
+A channel this instance cannot deliver (see `/v1/send`) fails the whole batch
+with `422 channel_not_configured` before any job is created.
 
 Send the same notification to multiple subscribers.
 
@@ -371,9 +372,10 @@ curl -X POST http://localhost:3400/v1/batch \
 ### GET /v1/channels
 
 What the calling project can send on this instance. `allowed` means the channel
-is in the project's channel list; `configured` means this instance has its
-connector, so `/v1/send` will not answer `422 channel_not_configured` for it.
-Offer a channel to users only when both are `true`.
+is in the project's channel list (informational: `/v1/send` does not enforce
+it); `configured` means this instance can deliver it with its default sender,
+so `/v1/send` will not answer `422 channel_not_configured` for it. Offer a
+channel to users only when both are `true`.
 
 ```bash
 curl http://localhost:3400/v1/channels -H "X-Api-Key: sk_myapp_xxx"

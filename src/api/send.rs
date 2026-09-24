@@ -370,6 +370,21 @@ pub async fn send_notification(
             Json(json!({"error": "Missing 'to' or 'subscriber_id'"})),
         ));
     }
+    let sms = req
+        .sms
+        .as_ref()
+        .map(validate_sms_extras)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    let sms_from = sms
+        .as_ref()
+        .and_then(|sms| sms.get("from"))
+        .and_then(Value::as_str);
     // Without `to`, each channel takes its address from the subscriber record
     // (email, phone, data.telegram_chat_id…); in_app and push use the id.
     let addresses = match (&req.to, req.subscriber_id.as_deref()) {
@@ -385,19 +400,15 @@ pub async fn send_notification(
         _ => None,
     };
     let mut skipped: Vec<Value> = Vec::new();
-    let mut unconfigured: Vec<String> = Vec::new();
+    let mut refusals: Vec<String> = Vec::new();
     let mut recipients: Vec<(String, String)> = Vec::with_capacity(channels.len());
     for channel in &channels {
-        // Queued, it would only fail "not configured" in the worker while the
-        // caller took the 200 for a send.
-        if !state.config.connectors.delivers(channel) {
-            tracing::warn!(
-                "project {} asked for {} but no connector is configured",
-                project.id,
-                channel
-            );
-            skipped.push(json!({ "channel": channel, "reason": not_configured(channel) }));
-            unconfigured.push(channel.clone());
+        // Queued, it would only fail in the worker while the caller took the
+        // 200 for a send.
+        if let Some(reason) = state.config.connectors.refusal(channel, sms_from) {
+            tracing::warn!("project {} asked for {}: {}", project.id, channel, reason);
+            skipped.push(json!({ "channel": channel, "reason": reason }));
+            refusals.push(reason);
             continue;
         }
         let address = match (&req.to, &addresses, req.subscriber_id.as_deref()) {
@@ -457,17 +468,6 @@ pub async fn send_notification(
             Json(json!({ "error": error })),
         )
     })?;
-    let sms = req
-        .sms
-        .as_ref()
-        .map(validate_sms_extras)
-        .transpose()
-        .map_err(|error| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({ "error": error })),
-            )
-        })?;
     let window = effective_send_window(&state, &project.id, req.send_window.as_ref())
         .await
         .map_err(|error| {
@@ -521,8 +521,8 @@ pub async fn send_notification(
         }
         None => channels,
     };
-    if channels.is_empty() && !unconfigured.is_empty() {
-        return Err(channel_not_configured(&unconfigured, skipped));
+    if channels.is_empty() && !refusals.is_empty() {
+        return Err(channel_not_configured(&refusals, skipped));
     }
     let marketing =
         priority >= PRIORITY_BULK || default_priority_from_tags(req.tags.as_ref()) == PRIORITY_BULK;
@@ -595,10 +595,10 @@ pub async fn send_notification(
         }
     }
 
-    if let Some(sms) = sms {
-        if let Some(p) = payload.as_object_mut() {
-            p.insert("sms".to_string(), sms);
-        }
+    // Always present, so a `vars.sms` merged below cannot stand in for the
+    // validated extras.
+    if let Some(p) = payload.as_object_mut() {
+        p.insert("sms".to_string(), sms.unwrap_or(Value::Null));
     }
 
     // Durable: the worker re-checks preferences when it claims the job, so the
@@ -729,26 +729,15 @@ fn validate_sms_extras(sms: &Value) -> Result<Value, String> {
     Ok(Value::Object(extras))
 }
 
-fn not_configured(channel: &str) -> String {
-    format!("{channel} connector not configured")
-}
-
-/// 422 for a request whose every job would have failed for want of a
-/// connector: nothing was queued, and the caller must not report a send.
-fn channel_not_configured(
-    unconfigured: &[String],
-    skipped: Vec<Value>,
-) -> (StatusCode, Json<Value>) {
-    let message = unconfigured
-        .iter()
-        .map(|channel| not_configured(channel))
-        .collect::<Vec<_>>()
-        .join("; ");
+/// 422 for a request whose every job would have failed in the worker (no
+/// connector, or a sender the provider refuses): nothing was queued, and the
+/// caller must not report a send.
+fn channel_not_configured(refusals: &[String], skipped: Vec<Value>) -> (StatusCode, Json<Value>) {
     (
         StatusCode::UNPROCESSABLE_ENTITY,
         Json(json!({
             "error": "channel_not_configured",
-            "message": message,
+            "message": refusals.join("; "),
             "skipped": skipped,
         })),
     )
@@ -946,7 +935,8 @@ mod tests {
             json!({"channel": "email", "reason": "no email address"}),
             json!({"channel": "sms", "reason": "sms connector not configured"}),
         ];
-        let (status, Json(body)) = channel_not_configured(&["sms".to_string()], skipped);
+        let (status, Json(body)) =
+            channel_not_configured(&["sms connector not configured".to_string()], skipped);
 
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(body["error"], "channel_not_configured");
@@ -1041,19 +1031,37 @@ pub async fn batch_notification(
         ));
     }
 
+    let sms = req
+        .sms
+        .as_ref()
+        .map(validate_sms_extras)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    let sms_from = sms
+        .as_ref()
+        .and_then(|sms| sms.get("from"))
+        .and_then(Value::as_str);
     // Stricter than /v1/send: a campaign is refused whole rather than sent on
     // part of the channels it names.
-    let unconfigured: Vec<String> = channels
+    let refused: Vec<(&String, String)> = channels
         .iter()
-        .filter(|channel| !state.config.connectors.delivers(channel))
-        .cloned()
+        .filter_map(|channel| {
+            let reason = state.config.connectors.refusal(channel, sms_from)?;
+            Some((channel, reason))
+        })
         .collect();
-    if !unconfigured.is_empty() {
-        let skipped = unconfigured
+    if !refused.is_empty() {
+        let skipped = refused
             .iter()
-            .map(|channel| json!({ "channel": channel, "reason": not_configured(channel) }))
+            .map(|(channel, reason)| json!({ "channel": channel, "reason": reason }))
             .collect();
-        return Err(channel_not_configured(&unconfigured, skipped));
+        let refusals: Vec<String> = refused.into_iter().map(|(_, reason)| reason).collect();
+        return Err(channel_not_configured(&refusals, skipped));
     }
 
     // Recipients: an explicit list, or a segment resolved to (id, timezone) pairs.
@@ -1093,17 +1101,6 @@ pub async fn batch_notification(
             Json(json!({ "error": error })),
         )
     })?;
-    let sms = req
-        .sms
-        .as_ref()
-        .map(validate_sms_extras)
-        .transpose()
-        .map_err(|error| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({ "error": error })),
-            )
-        })?;
     let window = effective_send_window(&state, &project.id, req.send_window.as_ref())
         .await
         .map_err(|error| {

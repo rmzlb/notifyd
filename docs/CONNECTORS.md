@@ -47,7 +47,8 @@ Common: `SMS_FROM` (E.164 number or alphanumeric sender), pacing
 `{"sms": {"from": "…"}}` on `/v1/send` and `/v1/batch`, for a project that
 sends under several identities. An alphanumeric sender (1 to 11 letters,
 digits or spaces, at least one letter) is one-way; with Telnyx it needs
-`TELNYX_MESSAGING_PROFILE_ID`, the profile that carries it.
+`TELNYX_MESSAGING_PROFILE_ID`, the profile that carries it, and the API
+refuses it at enqueue (`422 channel_not_configured`) while that is missing.
 
 | `SMS_PROVIDER` | Variables |
 |---|---|

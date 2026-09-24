@@ -148,20 +148,29 @@ pub struct ConnectorsConfig {
 }
 
 impl ConnectorsConfig {
-    /// Whether the worker can deliver `channel` on this instance, by the rule
-    /// it applies when it claims the job. The API refuses at enqueue what
-    /// would otherwise fail "not configured" one step later. Chat channels
-    /// and unknown names are not judged here: a project can bring its own
-    /// Telegram bot, and the worker reports an unknown channel itself.
-    pub fn delivers(&self, channel: &str) -> bool {
+    /// Why the worker would fail `channel` on this instance, by the rules it
+    /// applies when it claims the job; `None` when it can deliver it. The API
+    /// refuses at enqueue what would otherwise fail one step later. `sms_from`
+    /// is the message's own sender; without one, `SMS_FROM` applies. Chat
+    /// channels and unknown names are not judged here: a project can bring
+    /// its own Telegram bot, and the worker reports an unknown channel itself.
+    pub fn refusal(&self, channel: &str, sms_from: Option<&str>) -> Option<String> {
         use crate::connectors::Channel;
+        let missing = || Some(format!("{channel} connector not configured"));
         match Channel::from_str(channel) {
-            Some(Channel::Email) => self.email.is_some(),
-            Some(Channel::Sms) => self.sms.is_some(),
-            Some(Channel::Whatsapp) => self.whatsapp.is_some(),
+            Some(Channel::Email) if self.email.is_none() => missing(),
+            Some(Channel::Whatsapp) if self.whatsapp.is_none() => missing(),
             // Both config paths fill `push` from the environment at startup.
-            Some(Channel::Push) => self.push.is_some() || self.apns.is_some(),
-            _ => true,
+            Some(Channel::Push) if self.push.is_none() && self.apns.is_none() => missing(),
+            Some(Channel::Sms) => match &self.sms {
+                None => missing(),
+                Some(sms) => {
+                    let from = sms_from.unwrap_or(sms.from.as_str());
+                    sms.sender_refusal(from)
+                        .map(|why| format!("sms cannot be sent from '{from}': {why}"))
+                }
+            },
+            _ => None,
         }
     }
 }
@@ -627,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn delivers_only_the_channels_it_has_a_connector_for() {
+    fn refuses_only_the_channels_it_has_no_connector_for() {
         let email_only = connectors(
             r#"
             [email]
@@ -635,27 +644,62 @@ mod tests {
             from = "noreply@example.com"
             "#,
         );
-        assert!(email_only.delivers("email"));
-        assert!(!email_only.delivers("sms"));
-        assert!(!email_only.delivers("whatsapp"));
-        assert!(!email_only.delivers("push"));
+        assert_eq!(email_only.refusal("email", None), None);
+        assert_eq!(
+            email_only.refusal("sms", Some("Helmai")).as_deref(),
+            Some("sms connector not configured")
+        );
+        assert!(email_only.refusal("whatsapp", None).is_some());
+        assert!(email_only.refusal("push", None).is_some());
         // Always available, or checked by the worker itself.
-        assert!(email_only.delivers("in_app"));
-        assert!(email_only.delivers("telegram"));
+        assert_eq!(email_only.refusal("in_app", None), None);
+        assert_eq!(email_only.refusal("telegram", None), None);
 
         let sms_and_push = connectors(
             r#"
             [sms]
             provider = "telnyx"
             api_key = "KEY"
+            messaging_profile_id = "PROFILE"
             from = "Helmai"
 
             [push]
             vapid_public_key = "PUBLIC"
             "#,
         );
-        assert!(sms_and_push.delivers("sms"));
-        assert!(sms_and_push.delivers("push"));
-        assert!(!sms_and_push.delivers("email"));
+        assert_eq!(sms_and_push.refusal("sms", None), None);
+        assert_eq!(sms_and_push.refusal("sms", Some("CDMF")), None);
+        assert_eq!(sms_and_push.refusal("push", None), None);
+        assert!(sms_and_push.refusal("email", None).is_some());
+    }
+
+    #[test]
+    fn telnyx_without_profile_refuses_an_alphanumeric_sender() {
+        let numbers_only = connectors(
+            r#"
+            [sms]
+            provider = "telnyx"
+            api_key = "KEY"
+            from = "+33600000000"
+            "#,
+        );
+        assert_eq!(numbers_only.refusal("sms", None), None);
+        assert_eq!(numbers_only.refusal("sms", Some("+33611111111")), None);
+        assert_eq!(
+            numbers_only.refusal("sms", Some("CDMF")).as_deref(),
+            Some("sms cannot be sent from 'CDMF': an alphanumeric sender needs TELNYX_MESSAGING_PROFILE_ID")
+        );
+
+        // Twilio takes an alphanumeric sender without a profile.
+        let twilio = connectors(
+            r#"
+            [sms]
+            provider = "twilio"
+            account_sid = "SID"
+            auth_token = "TOKEN"
+            from = "Helmai"
+            "#,
+        );
+        assert_eq!(twilio.refusal("sms", None), None);
     }
 }

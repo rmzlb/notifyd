@@ -17,8 +17,9 @@ const REPORTED: [Channel; 5] = [
 ];
 
 /// GET /v1/channels — for each channel, `allowed` (in the project's channel
-/// list) and `configured` (this instance has the connector, so `/v1/send`
-/// will not refuse it). A client offers a channel only when both are true.
+/// list) and `configured` (this instance can deliver it with its default
+/// sender, so `/v1/send` will not refuse it). A client offers a channel only
+/// when both are true.
 pub async fn list_channels(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -63,7 +64,7 @@ fn channel_report(connectors: &ConnectorsConfig, allowed: &[String]) -> Value {
                 channel.as_str().to_string(),
                 json!({
                     "allowed": listed,
-                    "configured": connectors.delivers(channel.as_str()),
+                    "configured": connectors.refusal(channel.as_str(), None).is_none(),
                 }),
             )
         })
