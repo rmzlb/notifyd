@@ -160,6 +160,10 @@ pub struct SendRequest {
     /// of a Telegram forum group, which Telegram silently ignores when absent
     /// by posting to General instead of failing.
     pub chat: Option<Value>,
+    /// SMS extras: `{"from"}`. `from` replaces the instance's `SMS_FROM` for
+    /// this message, so one project can send under several identities (one
+    /// per shop, clinic…). See `connectors::sms::valid_sender`.
+    pub sms: Option<Value>,
     /// Marks a message the subscriber cannot decline: password reset, magic
     /// link, email verification, order receipt, security alert. Subscription
     /// preferences (topic, workflow, channel and global opt-outs) are skipped
@@ -329,6 +333,8 @@ pub struct BatchRequest {
     pub push: Option<Value>,
     /// Chat extras, see `/v1/send`.
     pub chat: Option<Value>,
+    /// SMS extras, see `/v1/send`.
+    pub sms: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -451,6 +457,17 @@ pub async fn send_notification(
             Json(json!({ "error": error })),
         )
     })?;
+    let sms = req
+        .sms
+        .as_ref()
+        .map(validate_sms_extras)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
     let window = effective_send_window(&state, &project.id, req.send_window.as_ref())
         .await
         .map_err(|error| {
@@ -578,6 +595,12 @@ pub async fn send_notification(
         }
     }
 
+    if let Some(sms) = sms {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("sms".to_string(), sms);
+        }
+    }
+
     // Durable: the worker re-checks preferences when it claims the job, so the
     // exemption has to survive in the payload or the send would still be
     // skipped one step later.
@@ -681,6 +704,29 @@ pub async fn send_notification(
         "topic": topic,
         "skipped": skipped,
     })))
+}
+
+/// `sms` extras with a trimmed `from`, or why they are refused. A sender the
+/// carrier would reject fails here, not after the job was accepted.
+fn validate_sms_extras(sms: &Value) -> Result<Value, String> {
+    let Some(extras) = sms.as_object() else {
+        return Err("sms must be an object".to_string());
+    };
+    let mut extras = extras.clone();
+    match extras.get("from") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(from)) => {
+            let from = from.trim().to_string();
+            if !crate::connectors::sms::valid_sender(&from) {
+                return Err(format!(
+                    "invalid sms.from '{from}': an E.164 number, or 1 to 11 letters, digits or spaces with at least one letter"
+                ));
+            }
+            extras.insert("from".to_string(), json!(from));
+        }
+        Some(_) => return Err("sms.from must be a string".to_string()),
+    }
+    Ok(Value::Object(extras))
 }
 
 fn not_configured(channel: &str) -> String {
@@ -825,6 +871,7 @@ mod tests {
     use super::channel_not_configured;
     use super::permitted_channels;
     use super::validate_email_envelope;
+    use super::validate_sms_extras;
     use axum::{http::StatusCode, Json};
     use serde_json::json;
 
@@ -905,6 +952,17 @@ mod tests {
         assert_eq!(body["error"], "channel_not_configured");
         assert_eq!(body["message"], "sms connector not configured");
         assert_eq!(body["skipped"].as_array().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn sms_sender_is_trimmed_and_checked_at_enqueue() {
+        let extras = validate_sms_extras(&json!({"from": "  CDMF  "})).expect("valid sender");
+        assert_eq!(extras["from"], "CDMF");
+        assert!(validate_sms_extras(&json!({})).is_ok());
+        assert!(validate_sms_extras(&json!({"from": "Cabinet dentaire"})).is_err());
+        assert!(validate_sms_extras(&json!({"from": ""})).is_err());
+        assert!(validate_sms_extras(&json!({"from": 33})).is_err());
+        assert!(validate_sms_extras(&json!("CDMF")).is_err());
     }
 
     #[test]
@@ -1035,6 +1093,17 @@ pub async fn batch_notification(
             Json(json!({ "error": error })),
         )
     })?;
+    let sms = req
+        .sms
+        .as_ref()
+        .map(validate_sms_extras)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
     let window = effective_send_window(&state, &project.id, req.send_window.as_ref())
         .await
         .map_err(|error| {
@@ -1076,6 +1145,7 @@ pub async fn batch_notification(
         "track": req.track,
         "push": req.push,
         "chat": req.chat,
+        "sms": sms,
     });
 
     // Addresses and timezones of every recipient in one query: each job

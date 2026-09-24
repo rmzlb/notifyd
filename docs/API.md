@@ -181,6 +181,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `tags` | `object[]` | ❌ | Email only. Provider tags `[{ "name", "value" }]`; also drives the default priority (see above). |
 | `email_headers` | `object` | ❌ | Email only. Custom MIME headers such as `List-Unsubscribe`. |
 | `send_window` | `object \| false` | ❌ | `{ "start": "09:00", "end": "20:00", "tz": "Europe/Paris", "days": [1..7], "applies_to": "marketing" \| "all" }`. Bulk email waits for the recipient's daytime (`subscribers.timezone`, else `tz`). Overrides the project's `settings.send_window`; `false` bypasses it. |
+| `sms` | `object` | ❌ | SMS only. `{ "from" }` replaces the instance's `SMS_FROM` for this message: an E.164 number, or an alphanumeric sender of 1 to 11 letters, digits or spaces with at least one letter (one-way, the recipient cannot reply). Anything else is refused with `422`. |
 | `transactional` | `bool` | ❌ | Marks a message the subscriber cannot decline: password reset, magic link, email verification, order receipt, security alert. Subscription preferences (topic, workflow, channel and global opt-outs) are not consulted, at enqueue **and** at send, so an opt-out can never lock somebody out of their own account. Suppressions still apply: a hard bounce or a spam complaint keeps blocking the address, because that is a deliverability signal and not a choice. Never set it on marketing — `/v1/batch` rejects the field with `422`. |
 
 **Response:**

@@ -43,7 +43,11 @@ breaker state and suggests a fallback when none is configured.
 ## SMS — `SMS_PROVIDER`
 
 Common: `SMS_FROM` (E.164 number or alphanumeric sender), pacing
-`SMS_RATE_PER_SEC` (10).
+`SMS_RATE_PER_SEC` (10). A message can carry its own sender in
+`{"sms": {"from": "…"}}` on `/v1/send` and `/v1/batch`, for a project that
+sends under several identities. An alphanumeric sender (1 to 11 letters,
+digits or spaces, at least one letter) is one-way; with Telnyx it needs
+`TELNYX_MESSAGING_PROFILE_ID`, the profile that carries it.
 
 | `SMS_PROVIDER` | Variables |
 |---|---|
