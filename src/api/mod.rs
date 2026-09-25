@@ -20,11 +20,18 @@ use std::sync::Arc;
 
 pub fn router(state: Arc<AppState>) -> Router {
     // Provider callbacks live outside /v1: they are not part of the client
-    // API and authenticate with a svix signature, not an API key.
+    // API and authenticate with the provider's signature (svix for Resend,
+    // X-Twilio-Signature for Twilio), not an API key.
     let provider = Router::new()
         .route(
             "/webhooks/resend",
             axum::routing::post(crate::deliverability::resend_webhook),
+        )
+        .route(
+            crate::twilio_status::STATUS_PATH,
+            axum::routing::post(crate::twilio_status::status_callback).layer(
+                axum::extract::DefaultBodyLimit::max(crate::twilio_status::BODY_LIMIT),
+            ),
         )
         .with_state(state.clone());
 

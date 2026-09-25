@@ -25,7 +25,7 @@ variables, never in the repo.
 | `EMAIL_PROVIDER` + credentials | `resend` (`RESEND_API_KEY`), `cloudflare` (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_API_TOKEN`), `smtp` (`SMTP_HOST`…), `agentmail`, `log` (dev only) |
 | `EMAIL_FROM`, `EMAIL_FROM_NAME` | default sender, domain verified at the provider |
 | `EMAIL_FALLBACK_PROVIDER` + its credentials | second provider used on 429/5xx; same sender domain verified there too |
-| `PUBLIC_URL` | public base URL of the instance: hosts the one-click unsubscribe links |
+| `PUBLIC_URL` | public base URL of the instance: hosts the one-click unsubscribe links and the Twilio SMS status callbacks |
 | `CORS_ORIGINS` | back-office origins allowed to open the in-app stream and call `/mcp` from a browser |
 | `SMS_PROVIDER` + `SMS_FROM` + `TELNYX_API_KEY` or `TWILIO_*` | optional SMS; `TELNYX_WHATSAPP_API_KEY` + `WHATSAPP_FROM` for WhatsApp |
 | `EMAIL_RATE_PER_SEC` (8), `WORKER_MAX_ATTEMPTS` (5) | pacing under the provider limit, attempts before `failed` |

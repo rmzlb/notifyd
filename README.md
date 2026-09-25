@@ -412,7 +412,7 @@ Required: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`. Then one provider:
 | `EMAIL_FALLBACK_PROVIDER` | Second provider on 429 / 5xx |
 | `EMAIL_RATE_PER_SEC` | Outbound pacing per replica |
 | `SMS_PROVIDER`, `SMS_FROM` | `telnyx` or `twilio` with their credentials |
-| `PUBLIC_URL` | Base URL for one-click unsubscribe links |
+| `PUBLIC_URL` | Base URL for one-click unsubscribe links and Twilio SMS delivery status |
 | `READONLY_API_KEY` | Optional read-only operator key |
 
 → Every variable, per provider: [docs/CONNECTORS.md](docs/CONNECTORS.md) and

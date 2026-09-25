@@ -4,6 +4,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tracing::info;
 
+/// Metadata key holding the job id on an SMS request, set by the worker: the
+/// Twilio connector puts it in the status callback URL.
+pub const JOB_ID_METADATA: &str = "notifyd_job_id";
+
 pub struct SmsConnector {
     config: SmsConfig,
     client: reqwest::Client,
@@ -85,11 +89,14 @@ impl SmsConnector {
             account_sid
         );
 
-        let params = [
-            ("From", self.sender(req)),
-            ("To", req.recipient.as_str()),
-            ("Body", req.body.as_str()),
-        ];
+        let status_callback =
+            status_callback(crate::unsubscribe::public_url().as_deref(), &req.metadata);
+        let params = twilio_form(
+            self.sender(req),
+            &req.recipient,
+            &req.body,
+            status_callback.as_deref(),
+        );
 
         let response = self
             .client
@@ -167,6 +174,31 @@ pub fn valid_sender(from: &str) -> bool {
 
 fn is_alphanumeric_sender(from: &str) -> bool {
     from.bytes().any(|b| b.is_ascii_alphabetic())
+}
+
+/// Where Twilio reports the message's delivery status: only when the
+/// instance has a public URL and the request carries its job id.
+fn status_callback(public_url: Option<&str>, metadata: &Value) -> Option<String> {
+    let job_id = metadata
+        .get(JOB_ID_METADATA)
+        .and_then(Value::as_str)
+        .and_then(|id| uuid::Uuid::parse_str(id).ok())?;
+    Some(crate::twilio_status::callback_url(public_url?, job_id))
+}
+
+/// The `Messages.json` form. Without a status callback it is the form
+/// Twilio always received.
+fn twilio_form<'a>(
+    from: &'a str,
+    to: &'a str,
+    body: &'a str,
+    status_callback: Option<&'a str>,
+) -> Vec<(&'static str, &'a str)> {
+    let mut params = vec![("From", from), ("To", to), ("Body", body)];
+    if let Some(url) = status_callback {
+        params.push(("StatusCallback", url));
+    }
+    params
 }
 
 /// Telnyx wraps the message as `{ "data": { "id": "…" } }`.
@@ -247,5 +279,73 @@ mod tests {
             .expect_err("no messaging profile");
         assert_eq!(err.kind, crate::connectors::ProviderErrorKind::Permanent);
         assert!(err.message.contains("TELNYX_MESSAGING_PROFILE_ID"));
+    }
+
+    const JOB: &str = "7d9f0c2e-1b3a-4c5d-8e6f-0a1b2c3d4e5f";
+
+    /// The bytes reqwest sends for `.form(params)`.
+    fn form_body<T: serde::Serialize + ?Sized>(params: &T) -> String {
+        let request = reqwest::Client::new()
+            .post("https://api.twilio.com/2010-04-01/Accounts/AC0/Messages.json")
+            .form(params)
+            .build()
+            .unwrap();
+        String::from_utf8(request.body().unwrap().as_bytes().unwrap().to_vec()).unwrap()
+    }
+
+    #[test]
+    fn twilio_form_without_status_callback_is_unchanged() {
+        let form = twilio_form("+15005550006", "+15005550006", "hello", None);
+        // The array the connector posted before status callbacks.
+        let before = [
+            ("From", "+15005550006"),
+            ("To", "+15005550006"),
+            ("Body", "hello"),
+        ];
+        assert_eq!(form_body(&form), form_body(&before));
+        assert_eq!(
+            form_body(&form),
+            "From=%2B15005550006&To=%2B15005550006&Body=hello"
+        );
+    }
+
+    #[test]
+    fn twilio_form_asks_for_the_job_status_callback() {
+        let callback = status_callback(
+            Some("https://notifyd.example.com/"),
+            &json!({ JOB_ID_METADATA: JOB }),
+        )
+        .expect("public URL and job id");
+        assert_eq!(
+            callback,
+            format!("https://notifyd.example.com/webhooks/twilio/status?job={JOB}")
+        );
+        let form = twilio_form("+15005550006", "+15005550006", "hello", Some(&callback));
+        assert_eq!(
+            form_body(&form),
+            format!(
+                "From=%2B15005550006&To=%2B15005550006&Body=hello\
+                 &StatusCallback=https%3A%2F%2Fnotifyd.example.com%2Fwebhooks%2Ftwilio%2Fstatus%3Fjob%3D{JOB}"
+            )
+        );
+    }
+
+    #[test]
+    fn no_status_callback_without_public_url_or_job_id() {
+        assert_eq!(
+            status_callback(None, &json!({ JOB_ID_METADATA: JOB })),
+            None
+        );
+        assert_eq!(
+            status_callback(Some("https://notifyd.example.com"), &json!({})),
+            None
+        );
+        assert_eq!(
+            status_callback(
+                Some("https://notifyd.example.com"),
+                &json!({ JOB_ID_METADATA: "not-a-job-id" })
+            ),
+            None
+        );
     }
 }

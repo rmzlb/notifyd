@@ -55,6 +55,34 @@ refuses it at enqueue (`422 channel_not_configured`) while that is missing.
 | `telnyx` | `TELNYX_API_KEY`, `TELNYX_MESSAGING_PROFILE_ID` (optional) |
 | `twilio` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` |
 
+### Delivery status (Twilio)
+
+`sent` on an SMS job only means the provider accepted the API call. With
+`SMS_PROVIDER=twilio` and `PUBLIC_URL` set, every message asks Twilio for
+status callbacks on `PUBLIC_URL/webhooks/twilio/status?job=<job id>`, and the
+job records what the carrier did:
+
+| Twilio status | Job | Webhook event |
+|---|---|---|
+| `delivered` | `delivered_at` stamped, status unchanged (`sent`) | `job.delivered` |
+| `undelivered`, `failed` | the job turns `bounced`, from `sent` or from `processing` when the callback beats the worker's write of the send: `bounced_at` stamped, `error` = `twilio <ErrorCode>` (e.g. `twilio 30003`), or `twilio <status>` when Twilio gives no code | `job.bounced` |
+| any other (`queued`, `sending`, Twilio's own `sent`…) | unchanged | none |
+
+The first terminal status wins: a late, out-of-order or repeated callback
+changes nothing and fires no event again. Twilio signs each callback with
+`TWILIO_AUTH_TOKEN` over the URL it called; notifyd rebuilds that URL from
+`PUBLIC_URL`, never from the `Host` header, so `PUBLIC_URL` must be the exact
+base Twilio reaches, path prefix included, or every callback is refused
+(`403`) and the jobs stay `sent`. Only the port may differ, as with Twilio's
+SDK validators: notifyd also tries the URL with the default port added (`:443`,
+or `:80` on `http`) or, when `PUBLIC_URL` names a port, without it. `To`,
+`From` and the message text in a callback are never logged or stored. A
+callback body over 64 KiB is refused (`413`).
+
+Without `PUBLIC_URL`, the request to Twilio carries no `StatusCallback`, SMS
+jobs stay `sent`, the callback route answers `503` and the digest says what is
+missing. Telnyx statuses are not ingested: Telnyx jobs stay `sent`.
+
 ## WhatsApp — Telnyx
 
 `TELNYX_WHATSAPP_API_KEY` (falls back to `TELNYX_API_KEY`), `WHATSAPP_FROM`
@@ -165,8 +193,9 @@ stream. An unknown subscriber is a permanent error.
 
 `PUBLIC_URL` (e.g. `https://api-os.philoeparis.com/notifyd`) is the base of the
 links this instance hosts: the one-click unsubscribe endpoint `/u/<token>` on
-bulk email. Without it, bulk email leaves without `List-Unsubscribe` headers
-and the digest says so.
+bulk email, and the Twilio SMS status callback `/webhooks/twilio/status`.
+Without it, bulk email leaves without `List-Unsubscribe` headers, Twilio SMS
+get no delivery status, and the digest says so.
 
 ## Operator keys
 

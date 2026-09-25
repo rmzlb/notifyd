@@ -62,7 +62,8 @@ pub struct InstanceInfo {
     /// failover breaker is open.
     pub email_primary_resting_seconds: Option<u64>,
     pub email_failovers_since_boot: u64,
-    /// `PUBLIC_URL`, base of the unsubscribe links on bulk email.
+    /// `PUBLIC_URL`, base of the unsubscribe links on bulk email and of the
+    /// Twilio SMS status callbacks.
     pub public_url: Option<String>,
 }
 
@@ -417,6 +418,35 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
     })
 }
 
+/// What this instance loses without `PUBLIC_URL`: one-click unsubscribe on
+/// bulk email, delivery status on Twilio SMS.
+fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
+    if instance.public_url.is_some() {
+        return None;
+    }
+    let mut losses = Vec::new();
+    let mut reasons = Vec::new();
+    if instance.email_provider.is_some() {
+        losses.push("bulk email leaves without List-Unsubscribe headers");
+        reasons.push("Gmail and Yahoo require one-click unsubscribe on bulk senders");
+    }
+    if instance.sms_provider.as_deref() == Some("twilio") {
+        losses.push("Twilio SMS get no delivery status and stay `sent`");
+        reasons.push("Twilio reports delivered or undelivered to a callback URL built from it");
+    }
+    if losses.is_empty() {
+        return None;
+    }
+    Some(Finding {
+        severity: "warning",
+        message: format!("PUBLIC_URL is not set: {}.", losses.join("; ")),
+        action: format!(
+            "Set PUBLIC_URL to this instance's public base URL; {}.",
+            reasons.join("; ")
+        ),
+    })
+}
+
 /// The part an agent reads first. Rules are deliberately simple and
 /// explained in `action`, so the reader can disagree with them.
 fn compute_findings(
@@ -455,13 +485,7 @@ fn compute_findings(
             action: "Nothing lost. Check the primary provider's status page; if it repeats, lower EMAIL_RATE_PER_SEC or move the primary role to the other provider.".into(),
         });
     }
-    if instance.email_provider.is_some() && instance.public_url.is_none() {
-        findings.push(Finding {
-            severity: "warning",
-            message: "PUBLIC_URL is not set: bulk email leaves without List-Unsubscribe headers.".into(),
-            action: "Set PUBLIC_URL to this instance's public base URL; Gmail and Yahoo require one-click unsubscribe on bulk senders.".into(),
-        });
-    }
+    findings.extend(missing_public_url(instance));
     if instance.email_fallback_provider.is_none() && instance.email_provider.is_some() {
         findings.push(Finding {
             severity: "info",
@@ -1486,6 +1510,52 @@ mod tests {
         );
         assert_eq!(findings.len(), 1);
         assert!(findings[0].message.starts_with("All quiet: 12 sent"));
+    }
+
+    #[test]
+    fn missing_public_url_names_what_each_channel_loses() {
+        let instance =
+            |email: Option<&str>, sms: Option<&str>, public_url: Option<&str>| InstanceInfo {
+                version: "0",
+                commit: "abc",
+                built_at_epoch: 0,
+                uptime_seconds: 10,
+                email_provider: email.map(str::to_string),
+                sms_provider: sms.map(str::to_string),
+                whatsapp_provider: None,
+                paused_lanes: vec![],
+                email_fallback_provider: None,
+                email_primary_resting_seconds: None,
+                email_failovers_since_boot: 0,
+                public_url: public_url.map(str::to_string),
+            };
+
+        let email_only = missing_public_url(&instance(Some("resend"), None, None)).unwrap();
+        assert_eq!(
+            email_only.message,
+            "PUBLIC_URL is not set: bulk email leaves without List-Unsubscribe headers."
+        );
+        assert_eq!(
+            email_only.action,
+            "Set PUBLIC_URL to this instance's public base URL; Gmail and Yahoo require one-click unsubscribe on bulk senders."
+        );
+
+        let both = missing_public_url(&instance(Some("resend"), Some("twilio"), None)).unwrap();
+        assert_eq!(both.severity, "warning");
+        assert!(both.message.contains("List-Unsubscribe"));
+        assert!(both.message.contains("Twilio SMS get no delivery status"));
+        assert!(both.action.contains("callback URL"));
+
+        let sms_only = missing_public_url(&instance(None, Some("twilio"), None)).unwrap();
+        assert!(!sms_only.message.contains("List-Unsubscribe"));
+
+        assert!(missing_public_url(&instance(None, Some("telnyx"), None)).is_none());
+        assert!(missing_public_url(&instance(
+            Some("resend"),
+            Some("twilio"),
+            Some("https://n.example.com")
+        ))
+        .is_none());
     }
 
     #[test]

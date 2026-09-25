@@ -435,7 +435,7 @@ async fn finalize_skipped(state: &Arc<AppState>, job: &Job) {
 async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: SendResult) {
     let new_status = match result {
         Ok(delivery) => {
-            if let Err(e) = mark_sent(state, job, &delivery).await {
+            if let Err(e) = mark_sent(&state.pool, job.id, &delivery).await {
                 error!("Failed to mark job {} as sent: {}", job.id, e);
                 return;
             }
@@ -543,14 +543,27 @@ async fn finalize_job_result(state: &Arc<AppState>, job: &Job, result: SendResul
     }
 }
 
-async fn mark_sent(state: &Arc<AppState>, job: &Job, delivery: &Delivery) -> Result<()> {
+/// `sent`, unless a Twilio failure callback for this very message got in
+/// first and bounced the job (twilio_status.rs): that bounce stays. A bounce
+/// of another message, from an earlier attempt Twilio took after all, is
+/// cleared: the job now stands for the message just sent.
+pub(crate) async fn mark_sent(
+    pool: &sqlx::PgPool,
+    job_id: uuid::Uuid,
+    delivery: &Delivery,
+) -> Result<()> {
     sqlx::query(
-        "UPDATE jobs SET status='sent', sent_at=now(), error=NULL, provider=$2, provider_message_id=$3 WHERE id=$1",
+        "UPDATE jobs SET
+             status = CASE WHEN status = 'bounced' AND provider_message_id = $3 THEN 'bounced' ELSE 'sent' END,
+             error = CASE WHEN status = 'bounced' AND provider_message_id = $3 THEN error END,
+             bounced_at = CASE WHEN status = 'bounced' AND provider_message_id = $3 THEN bounced_at END,
+             sent_at = now(), provider = $2, provider_message_id = $3
+         WHERE id = $1",
     )
-    .bind(job.id)
+    .bind(job_id)
     .bind(delivery.provider)
     .bind(&delivery.provider_message_id)
-    .execute(&state.pool)
+    .execute(pool)
     .await?;
     Ok(())
 }
@@ -824,6 +837,13 @@ async fn build_send_request(
         if let Some(sid) = &job.subscriber_id {
             obj.insert("subscriber_id".into(), Value::String(sid.clone()));
         }
+        // Twilio reports an SMS's delivery to a URL naming its job.
+        if job.channel == "sms" {
+            obj.insert(
+                crate::connectors::sms::JOB_ID_METADATA.into(),
+                Value::String(job.id.to_string()),
+            );
+        }
     }
 
     if job.channel == "email" {
@@ -986,8 +1006,10 @@ async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
     .execute(&state.pool)
     .await?;
 
+    // A bounced SMS is a failed send that holds a phone number: same 30 days.
     let failed_deleted = sqlx::query(
-        "DELETE FROM jobs WHERE status = 'failed' AND created_at < now() - interval '30 days'",
+        "DELETE FROM jobs WHERE (status = 'failed' OR (status = 'bounced' AND channel = 'sms'))
+         AND created_at < now() - interval '30 days'",
     )
     .execute(&state.pool)
     .await?;
@@ -995,7 +1017,7 @@ async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
     let total = sent_deleted.rows_affected() + failed_deleted.rows_affected();
     if total > 0 {
         info!(
-            "Job cleanup: removed {} sent/cancelled, {} failed",
+            "Job cleanup: removed {} sent/cancelled, {} failed or bounced SMS",
             sent_deleted.rows_affected(),
             failed_deleted.rows_affected()
         );

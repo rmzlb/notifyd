@@ -20,6 +20,7 @@ mod sse;
 mod templates;
 mod topics;
 mod tracking;
+mod twilio_status;
 mod unsubscribe;
 mod webhooks;
 mod worker;

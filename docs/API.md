@@ -220,7 +220,9 @@ skipped for an address or an opt-out.
 
 Returns both the transport state and the provider evidence. `status: "sent"`
 means the provider accepted the API call; `delivered_at` and the per-recipient
-`provider_events` are the proof of what happened afterwards.
+`provider_events` are the proof of what happened afterwards. On a Twilio SMS,
+`delivered_at`, `bounced_at` and the `bounced` status come from Twilio's status
+callbacks (see SMS Delivery Status below); SMS jobs list no `provider_events`.
 
 ```json
 {
@@ -253,8 +255,8 @@ means the provider accepted the API call; `delivered_at` and the per-recipient
 ```
 
 `provider` and `provider_message_id` name the connector that accepted the
-message and the provider's own identifier (Resend id, Telnyx message id, SMTP
-`Message-ID`).
+message and the provider's own identifier (Resend id, Telnyx message id,
+Twilio message SID, SMTP `Message-ID`).
 
 **Job lifecycle.** `pending` → `processing` → `sent` | `retry` | `failed`.
 The worker classifies every provider answer:
@@ -271,6 +273,10 @@ The worker classifies every provider answer:
 A job left in `processing` for more than 10 minutes (worker crash, OOM, hard
 restart) is re-queued by the reaper with its attempt consumed, so nothing is
 lost silently and nothing loops forever.
+
+After `sent`, provider feedback can still stamp `delivered_at` or turn the job
+`bounced`: Resend webhooks for email (Email Deliverability), Twilio status
+callbacks for SMS (SMS Delivery Status).
 
 `email_envelope` is the exact recipient envelope persisted before provider
 handoff. It lets clients distinguish a recipient still awaiting an event from
@@ -639,19 +645,35 @@ curl -X POST http://localhost:3400/v1/admin/projects/newapp/revoke-secondary \
 
 ### Admin: Webhooks
 
-Receive POST callbacks when notifications are delivered, failed, or clicked.
+Receive a POST for each job event a project subscribes to. `events` names
+them exactly: an event that is not listed is not sent. Omit `secret` to get a
+generated one in the response.
 
 ```bash
 curl -X POST http://localhost:3400/v1/admin/webhooks \
-  -H "X-Api-Key: admin_xxx" \
+  -H "X-Api-Key: admin_xxx" -H 'content-type: application/json' \
   -d '{
+    "project_id": "myapp",
     "url": "https://myapp.com/webhooks/notifyd",
-    "events": ["notification.sent", "notification.failed"],
+    "events": ["job.sent", "job.failed", "job.delivered", "job.bounced"],
     "secret": "whsec_xxx"
   }'
 ```
 
-Webhook payloads are signed with HMAC-SHA256. Verify with the `X-Notifyd-Signature` header.
+| Event | When |
+|---|---|
+| `job.sent` | the provider accepted the message, or notifyd skipped it (opt-out, no push token), which the job shows as `provider: "skipped"` |
+| `job.failed` | the job ended `failed` (permanent error, or attempts exhausted) |
+| `job.delivered` | Twilio confirmed an SMS delivered (SMS Delivery Status) |
+| `job.bounced` | an email bounced (Resend, any bounce type) or an SMS came back `undelivered` / `failed` (Twilio) |
+| `job.complained` | the recipient marked the email as spam (Resend) |
+
+Payload: `{"event", "job_id", "channel", "subscriber_id", "timestamp"}`. It is
+signed with HMAC-SHA256 over the raw body, hex digest in the
+`X-Notifyd-Signature` header. Each event is posted once, without retry, and
+events of one job can arrive in any order: `job.sent` may come after
+`job.delivered` or `job.bounced`. The job (`GET /v1/jobs/:id`) stays the source
+of truth.
 
 ---
 
@@ -790,6 +812,48 @@ curl -X DELETE https://notifyd.example.com/v1/suppressions/<id> \
 
 If the address bounces again after a release, a fresh suppression is created
 next to the released one — the history tells the whole story.
+
+## SMS Delivery Status (Twilio)
+
+"Sent" on a Twilio SMS only means Twilio accepted the API call. When the
+instance has `PUBLIC_URL`, each Twilio message leaves with
+`StatusCallback=PUBLIC_URL/webhooks/twilio/status?job=<job id>` and Twilio
+reports the carrier's outcome there. Nothing to configure at Twilio: the
+callback URL travels with each message. Without `PUBLIC_URL`, the request
+carries no `StatusCallback` and SMS jobs stay `sent`.
+
+### POST /webhooks/twilio/status
+
+Not under `/v1`, no API key: authenticated by `X-Twilio-Signature`, the
+base64 HMAC-SHA1 keyed by `TWILIO_AUTH_TOKEN` of the URL (`PUBLIC_URL`, then
+the path and query; never the `Host` header) followed by each POST parameter's
+name and value, sorted by name. The URL is also tried with the port toggled,
+as Twilio's SDK validators do: the default port added when `PUBLIC_URL` has
+none (`:443`, or `:80` on `http`), or the port `PUBLIC_URL` names removed. The
+comparison is constant-time.
+
+| Answer | When |
+|---|---|
+| `400` | before the signature: a malformed query string (e.g. `job` given twice) |
+| `413` | before the signature: a body over 64 KiB |
+| `415` | before the signature: a body that is not `application/x-www-form-urlencoded` |
+| `503` | the route cannot authenticate anything: `SMS_PROVIDER` is not `twilio`, or `TWILIO_AUTH_TOKEN` or `PUBLIC_URL` is missing |
+| `403` | missing or invalid signature |
+| `400` | signed, but without `MessageSid` or `MessageStatus` |
+| `200` | recorded or ignored: a missing, malformed or unknown `job` id, or a `MessageSid` other than the one the job holds (an earlier attempt), changes nothing |
+| `500` | the job could not be read or updated (database error, logged with the job id) |
+
+Effects on the SMS job named by `job`:
+
+| `MessageStatus` | Job | Event |
+|---|---|---|
+| `delivered` | `delivered_at` stamped once, status unchanged; never on a `bounced` job. It can land on a job still `processing`, or on a `retry` / `failed` one when an attempt's answer from Twilio was lost but Twilio took the message | `job.delivered` |
+| `undelivered`, `failed` | from `sent`, or from `processing` when the callback beats the worker's write of the send (that write then keeps the bounce); never on a delivered job: `status: "bounced"`, `bounced_at`, `error: "twilio <ErrorCode>"` | `job.bounced` |
+| anything else | nothing | none |
+
+The first terminal status wins and each event fires once: a repeated or late
+callback is acknowledged and ignored. `To`, `From` and any message text Twilio
+posts are never logged, stored or returned.
 
 ---
 

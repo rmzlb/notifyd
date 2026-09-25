@@ -290,7 +290,14 @@ async fn handle_bounce(
         bounce_type,
         crate::pii::mask_email(&recipient)
     );
-    fire_job_event(state, &project_id, "job.bounced", id, subscriber_id);
+    fire_job_event(
+        state,
+        &project_id,
+        "job.bounced",
+        id,
+        "email",
+        subscriber_id,
+    );
 }
 
 async fn handle_complaint(
@@ -333,7 +340,14 @@ async fn handle_complaint(
         id,
         crate::pii::mask_email(&recipient)
     );
-    fire_job_event(state, &project_id, "job.complained", id, subscriber_id);
+    fire_job_event(
+        state,
+        &project_id,
+        "job.complained",
+        id,
+        "email",
+        subscriber_id,
+    );
 }
 
 fn impacted_recipients(payload: &Value, fallback: &str) -> Vec<String> {
@@ -399,24 +413,27 @@ async fn suppress(
 }
 
 /// Notify the project's outbound webhooks (fire-and-forget, same pattern as
-/// the worker's terminal-state notifications).
-fn fire_job_event(
+/// the worker's terminal-state notifications). Also used for SMS delivery
+/// statuses (twilio_status.rs).
+pub(crate) fn fire_job_event(
     state: &Arc<AppState>,
     project_id: &str,
     event: &str,
     job_id: Uuid,
+    channel: &str,
     subscriber_id: Option<String>,
 ) {
     let pool = state.pool.clone();
     let project_id = project_id.to_string();
     let event = event.to_string();
+    let channel = channel.to_string();
     tokio::spawn(async move {
         if let Err(e) = crate::webhooks::fire_webhooks(
             &pool,
             &project_id,
             &event,
             job_id,
-            "email",
+            &channel,
             subscriber_id.as_deref(),
         )
         .await

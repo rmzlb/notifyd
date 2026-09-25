@@ -64,6 +64,10 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 - 429: retry WITHOUT consuming an attempt; the whole channel pauses for Retry-After (priorities order the resume, they do not bypass the pause)
 - 5xx / timeout / network: retry with backoff 30s, 2min, 10min, 30min, 2h (+-20% jitter), failed after max_attempts (5)
 - other 4xx, invalid recipient, suppression list: failed immediately
+- after sent, provider feedback: Resend webhooks (email) and Twilio status callbacks (SMS, need PUBLIC_URL;
+  POST /webhooks/twilio/status, X-Twilio-Signature, no API key). Twilio delivered -> delivered_at + job.delivered;
+  undelivered|failed on a sent (or still processing) job -> bounced, bounced_at, error "twilio <ErrorCode>" + job.bounced;
+  first terminal status wins; a job's events can arrive in any order, GET /v1/jobs/:id is the truth
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
 POST /v1/batch takes "subscribers": [ids] OR "segment": {filter} (see SEGMENTS), accepts idempotency_key (declined per
@@ -335,12 +339,15 @@ GET /v1/admin/audit — Audit log (query: ?project_id=xxx&limit=50)
 ## WEBHOOKS
 
 POST /v1/admin/webhooks — Create webhook
-Body: {"url": "https://myapp.com/hooks", "events": ["notification.sent", "notification.failed"], "secret": "whsec_xxx"}
+Body: {"project_id": "myapp", "url": "https://myapp.com/hooks", "events": ["job.sent", "job.failed", "job.delivered", "job.bounced"], "secret": "whsec_xxx"}
+Events (exact names; an unlisted event is not sent): job.sent (also skipped jobs, provider skipped), job.failed,
+job.delivered (Twilio SMS), job.bounced (email bounce, SMS undelivered/failed), job.complained (email spam complaint).
 
 GET /v1/admin/webhooks — List webhooks
 DELETE /v1/admin/webhooks/:id — Delete webhook
 
-Payloads signed with HMAC-SHA256 in X-Notifyd-Signature header.
+Payload {event, job_id, channel, subscriber_id, timestamp}, signed with HMAC-SHA256 (hex) in X-Notifyd-Signature header.
+Posted once, no retry: GET /v1/jobs/:id stays the source of truth.
 
 ---
 
