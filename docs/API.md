@@ -179,6 +179,7 @@ Send a notification via one or more channels. Jobs are queued and processed asyn
 | `cc` | `string[]` | ❌ | Email only. Up to 10 carbon-copy recipients; duplicates are removed. |
 | `reply_to` | `string` | ❌ | Email only. Address that receives replies. |
 | `from_name` | `string` | ❌ | Email only. Sender display name for this email (1–100 characters, no control characters nor `" < > \`). The address stays the project's `from_email` (or the instance's): only its domain is verified. |
+| `from_local_part` | `string` | ❌ | Email only. Local part of the sender address for this email: `cdmf` sends from `cdmf@<domain of the project's from_email>` (1–64 ASCII letters, digits, `. _ -`, starting and ending with a letter or digit, no `..`). The domain never changes; ignored when the project has no `from_email`. |
 | `priority` | `string \| int` | ❌ | Queue lane: `critical` (10), `high` (30), `normal` (50, default), `low` (70), `bulk` (80) or `0–100`. Lower goes first. An email tagged `{"name":"category","value":"campaign"\|"marketing"\|"newsletter"}` defaults to `bulk`. |
 | `tags` | `object[]` | ❌ | Email only. Provider tags `[{ "name", "value" }]`; also drives the default priority (see above). |
 | `email_headers` | `object` | ❌ | Email only. Custom MIME headers such as `List-Unsubscribe`. |

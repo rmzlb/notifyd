@@ -652,8 +652,9 @@ async fn resolve_project_from(
 }
 
 /// Sender of one email job: the project's identity, whose display name the
-/// request's `from_name` replaces when it is valid. The address never
-/// changes: its domain is the one verified with the provider.
+/// request's `from_name` replaces when it is valid. `from_local_part` may
+/// change what precedes the `@` of the project address, never its domain:
+/// that domain is the one verified with the provider.
 fn job_sender(
     project: (Option<String>, Option<String>),
     payload: &Value,
@@ -662,8 +663,21 @@ fn job_sender(
         .get("from_name")
         .and_then(Value::as_str)
         .and_then(|raw| crate::connectors::normalize_sender_name(raw).ok().flatten());
+    let local_part = payload
+        .get("from_local_part")
+        .and_then(Value::as_str)
+        .and_then(|raw| {
+            crate::connectors::normalize_sender_local_part(raw)
+                .ok()
+                .flatten()
+        });
     match project {
-        (Some(email), project_name) => (Some(email), requested.or(project_name)),
+        (Some(email), project_name) => {
+            let address = local_part
+                .and_then(|local| crate::connectors::address_with_local_part(&email, &local))
+                .unwrap_or(email);
+            (Some(address), requested.or(project_name))
+        }
         // No project address: the connector falls back to the instance's,
         // which only a per-message name may rename.
         (None, _) => (None, requested),
@@ -1446,6 +1460,47 @@ mod tests {
         assert_eq!(
             job_sender(nameless, &serde_json::json!({"from_name": "Centre Foch"})),
             (None, Some("Centre Foch".to_string()))
+        );
+    }
+
+    #[test]
+    fn job_sender_local_part_changes_the_address_on_the_project_domain() {
+        assert_eq!(
+            job_sender(
+                sqare(),
+                &serde_json::json!({"from_name": "Centre Dentaire Maréchal Foch", "from_local_part": "MarechalFoch"})
+            ),
+            (
+                Some("MarechalFoch@sqarex.com".to_string()),
+                Some("Centre Dentaire Maréchal Foch".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn job_sender_local_part_that_fails_validation_keeps_the_project_address() {
+        for raw in [
+            serde_json::json!("foch@evil.example"),
+            serde_json::json!("foch\r\nBcc: x@example.com"),
+            serde_json::json!(12),
+        ] {
+            assert_eq!(
+                job_sender(sqare(), &serde_json::json!({"from_local_part": raw})),
+                sqare()
+            );
+        }
+    }
+
+    #[test]
+    fn project_without_address_ignores_the_local_part() {
+        // Without a project address the connector sends from the instance's:
+        // a per-message local part never rewrites another project's identity.
+        assert_eq!(
+            job_sender(
+                (None, None),
+                &serde_json::json!({"from_local_part": "cdmf"})
+            ),
+            (None, None)
         );
     }
 

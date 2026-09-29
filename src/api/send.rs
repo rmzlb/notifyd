@@ -142,6 +142,9 @@ pub struct SendRequest {
     /// Display name of the sender for this email only ("Centre Foch"). The
     /// address stays the project's: only its domain is verified.
     pub from_name: Option<String>,
+    /// Local part of the sender address for this email only ("cdmf" gives
+    /// cdmf@<project domain>). The domain stays the project's.
+    pub from_local_part: Option<String>,
     /// Queue priority: `"critical"` (10), `"high"` (30), `"normal"` (50,
     /// default), `"low"` (70), `"bulk"` (80) or a number 0–100. Lower goes
     /// first. Transactional traffic keeps the default; marketing uses `bulk`.
@@ -466,6 +469,13 @@ pub async fn send_notification(
             Json(json!({ "error": error })),
         )
     })?;
+    let from_local_part = validate_sender_local_part(&channels, req.from_local_part.as_deref())
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
 
     let priority = resolve_priority(
         req.priority.as_ref(),
@@ -592,6 +602,12 @@ pub async fn send_notification(
         }
     }
 
+    if let Some(from_local_part) = from_local_part {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("from_local_part".to_string(), json!(from_local_part));
+        }
+    }
+
     if let Some(track) = &req.track {
         if let Some(p) = payload.as_object_mut() {
             p.insert("track".to_string(), track.clone());
@@ -629,9 +645,9 @@ pub async fn send_notification(
         if let (Some(p), Some(v)) = (payload.as_object_mut(), vars.as_object()) {
             p.insert("vars".to_string(), vars.clone());
             for (k, val) in v {
-                // A template variable is not a sender: `from_name` only
-                // comes from the validated request field.
-                if k == "from_name" {
+                // A template variable is not a sender: `from_name` and
+                // `from_local_part` only come from the validated request fields.
+                if k == "from_name" || k == "from_local_part" {
                     continue;
                 }
                 p.entry(k).or_insert(val.clone());
@@ -861,6 +877,21 @@ fn validate_sender_name(channels: &[String], raw: Option<&str>) -> Result<Option
     crate::connectors::normalize_sender_name(raw)
 }
 
+/// Per-message local part of the sender address: email channel only (see
+/// `connectors::normalize_sender_local_part`).
+fn validate_sender_local_part(
+    channels: &[String],
+    raw: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    if !channels.iter().any(|channel| channel == "email") {
+        return Err("from_local_part can only be used with the email channel".to_string());
+    }
+    crate::connectors::normalize_sender_local_part(raw)
+}
+
 #[cfg(test)]
 mod priority_tests {
     use super::*;
@@ -892,6 +923,7 @@ mod tests {
     use super::channel_not_configured;
     use super::permitted_channels;
     use super::validate_email_envelope;
+    use super::validate_sender_local_part;
     use super::validate_sender_name;
     use super::validate_sms_extras;
     use axum::{http::StatusCode, Json};
@@ -1025,6 +1057,18 @@ mod tests {
             None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn sender_local_part_is_an_email_field() {
+        let email = vec!["email".to_string()];
+        assert_eq!(
+            validate_sender_local_part(&email, Some(" cdmf ")).unwrap(),
+            Some("cdmf".to_string())
+        );
+        assert_eq!(validate_sender_local_part(&email, None).unwrap(), None);
+        assert!(validate_sender_local_part(&["in_app".to_string()], Some("cdmf")).is_err());
+        assert!(validate_sender_local_part(&email, Some("cdmf@evil.example")).is_err());
     }
 
     #[test]

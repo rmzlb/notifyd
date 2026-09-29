@@ -96,6 +96,44 @@ pub fn normalize_sender_name(raw: &str) -> Result<Option<String>, String> {
     Ok(Some(name.to_string()))
 }
 
+/// Longest local part (before the `@`) of an address, per RFC 5321.
+pub const SENDER_LOCAL_PART_MAX_CHARS: usize = 64;
+
+/// Per-message local part of the sender address ("cdmf" in
+/// cdmf@sqarex.com), trimmed; blank means none. Only ASCII letters, digits
+/// and `. _ -`, starting and ending with a letter or digit and without `..`:
+/// no `@` can move the address to another domain, and nothing can break the
+/// header.
+pub fn normalize_sender_local_part(raw: &str) -> Result<Option<String>, String> {
+    let local = raw.trim();
+    if local.is_empty() {
+        return Ok(None);
+    }
+    if local.len() > SENDER_LOCAL_PART_MAX_CHARS {
+        return Err(format!(
+            "from_local_part cannot exceed {SENDER_LOCAL_PART_MAX_CHARS} characters"
+        ));
+    }
+    let allowed = local
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    let edges = local.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && local.ends_with(|c: char| c.is_ascii_alphanumeric());
+    if !allowed || !edges || local.contains("..") {
+        return Err("from_local_part accepts letters, digits and . _ - only, starting and ending with a letter or digit".to_string());
+    }
+    Ok(Some(local.to_string()))
+}
+
+/// `address` with its local part replaced; the domain is kept as is.
+pub fn address_with_local_part(address: &str, local: &str) -> Option<String> {
+    let (_, domain) = address.rsplit_once('@')?;
+    if domain.is_empty() {
+        return None;
+    }
+    Some(format!("{local}@{domain}"))
+}
+
 /// Address and display name an email connector sends from. A project
 /// address keeps the name the worker resolved for it; without one the
 /// instance address is used, under the per-message name when there is one.
@@ -398,6 +436,56 @@ mod tests {
 mod sender_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sender_local_part_is_trimmed_keeps_case_and_blank_means_none() {
+        assert_eq!(
+            normalize_sender_local_part(" MarechalFoch ").unwrap(),
+            Some("MarechalFoch".to_string())
+        );
+        assert_eq!(
+            normalize_sender_local_part("centre-foch.cdmf_1").unwrap(),
+            Some("centre-foch.cdmf_1".to_string())
+        );
+        assert_eq!(normalize_sender_local_part("  ").unwrap(), None);
+    }
+
+    #[test]
+    fn sender_local_part_cannot_leave_the_verified_domain_or_inject_headers() {
+        for raw in [
+            "foch@evil.example",
+            "foch\r\nBcc: victim@example.com",
+            "foch bcc",
+            "foch<x>",
+            "\"foch\"",
+            ".foch",
+            "foch.",
+            "fo..ch",
+            "-foch",
+            "maréchal",
+            "foch+tag",
+        ] {
+            assert!(
+                normalize_sender_local_part(raw).is_err(),
+                "accepted {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sender_local_part_is_at_most_64_characters() {
+        assert!(normalize_sender_local_part(&"a".repeat(SENDER_LOCAL_PART_MAX_CHARS)).is_ok());
+        assert!(normalize_sender_local_part(&"a".repeat(SENDER_LOCAL_PART_MAX_CHARS + 1)).is_err());
+    }
+
+    #[test]
+    fn local_part_replaces_only_what_precedes_the_domain() {
+        assert_eq!(
+            address_with_local_part("noreply@sqarex.com", "cdmf").as_deref(),
+            Some("cdmf@sqarex.com")
+        );
+        assert_eq!(address_with_local_part("not-an-address", "cdmf"), None);
+    }
 
     fn request(from_email: Option<&str>, from_name: Option<&str>) -> SendRequest {
         SendRequest {
