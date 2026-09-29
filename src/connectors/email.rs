@@ -34,13 +34,24 @@ pub fn create_email_connector(config: EmailConfig) -> Box<dyn Connector> {
 /// instance default; the two never mix (a project address without a name
 /// sends bare rather than with the instance's name).
 pub fn from_address(config: &EmailConfig, req: &SendRequest) -> String {
-    let (email, name) = match &req.from_email {
-        Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
-        None => (config.from.as_str(), config.from_name.as_deref()),
-    };
+    let (email, name) = super::sender(req, &config.from, config.from_name.as_deref());
     match name {
-        Some(n) => format!("{} <{}>", n, email),
+        Some(n) => format!("{} <{}>", display_name(n), email),
         None => email.to_string(),
+    }
+}
+
+/// RFC 5322 phrase: quoted as soon as it holds an address special, since an
+/// unquoted comma splits the header into two mailboxes.
+fn display_name(name: &str) -> std::borrow::Cow<'_, str> {
+    const SPECIALS: [char; 13] = [
+        '(', ')', '<', '>', '[', ']', ':', ';', '@', '\\', ',', '.', '"',
+    ];
+    if name.contains(SPECIALS) {
+        let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+        std::borrow::Cow::Owned(format!("\"{escaped}\""))
+    } else {
+        std::borrow::Cow::Borrowed(name)
     }
 }
 
@@ -400,6 +411,29 @@ mod tests {
         assert_eq!(
             from_address(&config(), &req),
             "Philoé <hello@philoeparis.fr>"
+        );
+    }
+
+    #[test]
+    fn per_message_name_goes_on_the_instance_address() {
+        let mut req = request(json!({}));
+        req.from_name = Some("Centre Foch".to_string());
+        assert_eq!(
+            from_address(&config(), &req),
+            "Centre Foch <sender@example.com>"
+        );
+    }
+
+    #[test]
+    fn display_name_with_address_specials_is_quoted() {
+        // An unquoted comma splits the header into two mailboxes and a dot
+        // is only tolerated by lenient parsers.
+        let mut req = request(json!({}));
+        req.from_email = Some("noreply@sqarex.com".to_string());
+        req.from_name = Some("Cendre dentaire, M. Foch".to_string());
+        assert_eq!(
+            from_address(&config(), &req),
+            "\"Cendre dentaire, M. Foch\" <noreply@sqarex.com>"
         );
     }
 

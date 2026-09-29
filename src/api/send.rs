@@ -139,6 +139,9 @@ pub struct SendRequest {
     pub cc: Option<Vec<String>>,
     /// Address that receives replies to the email.
     pub reply_to: Option<String>,
+    /// Display name of the sender for this email only ("Centre Foch"). The
+    /// address stays the project's: only its domain is verified.
+    pub from_name: Option<String>,
     /// Queue priority: `"critical"` (10), `"high"` (30), `"normal"` (50,
     /// default), `"low"` (70), `"bulk"` (80) or a number 0–100. Lower goes
     /// first. Transactional traffic keeps the default; marketing uses `bulk`.
@@ -457,6 +460,12 @@ pub async fn send_notification(
             Json(json!({ "error": error })),
         )
     })?;
+    let from_name = validate_sender_name(&channels, req.from_name.as_deref()).map_err(|error| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": error })),
+        )
+    })?;
 
     let priority = resolve_priority(
         req.priority.as_ref(),
@@ -577,6 +586,12 @@ pub async fn send_notification(
         }
     }
 
+    if let Some(from_name) = from_name {
+        if let Some(p) = payload.as_object_mut() {
+            p.insert("from_name".to_string(), json!(from_name));
+        }
+    }
+
     if let Some(track) = &req.track {
         if let Some(p) = payload.as_object_mut() {
             p.insert("track".to_string(), track.clone());
@@ -614,6 +629,11 @@ pub async fn send_notification(
         if let (Some(p), Some(v)) = (payload.as_object_mut(), vars.as_object()) {
             p.insert("vars".to_string(), vars.clone());
             for (k, val) in v {
+                // A template variable is not a sender: `from_name` only
+                // comes from the validated request field.
+                if k == "from_name" {
+                    continue;
+                }
                 p.entry(k).or_insert(val.clone());
             }
         }
@@ -829,6 +849,18 @@ fn validate_email_envelope(
     Ok((normalized_cc, normalized_reply_to))
 }
 
+/// Per-message sender display name: email channel only, validated like the
+/// connectors expect it (see `connectors::normalize_sender_name`).
+fn validate_sender_name(channels: &[String], raw: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    if !channels.iter().any(|channel| channel == "email") {
+        return Err("from_name can only be used with the email channel".to_string());
+    }
+    crate::connectors::normalize_sender_name(raw)
+}
+
 #[cfg(test)]
 mod priority_tests {
     use super::*;
@@ -860,6 +892,7 @@ mod tests {
     use super::channel_not_configured;
     use super::permitted_channels;
     use super::validate_email_envelope;
+    use super::validate_sender_name;
     use super::validate_sms_extras;
     use axum::{http::StatusCode, Json};
     use serde_json::json;
@@ -992,6 +1025,22 @@ mod tests {
             None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn sender_name_is_an_email_field() {
+        let email = vec!["email".to_string()];
+        assert_eq!(
+            validate_sender_name(&email, Some(" Centre Foch ")).unwrap(),
+            Some("Centre Foch".to_string())
+        );
+        assert_eq!(validate_sender_name(&email, None).unwrap(), None);
+        assert!(validate_sender_name(&["in_app".to_string()], Some("Centre Foch")).is_err());
+        assert_eq!(
+            validate_sender_name(&["in_app".to_string()], None).unwrap(),
+            None
+        );
+        assert!(validate_sender_name(&email, Some("Foch\r\nBcc: x@example.com")).is_err());
     }
 }
 

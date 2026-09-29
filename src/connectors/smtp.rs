@@ -65,10 +65,7 @@ impl SmtpConnector {
     }
 
     fn from_mailbox(&self, req: &SendRequest) -> Result<Mailbox, ProviderError> {
-        let (email, name) = match &req.from_email {
-            Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
-            None => (self.config.from.as_str(), self.config.from_name.as_deref()),
-        };
+        let (email, name) = super::sender(req, &self.config.from, self.config.from_name.as_deref());
         let address = email.parse().map_err(|e| {
             ProviderError::permanent(PROVIDER, format!("invalid sender {email}: {e}"))
         })?;
@@ -219,6 +216,22 @@ mod tests {
                 security: "starttls".to_string(),
             }),
         })
+    }
+
+    #[test]
+    fn per_message_name_goes_on_the_instance_address() {
+        let req = SendRequest {
+            recipient: "jane@example.com".to_string(),
+            subject: None,
+            body: String::new(),
+            body_html: None,
+            from_email: None,
+            from_name: Some("Centre Foch".to_string()),
+            metadata: json!({}),
+        };
+        let from = connector().from_mailbox(&req).unwrap();
+        assert_eq!(from.name.as_deref(), Some("Centre Foch"));
+        assert_eq!(from.email.to_string(), "orders@philoeparis.fr");
     }
 
     #[test]

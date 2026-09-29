@@ -651,6 +651,25 @@ async fn resolve_project_from(
     }
 }
 
+/// Sender of one email job: the project's identity, whose display name the
+/// request's `from_name` replaces when it is valid. The address never
+/// changes: its domain is the one verified with the provider.
+fn job_sender(
+    project: (Option<String>, Option<String>),
+    payload: &Value,
+) -> (Option<String>, Option<String>) {
+    let requested = payload
+        .get("from_name")
+        .and_then(Value::as_str)
+        .and_then(|raw| crate::connectors::normalize_sender_name(raw).ok().flatten());
+    match project {
+        (Some(email), project_name) => (Some(email), requested.or(project_name)),
+        // No project address: the connector falls back to the instance's,
+        // which only a per-message name may rename.
+        (None, _) => (None, requested),
+    }
+}
+
 /// Build the `SendRequest` for a job (template render + metadata). Shared by
 /// the email batch path and the per-job dispatch.
 /// Per-batch lookups done once instead of once per job: sender identity per
@@ -918,10 +937,11 @@ async fn build_send_request(
     }
 
     let (from_email, from_name) = if job.channel == "email" {
-        match ctx.and_then(|c| c.senders.get(&job.project_id)) {
+        let project = match ctx.and_then(|c| c.senders.get(&job.project_id)) {
             Some(from) => from.clone(),
             None => resolve_project_from(state, &job.project_id).await,
-        }
+        };
+        job_sender(project, &job.payload)
     } else {
         (None, None)
     };
@@ -1375,6 +1395,59 @@ fn inline_from_payload(payload: &Value) -> (Option<String>, String, Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sqare() -> (Option<String>, Option<String>) {
+        (
+            Some("noreply@sqarex.com".to_string()),
+            Some("Sqare".to_string()),
+        )
+    }
+
+    #[test]
+    fn job_without_sender_name_keeps_the_project_identity() {
+        assert_eq!(job_sender(sqare(), &serde_json::json!({})), sqare());
+        assert_eq!(
+            job_sender(sqare(), &serde_json::json!({"from_name": 12})),
+            sqare()
+        );
+    }
+
+    #[test]
+    fn job_sender_name_replaces_the_name_not_the_address() {
+        assert_eq!(
+            job_sender(sqare(), &serde_json::json!({"from_name": " Centre Foch "})),
+            (
+                Some("noreply@sqarex.com".to_string()),
+                Some("Centre Foch".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn job_sender_name_that_fails_validation_is_ignored() {
+        assert_eq!(
+            job_sender(
+                sqare(),
+                &serde_json::json!({"from_name": "Foch\r\nBcc: x@example.com"})
+            ),
+            sqare()
+        );
+    }
+
+    #[test]
+    fn project_without_address_leaves_the_instance_name_alone() {
+        // The connector then sends from the instance address: a project name
+        // must not be glued onto it, only an explicit per-message name.
+        let nameless = (None, Some("HelmAI".to_string()));
+        assert_eq!(
+            job_sender(nameless.clone(), &serde_json::json!({})),
+            (None, None)
+        );
+        assert_eq!(
+            job_sender(nameless, &serde_json::json!({"from_name": "Centre Foch"})),
+            (None, Some("Centre Foch".to_string()))
+        );
+    }
 
     #[test]
     fn inline_bodies_get_their_variables() {

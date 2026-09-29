@@ -71,6 +71,45 @@ pub struct SendRequest {
     pub metadata: Value,
 }
 
+/// Longest display name a request may put on its email (`from_name`).
+pub const SENDER_NAME_MAX_CHARS: usize = 100;
+
+/// Per-message sender display name, trimmed; blank means none. Control
+/// characters could inject headers and `"<>\` could make the name pose as
+/// another address, so both are refused.
+pub fn normalize_sender_name(raw: &str) -> Result<Option<String>, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > SENDER_NAME_MAX_CHARS {
+        return Err(format!(
+            "from_name cannot exceed {SENDER_NAME_MAX_CHARS} characters"
+        ));
+    }
+    if name
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '"' | '<' | '>' | '\\'))
+    {
+        return Err("from_name cannot contain control characters or \" < > \\".to_string());
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// Address and display name an email connector sends from. A project
+/// address keeps the name the worker resolved for it; without one the
+/// instance address is used, under the per-message name when there is one.
+pub fn sender<'a>(
+    req: &'a SendRequest,
+    instance_email: &'a str,
+    instance_name: Option<&'a str>,
+) -> (&'a str, Option<&'a str>) {
+    match &req.from_email {
+        Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
+        None => (instance_email, req.from_name.as_deref().or(instance_name)),
+    }
+}
+
 /// What a provider accepted. `provider_message_id` is the provider's own
 /// identifier (Resend `id`, Telnyx message id, SMTP `Message-ID`): stored on
 /// the job so webhook events and support tickets can be joined to it.
@@ -352,5 +391,80 @@ mod tests {
         let err = classify_status("resend", StatusCode::BAD_REQUEST, None, &long);
         assert!(err.message.len() < 600);
         assert!(err.message.ends_with('…'));
+    }
+}
+
+#[cfg(test)]
+mod sender_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn request(from_email: Option<&str>, from_name: Option<&str>) -> SendRequest {
+        SendRequest {
+            recipient: "patient@example.com".to_string(),
+            subject: None,
+            body: String::new(),
+            body_html: None,
+            from_email: from_email.map(String::from),
+            from_name: from_name.map(String::from),
+            metadata: json!({}),
+        }
+    }
+
+    #[test]
+    fn sender_name_is_trimmed_and_blank_means_none() {
+        assert_eq!(
+            normalize_sender_name("  Cendre dentaire M. Foch ").unwrap(),
+            Some("Cendre dentaire M. Foch".to_string())
+        );
+        assert_eq!(normalize_sender_name("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn sender_name_refuses_header_injection_and_address_lookalikes() {
+        for raw in [
+            "Foch\r\nBcc: victim@example.com",
+            "Foch\nX",
+            "Foch\u{0}",
+            "Foch <evil@example.com>",
+            "\"Foch\"",
+            "Foch\\",
+        ] {
+            assert!(normalize_sender_name(raw).is_err(), "accepted {raw:?}");
+        }
+    }
+
+    #[test]
+    fn sender_name_length_counts_characters_not_bytes() {
+        assert!(normalize_sender_name(&"é".repeat(SENDER_NAME_MAX_CHARS)).is_ok());
+        assert!(normalize_sender_name(&"a".repeat(SENDER_NAME_MAX_CHARS + 1)).is_err());
+    }
+
+    #[test]
+    fn project_address_keeps_its_resolved_name() {
+        let req = request(Some("noreply@sqarex.com"), Some("Centre Foch"));
+        assert_eq!(
+            sender(&req, "instance@example.com", Some("Instance")),
+            ("noreply@sqarex.com", Some("Centre Foch"))
+        );
+        let bare = request(Some("noreply@sqarex.com"), None);
+        assert_eq!(
+            sender(&bare, "instance@example.com", Some("Instance")),
+            ("noreply@sqarex.com", None)
+        );
+    }
+
+    #[test]
+    fn instance_address_takes_the_per_message_name_or_its_own() {
+        let named = request(None, Some("Centre Foch"));
+        assert_eq!(
+            sender(&named, "instance@example.com", Some("Instance")),
+            ("instance@example.com", Some("Centre Foch"))
+        );
+        let plain = request(None, None);
+        assert_eq!(
+            sender(&plain, "instance@example.com", Some("Instance")),
+            ("instance@example.com", Some("Instance"))
+        );
     }
 }

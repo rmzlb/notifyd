@@ -40,10 +40,7 @@ impl CloudflareEmailConnector {
     /// Named sender as Cloudflare's `{address, name}` object, bare address
     /// otherwise. Same override rule as every email connector.
     fn from_value(&self, req: &SendRequest) -> Value {
-        let (email, name) = match &req.from_email {
-            Some(project_email) => (project_email.as_str(), req.from_name.as_deref()),
-            None => (self.config.from.as_str(), self.config.from_name.as_deref()),
-        };
+        let (email, name) = super::sender(req, &self.config.from, self.config.from_name.as_deref());
         match name {
             Some(n) => json!({ "address": email, "name": n }),
             None => json!(email),
