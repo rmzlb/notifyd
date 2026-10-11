@@ -20,7 +20,9 @@ use uuid::Uuid;
 const BROADCAST_CAPACITY: usize = 64;
 pub const NOTIFY_CHANNEL: &str = "notifyd_sse";
 const NOTIFY_MAX_BYTES: usize = 7_900;
-const TICKET_TTL_SECS: i64 = 60;
+/// Long enough for a browser to open the stream right after its server
+/// fetched the ticket, short enough that a ticket copied from a log is dead.
+pub const TICKET_TTL_SECS: i64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct SseMessage(pub String);
@@ -111,8 +113,8 @@ impl SseBroadcaster {
         }
     }
 
-    /// Issue a one-time SSE ticket (valid 60 s, consumed on use, shared by
-    /// all replicas through the database).
+    /// Issue a one-time SSE ticket (valid `TICKET_TTL_SECS`, consumed on use,
+    /// shared by all replicas through the database).
     pub async fn issue_ticket(&self, project_id: &str, subscriber_id: &str) -> String {
         let ticket_id = Uuid::new_v4().to_string();
         if let Err(e) = sqlx::query(

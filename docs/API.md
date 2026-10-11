@@ -108,7 +108,7 @@ All responses are JSON.
 | **PATCH** | `/v1/inbox/:sub_id/:msg_id` | JWT or API Key | Update notification (read/archive/todo) |
 | **POST** | `/v1/inbox/:sub_id/read-all` | JWT or API Key | Mark all as read |
 | **GET** | `/v1/inbox/:sub_id/unread-count` | JWT or API Key | Unread badge count |
-| **GET** | `/v1/inbox/:sub_id/stream` | JWT (query) | SSE realtime stream |
+| **GET** | `/v1/inbox/:sub_id/stream` | Ticket (query), or JWT / API Key (header) | SSE realtime stream |
 | **POST** | `/v1/inbox/:sub_id/stream-ticket` | JWT or API Key | One-time SSE auth ticket |
 | **POST** | `/v1/auth/subscriber-token` | API Key | Generate subscriber JWT |
 | **POST** | `/v1/workflows` | API Key | Create/update workflow |
@@ -441,7 +441,19 @@ List in-app notifications for a subscriber.
 
 Realtime SSE stream for in-app notifications.
 
-**Auth:** Pass subscriber JWT as query parameter `?token=eyJ...` or via `Authorization: Bearer` header.
+**Auth:** a browser `EventSource` cannot send headers, so the URL carries a
+one-time ticket and nothing else: `?ticket=<ticket>` from
+`POST /v1/inbox/:sub_id/stream-ticket` (valid 30 seconds, consumed by the first
+connection, bound to the project and the subscriber of the path). A used,
+expired or unknown ticket is `401`; a ticket for another subscriber is `403`. A
+subscriber JWT or an API key is never accepted in the URL, where proxy logs,
+browser history and `Referer` keep it: send it as `Authorization: Bearer`
+(non-browser clients streaming with `fetch`). `?token=` is the former name of
+`ticket`, still read as a ticket only; use `ticket`.
+
+Each reconnection needs a new ticket: on `error`, close the `EventSource` and
+open a new one with a fresh ticket instead of letting the browser retry the
+consumed URL.
 
 **Events:**
 
@@ -462,8 +474,15 @@ data: {"type":"archived","notification_id":"uuid"}
 **JavaScript example:**
 
 ```javascript
+// The ticket request carries the subscriber JWT in a header (or is made by
+// your server with the project API key); only the ticket goes in the URL.
+const { ticket } = await fetch(
+  `https://notifyd.example.com/v1/inbox/${userId}/stream-ticket`,
+  { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } },
+).then((r) => r.json());
+
 const events = new EventSource(
-  `https://notifyd.example.com/v1/inbox/${userId}/stream?token=${jwt}`
+  `https://notifyd.example.com/v1/inbox/${userId}/stream?ticket=${encodeURIComponent(ticket)}`
 );
 
 events.onmessage = (e) => {
@@ -479,8 +498,6 @@ events.onmessage = (e) => {
   }
 };
 ```
-
-> **Tip:** Use `POST /v1/inbox/:sub_id/stream-ticket` to get a one-time ticket instead of passing the JWT in the URL.
 
 ---
 

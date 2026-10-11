@@ -137,8 +137,10 @@ Response: {"count": 5}
 
 ## SSE REALTIME STREAM
 
-GET /v1/inbox/:subscriber_id/stream?token=<jwt>
+GET /v1/inbox/:subscriber_id/stream?ticket=<one-time ticket>
 Content-Type: text/event-stream
+The URL accepts only a one-time ticket (EventSource cannot send headers). A subscriber JWT or an API key
+goes in "Authorization: Bearer", never in the URL: in the query it is refused (401).
 
 Events:
 data: {"type":"new_notification","notification":{...}}
@@ -146,10 +148,13 @@ data: {"type":"count_update","unread_count":5}
 data: {"type":"read","notification_id":"uuid"}
 data: {"type":"archived","notification_id":"uuid"}
 
-One-time ticket (avoids JWT in URL):
-POST /v1/inbox/:subscriber_id/stream-ticket
-Response: {"ticket": "abc-123"}
+One-time ticket:
+POST /v1/inbox/:subscriber_id/stream-ticket   (subscriber JWT or API key, in a header)
+Response: {"ticket": "abc-123", "expires_in_seconds": 30}
 Then: GET /v1/inbox/:subscriber_id/stream?ticket=abc-123
+The ticket is consumed by the first connection and bound to the project and subscriber: used, expired or
+unknown = 401, another subscriber = 403. Reconnect with a fresh ticket. `?token=` is the former name of
+`ticket`, read as a ticket only.
 
 ---
 
