@@ -44,7 +44,7 @@
 
   // Live updates: one-time ticket, then a plain EventSource.
   const { ticket } = await api(`/inbox/${SUBSCRIBER_ID}/stream-ticket`, { method: 'POST' });
-  const events = new EventSource(`${NOTIFYD_URL}/v1/inbox/${SUBSCRIBER_ID}/stream?token=${encodeURIComponent(ticket)}`);
+  const events = new EventSource(`${NOTIFYD_URL}/v1/inbox/${SUBSCRIBER_ID}/stream?ticket=${encodeURIComponent(ticket)}`);
   events.onmessage = (e) => {
     const event = JSON.parse(e.data);
     if (event.type === 'new_notification') load();

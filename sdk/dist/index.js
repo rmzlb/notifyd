@@ -584,7 +584,7 @@ function createNotifydClient(config) {
         throw new Error("notifyd EventSource implementation is not available");
       }
       const { ticket } = await this.createStreamTicket(subscriberId);
-      const url = `${baseUrl}/v1/inbox/${encodeURIComponent(subscriberId)}/stream?token=${encodeURIComponent(ticket)}`;
+      const url = `${baseUrl}/v1/inbox/${encodeURIComponent(subscriberId)}/stream?ticket=${encodeURIComponent(ticket)}`;
       const eventSource = new EventSourceImpl(url);
       if (options.onMessage) {
         eventSource.onmessage = options.onMessage;
