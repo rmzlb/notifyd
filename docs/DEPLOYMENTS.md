@@ -89,6 +89,17 @@ and the age of the oldest waiting job per priority band. Point the Dokploy
 monitoring stack (or any Prometheus) at each instance. `/v1/health` carries
 `commit` and `built_at_epoch` for drift checks.
 
+notifyd's own logs record request paths without their query string. The
+reverse proxy is another matter: Dokploy's *Requests* toggle turns on the
+Traefik access log (`accessLog` in `/etc/dokploy/traefik/traefik.yml`, JSON
+in `/etc/dokploy/traefik/dynamic/access.log`), and Traefik's `RequestPath`
+field holds the query string, so every stream ticket lands there. A ticket
+is dead within 30 s and after one use, but keep query strings out anyway:
+on Traefik v3.7.2 or later add `fields: {queryParameters: {defaultMode: drop}}`
+under `accessLog`; on older versions only `fields: {names: {RequestPath: drop}}`
+exists, which drops the whole path. Toggling *Requests* again rewrites the
+`accessLog` block and removes this setting.
+
 ## Rules that keep N instances safe
 
 - **Migrations are additive only.** Every instance runs `sqlx::migrate!` at

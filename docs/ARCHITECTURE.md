@@ -172,6 +172,8 @@ notifyd solves this with **one-time tickets**, the only credential the stream UR
 
 A JWT or an API key in the query string is refused, never tried as a fallback;
 non-browser clients that stream with `fetch` send it as `Authorization: Bearer`.
+The request span logged by `tower-http` records the path without the query
+string, so not even a ticket reaches the service logs.
 
 ---
 
