@@ -301,10 +301,19 @@ pub async fn sse_stream(
     headers: HeaderMap,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<Value>)>
 {
+    let former_name = query.ticket.is_none() && query.token.is_some();
     let (project_id, sub_id) = match query.ticket.or(query.token) {
         Some(ticket) => auth_stream_ticket(&state, &ticket, &subscriber_id).await?,
         None => auth_inbox(&state, &headers, &subscriber_id).await?,
     };
+    // Tells the operator which applications still need to move before the
+    // `token` alias goes.
+    if former_name {
+        tracing::info!(
+            "Project {} opened an inbox stream with ?token=: move its client to ?ticket=",
+            project_id
+        );
+    }
 
     let rx = state.broadcaster.subscribe(&project_id, &sub_id).await;
 
