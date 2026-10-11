@@ -127,7 +127,7 @@ fn tg_base() -> String {
 
 async fn tg_get_me(c: &reqwest::Client, base: &str, tok: &str) -> Result<String, String> {
     let r = c.post(format!("{base}/bot{tok}/getMe")).send().await
-        .map_err(|e| format!("transport: {e}"))?;
+        .map_err(|e| format!("transport: {}", e.without_url()))?;
     let st = r.status().as_u16();
     let b: Value = r.json().await.unwrap_or(Value::Null);
     if st == 401 || st == 404 { return Err("invalid bot token".to_string()); }
@@ -145,7 +145,7 @@ async fn tg_webhook_url_safe(c: &reqwest::Client, base: &str, tok: &str) -> Stri
 async fn tg_set_webhook(c: &reqwest::Client, base: &str, tok: &str, url: &str, secret: &str) -> Result<(), String> {
     let r = c.post(format!("{base}/bot{tok}/setWebhook"))
         .json(&json!({"url":url,"secret_token":secret,"allowed_updates":["message"]}))
-        .send().await.map_err(|e| format!("transport: {e}"))?;
+        .send().await.map_err(|e| format!("transport: {}", e.without_url()))?;
     let st = r.status().as_u16();
     let b: Value = r.json().await.unwrap_or(Value::Null);
     if b.get("ok").and_then(Value::as_bool) == Some(true) { Ok(()) }
@@ -158,7 +158,7 @@ async fn tg_delete_webhook(c: &reqwest::Client, base: &str, tok: &str) {
 
 async fn tg_get_chat(c: &reqwest::Client, base: &str, tok: &str, chat: &str) -> Result<(i64, bool), String> {
     let r = c.post(format!("{base}/bot{tok}/getChat")).json(&json!({"chat_id":chat})).send().await
-        .map_err(|e| format!("transport: {e}"))?;
+        .map_err(|e| format!("transport: {}", e.without_url()))?;
     let st = r.status().as_u16();
     let b: Value = r.json().await.unwrap_or(Value::Null);
     if b.get("ok").and_then(Value::as_bool) != Some(true) {

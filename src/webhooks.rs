@@ -85,15 +85,16 @@ pub async fn fire_webhooks(
             .send()
             .await;
 
+        // The id, never the URL: a receiver URL often embeds its own secret.
         match resp {
             Ok(r) if r.status().is_success() => {
-                info!("Webhook {} fired to {} for {}", wh_id, url, event);
+                info!("Webhook {} fired for {}", wh_id, event);
             }
             Ok(r) => {
-                warn!("Webhook {} to {} returned {}", wh_id, url, r.status());
+                warn!("Webhook {} returned {}", wh_id, r.status());
             }
             Err(e) => {
-                warn!("Webhook {} to {} failed: {}", wh_id, url, e);
+                warn!("Webhook {} failed: {}", wh_id, e.without_url());
             }
         }
     }

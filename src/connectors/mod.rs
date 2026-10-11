@@ -247,8 +247,13 @@ impl ProviderError {
     }
 
     /// Network-level failure while talking to the provider: always transient.
+    /// Without the URL: Telegram carries the bot token in its path, and
+    /// Slack and Discord webhook URLs are credentials themselves.
     pub fn transport(provider: &'static str, error: reqwest::Error) -> Self {
-        Self::transient(provider, format!("transport error: {error}"))
+        Self::transient(
+            provider,
+            format!("transport error: {}", error.without_url()),
+        )
     }
 
     /// Database failure while a connector writes (in-app inbox): an
@@ -429,6 +434,26 @@ mod tests {
         let err = classify_status("resend", StatusCode::BAD_REQUEST, None, &long);
         assert!(err.message.len() < 600);
         assert!(err.message.ends_with('…'));
+    }
+
+    /// The Telegram bot token is in the URL path, Slack and Discord webhook
+    /// URLs are secrets themselves; the message lands in the job, the digest
+    /// and the logs.
+    #[tokio::test]
+    async fn a_transport_error_does_not_carry_the_request_url() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let error = reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{port}/bot123:SECRET-BOT-TOKEN/sendMessage"
+            ))
+            .send()
+            .await
+            .expect_err("nothing listens on a closed port");
+        let err = ProviderError::transport("telegram", error);
+        assert_eq!(err.kind, ProviderErrorKind::Transient);
+        assert!(!err.message.contains("SECRET-BOT-TOKEN"), "{}", err.message);
     }
 }
 

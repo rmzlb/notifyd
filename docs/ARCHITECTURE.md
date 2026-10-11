@@ -147,7 +147,7 @@ Notifications are inherently one-way: server pushes to client. SSE is the simple
                    └─────┘  └──────┘
 ```
 
-1. Client connects: `GET /v1/inbox/:sub_id/stream?token=xxx`
+1. Client connects: `GET /v1/inbox/:sub_id/stream?ticket=xxx` (one-time ticket, see below)
 2. `SseBroadcaster` creates a `tokio::sync::broadcast` channel for this subscriber
 3. When a notification is sent to this subscriber, the in-app connector calls `broadcaster.send()`, which publishes the event with Postgres `NOTIFY notifyd_sse`
 4. Every replica runs a `LISTEN` task and delivers the event to the browsers connected to it — the tab may be attached to any replica
@@ -159,16 +159,21 @@ Notifications are inherently one-way: server pushes to client. SSE is the simple
 
 Putting a JWT in the URL (query param) is a security concern — it shows up in server logs, browser history, and referrer headers.
 
-notifyd solves this with **one-time tickets**:
+notifyd solves this with **one-time tickets**, the only credential the stream URL accepts:
 
 ```
-1. POST /v1/inbox/:sub_id/stream-ticket
-   → {"ticket": "abc-123"}  (valid 60 seconds)
+1. POST /v1/inbox/:sub_id/stream-ticket   (JWT or API key, in a header)
+   → {"ticket": "abc-123", "expires_in_seconds": 30}
 
 2. GET /v1/inbox/:sub_id/stream?ticket=abc-123
    → Ticket consumed, stream starts
-   → Same ticket can't be reused
+   → Same ticket can't be reused; expired or unknown → 401, other subscriber → 403
 ```
+
+A JWT or an API key in the query string is refused, never tried as a fallback;
+non-browser clients that stream with `fetch` send it as `Authorization: Bearer`.
+The request span logged by `tower-http` records the path without the query
+string, so not even a ticket reaches the service logs.
 
 ---
 

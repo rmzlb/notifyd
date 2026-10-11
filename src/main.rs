@@ -86,6 +86,28 @@ async fn request_id_middleware(mut req: Request<axum::body::Body>, next: Next) -
     response
 }
 
+type MakeRequestSpan = fn(&Request<axum::body::Body>) -> tracing::Span;
+
+/// The request span records the path, never the query string: a stream
+/// ticket, or a credential a client wrongly put in a URL, stays out of the
+/// logs whatever `RUST_LOG` says. `tower-http`'s default span logs the whole
+/// URI.
+fn request_span(request: &Request<axum::body::Body>) -> tracing::Span {
+    tracing::debug_span!(
+        "request",
+        method = %request.method(),
+        path = %request.uri().path(),
+        version = ?request.version(),
+    )
+}
+
+fn trace_layer() -> tower_http::trace::TraceLayer<
+    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
+    MakeRequestSpan,
+> {
+    tower_http::trace::TraceLayer::new_for_http().make_span_with(request_span as MakeRequestSpan)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // `notifyd digest`, `notifyd jobs`…: operator commands against a running
@@ -208,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
         // (base64) doit passer ; Resend accepte 40 Mo par message.
         .layer(axum::extract::DefaultBodyLimit::max(5 * 1_048_576))
         .layer(cors)
-        .layer(tower_http::trace::TraceLayer::new_for_http());
+        .layer(trace_layer());
 
     let port = config.server.port;
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
@@ -244,4 +266,54 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::StatusCode, routing::get, Router};
+    use std::sync::Mutex;
+    use tower::ServiceExt;
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The most verbose level an operator could set, on a request that ends
+    /// in a server error (logged by `tower-http` at `ERROR`).
+    #[tokio::test]
+    async fn request_logs_never_carry_the_query_string() {
+        let logs = CapturedLogs::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let app = Router::new()
+            .route(
+                "/v1/inbox/:subscriber_id/stream",
+                get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+            )
+            .layer(trace_layer());
+        let request = Request::get("/v1/inbox/user-1/stream?ticket=secret-ticket-value")
+            .body(Body::empty())
+            .unwrap();
+        app.oneshot(request).await.unwrap();
+
+        let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("/v1/inbox/user-1/stream"), "{logs}");
+        assert!(!logs.contains("secret-ticket-value"), "{logs}");
+    }
 }
