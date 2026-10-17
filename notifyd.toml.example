@@ -76,7 +76,7 @@ from_name = "Mon App"
 # from = "dev@localhost"
 
 # ─── SMS connector ────────────────────────────────────────────────────
-# Provider: "twilio" or "telnyx"
+# Provider: "twilio", "smsmode" or "telnyx"
 
 # Twilio example:
 [connectors.sms]
@@ -84,6 +84,15 @@ provider = "twilio"
 account_sid = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 auth_token = "your_auth_token"
 from = "+33600000000"
+
+# smsmode example (comment out Twilio section and use this instead). The API
+# key belongs to a TRANSACTIONAL channel; the webhook secret is the one set in
+# smsmode, Paramètres > Webhooks (signature HMAC SHA-256).
+# [connectors.sms]
+# provider = "smsmode"
+# api_key = "your_smsmode_api_key"
+# webhook_secret = "your_smsmode_webhook_secret"
+# from = "36034"  # short code, authorized number or sender (11 characters max)
 
 # Telnyx example (comment out Twilio section and use this instead):
 # [connectors.sms]

@@ -4,21 +4,17 @@
 //! the carrier did with it comes back later. With `PUBLIC_URL` set, the
 //! Twilio connector asks for status callbacks on
 //! `{PUBLIC_URL}/webhooks/twilio/status?job=<job id>` (connectors/sms.rs).
-//! This route checks Twilio's signature and records the outcome on the job:
-//!   - `delivered` stamps `delivered_at`, the job stays `sent`, and
-//!     `job.delivered` fires;
-//!   - `undelivered` / `failed` turn the job `bounced`, with
-//!     `error = "twilio <ErrorCode>"`, and `job.bounced` fires; a callback
-//!     that beats the worker's write of the send finds the job still
-//!     `processing`, and that write keeps the bounce (worker.rs `mark_sent`);
-//!   - every other status changes nothing.
+//! This route checks Twilio's signature and records the outcome on the job
+//! (sms_status.rs): `delivered` delivers it, `undelivered` / `failed` bounce
+//! it with `error = "twilio <ErrorCode>"`, every other status changes
+//! nothing. The route stays on while `TWILIO_AUTH_TOKEN` is set, also after
+//! a switch to smsmode, for the messages Twilio still reports on.
 //!
-//! The first terminal outcome wins: Twilio may post callbacks late, out of
-//! order or twice, and none of them changes the job again or re-fires an
-//! event. Twilio also posts `To`, `From` and sometimes the message text: they
-//! are covered by the signature and never logged, stored or echoed.
+//! Twilio also posts `To`, `From` and sometimes the message text: they are
+//! covered by the signature and never logged, stored or echoed.
 
 use crate::config::SmsConfig;
+use crate::sms_status::{Changed, Report};
 use crate::AppState;
 use axum::{
     extract::{OriginalUri, Query, State},
@@ -81,8 +77,8 @@ fn verify(auth_token: &str, url: &str, params: &[(String, String)], header: Opti
         .is_ok()
 }
 
-/// 503 while the route cannot tell Twilio from anyone (SMS provider other
-/// than Twilio, no `TWILIO_AUTH_TOKEN`, no `PUBLIC_URL`), 403 on a bad or
+/// 503 while the route cannot tell Twilio from anyone (no SMS connector, no
+/// `TWILIO_AUTH_TOKEN`, no `PUBLIC_URL`), 403 on a bad or
 /// missing signature. Twilio signs the URL it called: behind the proxy the
 /// Host header is not that URL, so it is rebuilt from `PUBLIC_URL`. The 503
 /// is logged at debug only: anyone can post here, and the digest already
@@ -94,12 +90,10 @@ fn authenticate(
     params: &[(String, String)],
     signature: Option<&str>,
 ) -> Result<(), StatusCode> {
-    let auth_token = sms
-        .filter(|sms| sms.provider == "twilio")
-        .and_then(|sms| sms.auth_token.as_deref());
+    let auth_token = sms.and_then(|sms| sms.auth_token.as_deref());
     let (Some(auth_token), Some(public_url)) = (auth_token, public_url) else {
         debug!(
-            "Twilio status callback received but the route is off: it needs SMS_PROVIDER=twilio, TWILIO_AUTH_TOKEN and PUBLIC_URL"
+            "Twilio status callback received but the route is off: it needs TWILIO_AUTH_TOKEN and PUBLIC_URL"
         );
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
@@ -144,29 +138,12 @@ fn toggle_port(public_url: &str) -> Option<String> {
     Some(format!("{scheme}://{authority}{path}"))
 }
 
-#[derive(Debug, PartialEq)]
-enum Outcome {
-    Delivered,
-    Bounced(String),
-}
-
-/// What a callback changes, given the job's current `status` and whether it
-/// is already `delivered`. A delivered job never bounces and a bounced one is
-/// never delivered, so a late or repeated callback changes nothing. Twilio
-/// holds the message once it answered the send, which the worker records a
-/// moment later: `processing` counts as `sent`.
-fn outcome(
-    status: &str,
-    delivered: bool,
-    message_status: &str,
-    error_code: Option<&str>,
-) -> Option<Outcome> {
+/// Twilio's `MessageStatus` in notifyd's terms.
+fn report(message_status: &str, error_code: Option<&str>) -> Report {
     match message_status {
-        "delivered" if !delivered && status != "bounced" => Some(Outcome::Delivered),
-        "undelivered" | "failed" if !delivered && matches!(status, "sent" | "processing") => {
-            Some(Outcome::Bounced(bounce_error(message_status, error_code)))
-        }
-        _ => None,
+        "delivered" => Report::Delivered,
+        "undelivered" | "failed" => Report::Failed(bounce_error(message_status, error_code)),
+        _ => Report::Pending,
     }
 }
 
@@ -237,30 +214,8 @@ pub async fn status_callback(
         error!("Twilio status callback for job {job_id} not recorded: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    if let Some(Changed {
-        event,
-        project_id,
-        subscriber_id,
-    }) = changed
-    {
-        crate::deliverability::fire_job_event(
-            &state,
-            &project_id,
-            event,
-            job_id,
-            "sms",
-            subscriber_id,
-        );
-    }
+    crate::sms_status::announce(&state, job_id, changed);
     Ok(StatusCode::OK)
-}
-
-/// A job a callback changed, and the event that announces it.
-#[derive(Debug, PartialEq)]
-struct Changed {
-    event: &'static str,
-    project_id: String,
-    subscriber_id: Option<String>,
 }
 
 async fn record(
@@ -270,95 +225,24 @@ async fn record(
     message_status: &str,
     error_code: Option<&str>,
 ) -> Result<Option<Changed>, sqlx::Error> {
-    // `provider` stays NULL until the worker records the send, which a
-    // callback can beat by a few milliseconds.
-    let job: Option<(String, bool, Option<String>)> = sqlx::query_as(
-        "SELECT status, delivered_at IS NOT NULL, provider_message_id FROM jobs
-         WHERE id = $1 AND channel = 'sms' AND (provider = 'twilio' OR provider IS NULL)",
-    )
-    .bind(job_id)
-    .fetch_optional(pool)
-    .await?;
-    let Some((status, delivered, held_sid)) = job else {
-        debug!("Twilio status callback for unknown SMS job {job_id}: ignored");
-        return Ok(None);
-    };
-
-    match held_sid.as_deref() {
-        Some(held) if held != message_sid => {
-            warn!(
-                "Twilio status callback for job {job_id} names message {message_sid}, the job holds {held}: ignored"
-            );
-            return Ok(None);
-        }
-        Some(_) => {}
-        None => {
-            sqlx::query(
-                "UPDATE jobs SET provider_message_id = $2 WHERE id = $1 AND provider_message_id IS NULL",
-            )
-            .bind(job_id)
-            .bind(message_sid)
-            .execute(pool)
-            .await?;
-        }
-    }
-
-    match outcome(&status, delivered, message_status, error_code) {
-        Some(outcome) => apply(pool, job_id, message_sid, outcome).await,
-        None => Ok(None),
-    }
-}
-
-/// Each UPDATE re-checks the state the outcome was decided on, so two
-/// callbacks racing each other still change the job once and fire one event.
-async fn apply(
-    pool: &PgPool,
-    job_id: Uuid,
-    message_sid: &str,
-    outcome: Outcome,
-) -> Result<Option<Changed>, sqlx::Error> {
-    let (event, changed): (&str, Option<(String, Option<String>)>) = match outcome {
-        Outcome::Delivered => (
-            "job.delivered",
-            sqlx::query_as(
-                "UPDATE jobs SET delivered_at = now()
-                 WHERE id = $1 AND provider_message_id = $2
-                   AND delivered_at IS NULL AND status <> 'bounced'
-                 RETURNING project_id, subscriber_id",
-            )
-            .bind(job_id)
-            .bind(message_sid)
-            .fetch_optional(pool)
-            .await?,
-        ),
-        Outcome::Bounced(error) => {
-            let changed = sqlx::query_as(
-                "UPDATE jobs SET status = 'bounced', bounced_at = now(), error = $3
-                 WHERE id = $1 AND provider_message_id = $2
-                   AND status IN ('sent', 'processing') AND delivered_at IS NULL
-                 RETURNING project_id, subscriber_id",
-            )
-            .bind(job_id)
-            .bind(message_sid)
-            .bind(&error)
-            .fetch_optional(pool)
-            .await?;
-            if changed.is_some() {
-                warn!("Job {job_id} bounced ({error})");
-            }
-            ("job.bounced", changed)
-        }
-    };
-    Ok(changed.map(|(project_id, subscriber_id)| Changed {
-        event,
-        project_id,
-        subscriber_id,
-    }))
+    let report = report(message_status, error_code);
+    crate::sms_status::record(pool, "twilio", job_id, message_sid, &report).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sms_status::Outcome;
+
+    /// What a Twilio callback changes on a job in `status`.
+    fn outcome(
+        status: &str,
+        delivered: bool,
+        message_status: &str,
+        error_code: Option<&str>,
+    ) -> Option<Outcome> {
+        crate::sms_status::outcome(status, delivered, &report(message_status, error_code))
+    }
 
     const TOKEN: &str = "fictional-twilio-auth-token";
     const PUBLIC_URL: &str = "https://notifyd.example.com";
@@ -403,6 +287,7 @@ mod tests {
             auth_token: auth_token.map(str::to_string),
             api_key: None,
             messaging_profile_id: None,
+            webhook_secret: None,
             from: "+15005550006".to_string(),
         }
     }
@@ -543,21 +428,27 @@ mod tests {
     }
 
     #[test]
-    fn the_route_is_off_without_twilio_its_token_or_public_url() {
-        let off = |sms: Option<&SmsConfig>, public_url: Option<&str>| {
+    fn the_route_is_off_without_twilio_s_token_or_public_url() {
+        let check = |sms: Option<&SmsConfig>, public_url: Option<&str>| {
             authenticate(sms, public_url, &path(), &params(), Some(SIGNATURE))
         };
         let unavailable = Err(StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(off(None, Some(PUBLIC_URL)), unavailable);
+        assert_eq!(check(None, Some(PUBLIC_URL)), unavailable);
         assert_eq!(
-            off(Some(&sms("telnyx", Some(TOKEN))), Some(PUBLIC_URL)),
+            check(Some(&sms("twilio", None)), Some(PUBLIC_URL)),
             unavailable
         );
         assert_eq!(
-            off(Some(&sms("twilio", None)), Some(PUBLIC_URL)),
+            check(Some(&sms("smsmode", None)), Some(PUBLIC_URL)),
             unavailable
         );
-        assert_eq!(off(Some(&sms("twilio", Some(TOKEN))), None), unavailable);
+        assert_eq!(check(Some(&sms("twilio", Some(TOKEN))), None), unavailable);
+        // Switched to smsmode with the Twilio token left in place: Twilio
+        // still reports on the messages it took before the switch.
+        assert_eq!(
+            check(Some(&sms("smsmode", Some(TOKEN))), Some(PUBLIC_URL)),
+            Ok(())
+        );
     }
 
     #[test]

@@ -63,8 +63,11 @@ pub struct InstanceInfo {
     pub email_primary_resting_seconds: Option<u64>,
     pub email_failovers_since_boot: u64,
     /// `PUBLIC_URL`, base of the unsubscribe links on bulk email and of the
-    /// Twilio SMS status callbacks.
+    /// Twilio and smsmode SMS status callbacks.
     pub public_url: Option<String>,
+    /// Whether `SMSMODE_WEBHOOK_SECRET` is set (never its value): without it
+    /// smsmode SMS get no delivery status.
+    pub smsmode_webhook_secret: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -390,6 +393,12 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
         email_primary_resting_seconds: state.email_breaker.open_for().map(|d| d.as_secs()),
         email_failovers_since_boot: state.email_breaker.trips(),
         public_url: crate::unsubscribe::public_url(),
+        smsmode_webhook_secret: state
+            .config
+            .connectors
+            .sms
+            .as_ref()
+            .is_some_and(|c| c.webhook_secret.is_some()),
     };
 
     let findings = compute_findings(
@@ -419,7 +428,7 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
 }
 
 /// What this instance loses without `PUBLIC_URL`: one-click unsubscribe on
-/// bulk email, delivery status on Twilio SMS.
+/// bulk email, delivery status on Twilio and smsmode SMS.
 fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
     if instance.public_url.is_some() {
         return None;
@@ -430,9 +439,17 @@ fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
         losses.push("bulk email leaves without List-Unsubscribe headers");
         reasons.push("Gmail and Yahoo require one-click unsubscribe on bulk senders");
     }
-    if instance.sms_provider.as_deref() == Some("twilio") {
-        losses.push("Twilio SMS get no delivery status and stay `sent`");
-        reasons.push("Twilio reports delivered or undelivered to a callback URL built from it");
+    match instance.sms_provider.as_deref() {
+        Some("twilio") => {
+            losses.push("Twilio SMS get no delivery status and stay `sent`");
+            reasons.push("Twilio reports delivered or undelivered to a callback URL built from it");
+        }
+        Some("smsmode") => {
+            losses.push("smsmode SMS get no delivery status and stay `sent`");
+            reasons
+                .push("smsmode reports delivered or undelivered to a callback URL built from it");
+        }
+        _ => {}
     }
     if losses.is_empty() {
         return None;
@@ -445,6 +462,18 @@ fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
             reasons.join("; ")
         ),
     })
+}
+
+/// smsmode signs its delivery reports with a secret set on both sides;
+/// without it notifyd asks for none, so smsmode SMS stay `sent`.
+fn missing_smsmode_secret(instance: &InstanceInfo) -> Option<Finding> {
+    (instance.sms_provider.as_deref() == Some("smsmode") && !instance.smsmode_webhook_secret).then(
+        || Finding {
+            severity: "warning",
+            message: "SMSMODE_WEBHOOK_SECRET is not set: smsmode SMS get no delivery status and stay `sent`.".to_string(),
+            action: "Set a signing secret in smsmode (Paramètres > Webhooks, signature HMAC SHA-256) and the same value in SMSMODE_WEBHOOK_SECRET.".to_string(),
+        },
+    )
 }
 
 /// The part an agent reads first. Rules are deliberately simple and
@@ -486,6 +515,7 @@ fn compute_findings(
         });
     }
     findings.extend(missing_public_url(instance));
+    findings.extend(missing_smsmode_secret(instance));
     if instance.email_fallback_provider.is_none() && instance.email_provider.is_some() {
         findings.push(Finding {
             severity: "info",
@@ -635,6 +665,7 @@ impl Digest {
                 email_primary_resting_seconds: None,
                 email_failovers_since_boot: 0,
                 public_url: None,
+                smsmode_webhook_secret: false,
             },
             findings: Vec::new(),
             queue: QueueState::default(),
@@ -1430,6 +1461,7 @@ mod tests {
             email_primary_resting_seconds: None,
             email_failovers_since_boot: 0,
             public_url: None,
+            smsmode_webhook_secret: false,
         };
         let queue = QueueState::default();
         let outcomes = vec![OutcomeRow {
@@ -1493,6 +1525,7 @@ mod tests {
             email_primary_resting_seconds: None,
             email_failovers_since_boot: 0,
             public_url: Some("https://n.example.com".into()),
+            smsmode_webhook_secret: false,
         };
         let findings = compute_findings(
             &instance,
@@ -1528,6 +1561,7 @@ mod tests {
                 email_primary_resting_seconds: None,
                 email_failovers_since_boot: 0,
                 public_url: public_url.map(str::to_string),
+                smsmode_webhook_secret: false,
             };
 
         let email_only = missing_public_url(&instance(Some("resend"), None, None)).unwrap();
@@ -1550,6 +1584,19 @@ mod tests {
         assert!(!sms_only.message.contains("List-Unsubscribe"));
 
         assert!(missing_public_url(&instance(None, Some("telnyx"), None)).is_none());
+        let smsmode = missing_public_url(&instance(None, Some("smsmode"), None)).unwrap();
+        assert!(smsmode
+            .message
+            .contains("smsmode SMS get no delivery status"));
+
+        let without_secret = instance(None, Some("smsmode"), Some("https://n.example.com"));
+        assert!(missing_smsmode_secret(&without_secret).is_some());
+        let with_secret = InstanceInfo {
+            smsmode_webhook_secret: true,
+            ..instance(None, Some("smsmode"), Some("https://n.example.com"))
+        };
+        assert!(missing_smsmode_secret(&with_secret).is_none());
+        assert!(missing_smsmode_secret(&instance(None, Some("twilio"), None)).is_none());
         assert!(missing_public_url(&instance(
             Some("resend"),
             Some("twilio"),
