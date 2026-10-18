@@ -220,21 +220,28 @@ fn default_smtp_security() -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SmsConfig {
-    pub provider: String, // "twilio" | "telnyx"
-    // Twilio
+    pub provider: String, // "twilio" | "smsmode" | "telnyx"
+    // Twilio. With smsmode, the Twilio token left in place keeps checking the
+    // status callbacks of the messages Twilio still holds.
     pub account_sid: Option<String>,
     pub auth_token: Option<String>,
-    // Telnyx
+    // Telnyx or smsmode
     pub api_key: Option<String>,
     pub messaging_profile_id: Option<String>,
+    // smsmode: the key smsmode signs its callbacks with
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
     // Common
     pub from: String,
 }
 
 impl SmsConfig {
     /// `SMS_PROVIDER=telnyx` with `TELNYX_API_KEY` (+ optional
-    /// `TELNYX_MESSAGING_PROFILE_ID`), or `SMS_PROVIDER=twilio` with
-    /// `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`. Both need `SMS_FROM`.
+    /// `TELNYX_MESSAGING_PROFILE_ID`), `SMS_PROVIDER=twilio` with
+    /// `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`, or
+    /// `SMS_PROVIDER=smsmode` with `SMSMODE_API_KEY` (+ optional
+    /// `SMSMODE_WEBHOOK_SECRET`, and the Twilio variables while Twilio still
+    /// reports on earlier messages). All need `SMS_FROM`.
     pub fn from_env() -> Option<Self> {
         let provider = env_non_empty("SMS_PROVIDER")?;
         let from = env_non_empty("SMS_FROM")?;
@@ -245,6 +252,7 @@ impl SmsConfig {
                 auth_token: None,
                 api_key: Some(env_non_empty("TELNYX_API_KEY")?),
                 messaging_profile_id: env_non_empty("TELNYX_MESSAGING_PROFILE_ID"),
+                webhook_secret: None,
                 from,
             }),
             "twilio" => Some(Self {
@@ -253,6 +261,16 @@ impl SmsConfig {
                 auth_token: Some(env_non_empty("TWILIO_AUTH_TOKEN")?),
                 api_key: None,
                 messaging_profile_id: None,
+                webhook_secret: env_non_empty("SMSMODE_WEBHOOK_SECRET"),
+                from,
+            }),
+            "smsmode" => Some(Self {
+                provider,
+                account_sid: env_non_empty("TWILIO_ACCOUNT_SID"),
+                auth_token: env_non_empty("TWILIO_AUTH_TOKEN"),
+                api_key: Some(env_non_empty("SMSMODE_API_KEY")?),
+                messaging_profile_id: None,
+                webhook_secret: env_non_empty("SMSMODE_WEBHOOK_SECRET"),
                 from,
             }),
             _ => None,

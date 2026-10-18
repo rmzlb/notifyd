@@ -222,9 +222,10 @@ skipped for an address or an opt-out.
 
 Returns both the transport state and the provider evidence. `status: "sent"`
 means the provider accepted the API call; `delivered_at` and the per-recipient
-`provider_events` are the proof of what happened afterwards. On a Twilio SMS,
-`delivered_at`, `bounced_at` and the `bounced` status come from Twilio's status
-callbacks (see SMS Delivery Status below); SMS jobs list no `provider_events`.
+`provider_events` are the proof of what happened afterwards. On a Twilio or
+smsmode SMS, `delivered_at`, `bounced_at` and the `bounced` status come from the
+provider's status callbacks (see SMS Delivery Status below); SMS jobs list no
+`provider_events`.
 
 ```json
 {
@@ -277,8 +278,8 @@ restart) is re-queued by the reaper with its attempt consumed, so nothing is
 lost silently and nothing loops forever.
 
 After `sent`, provider feedback can still stamp `delivered_at` or turn the job
-`bounced`: Resend webhooks for email (Email Deliverability), Twilio status
-callbacks for SMS (SMS Delivery Status).
+`bounced`: Resend webhooks for email (Email Deliverability), Twilio and smsmode
+status callbacks for SMS (SMS Delivery Status).
 
 `email_envelope` is the exact recipient envelope persisted before provider
 handoff. It lets clients distinguish a recipient still awaiting an event from
@@ -683,8 +684,8 @@ curl -X POST http://localhost:3400/v1/admin/webhooks \
 |---|---|
 | `job.sent` | the provider accepted the message, or notifyd skipped it (opt-out, no push token), which the job shows as `provider: "skipped"` |
 | `job.failed` | the job ended `failed` (permanent error, or attempts exhausted) |
-| `job.delivered` | Twilio confirmed an SMS delivered (SMS Delivery Status) |
-| `job.bounced` | an email bounced (Resend, any bounce type) or an SMS came back `undelivered` / `failed` (Twilio) |
+| `job.delivered` | Twilio or smsmode confirmed an SMS delivered (SMS Delivery Status) |
+| `job.bounced` | an email bounced (Resend, any bounce type) or an SMS came back `undelivered` / `failed` (Twilio), `UNDELIVERABLE` / `UNDELIVERED` (smsmode) |
 | `job.complained` | the recipient marked the email as spam (Resend) |
 
 Payload: `{"event", "job_id", "channel", "subscriber_id", "timestamp"}`. It is
@@ -856,7 +857,7 @@ comparison is constant-time.
 | `400` | before the signature: a malformed query string (e.g. `job` given twice) |
 | `413` | before the signature: a body over 64 KiB |
 | `415` | before the signature: a body that is not `application/x-www-form-urlencoded` |
-| `503` | the route cannot authenticate anything: `SMS_PROVIDER` is not `twilio`, or `TWILIO_AUTH_TOKEN` or `PUBLIC_URL` is missing |
+| `503` | the route cannot authenticate anything: no SMS connector, or `TWILIO_AUTH_TOKEN` or `PUBLIC_URL` is missing (it stays on under `SMS_PROVIDER=smsmode` while `TWILIO_AUTH_TOKEN` is set) |
 | `403` | missing or invalid signature |
 | `400` | signed, but without `MessageSid` or `MessageStatus` |
 | `200` | recorded or ignored: a missing, malformed or unknown `job` id, or a `MessageSid` other than the one the job holds (an earlier attempt), changes nothing |
@@ -873,6 +874,35 @@ Effects on the SMS job named by `job`:
 The first terminal status wins and each event fires once: a repeated or late
 callback is acknowledged and ignored. `To`, `From` and any message text Twilio
 posts are never logged, stored or returned.
+
+## SMS Delivery Status (smsmode)
+
+Same rules as Twilio's. When the instance has `PUBLIC_URL` and
+`SMSMODE_WEBHOOK_SECRET`, each smsmode message leaves with
+`callbackUrlStatus=PUBLIC_URL/webhooks/smsmode/status?job=<job id>` and
+`refClient=<job id>`. In smsmode, set the signing secret (Paramètres >
+Webhooks, signature HMAC SHA-256) to the value of `SMSMODE_WEBHOOK_SECRET`.
+
+### POST /webhooks/smsmode/status
+
+Not under `/v1`, no API key: authenticated by `X-Smsmode-256:
+sha256=<hex>`, the HMAC-SHA256 keyed by `SMSMODE_WEBHOOK_SECRET` of the raw
+body, compared in constant time.
+
+| Answer | When |
+|---|---|
+| `413` | before the signature: a body over 64 KiB |
+| `503` | the route cannot authenticate anything: no SMS connector or no `SMSMODE_WEBHOOK_SECRET` |
+| `403` | missing or invalid signature |
+| `400` | signed, but not JSON, or without `messageId` or `status` |
+| `200` | recorded or ignored: an incoming message (`direction: MO`), a missing or unknown job (`?job=`, else `refClient`), or a `messageId` other than the one the job holds changes nothing |
+| `500` | the job could not be read or updated (database error, logged with the job id) |
+
+| `status.value` | Job | Event |
+|---|---|---|
+| `DELIVERED` | `delivered_at` stamped once, status unchanged; never on a `bounced` job | `job.delivered` |
+| `UNDELIVERABLE`, `UNDELIVERED` | from `sent` or `processing`, never on a delivered job: `status: "bounced"`, `bounced_at`, `error: "smsmode <status.detail>"` | `job.bounced` |
+| anything else (`SCHEDULED`, `ENROUTE`) | nothing | none |
 
 ---
 

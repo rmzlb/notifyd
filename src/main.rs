@@ -16,6 +16,8 @@ mod pacing;
 mod pii;
 mod segments;
 mod send_window;
+mod sms_status;
+mod smsmode_status;
 mod sse;
 mod templates;
 mod topics;

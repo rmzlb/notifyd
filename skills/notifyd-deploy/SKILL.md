@@ -1,6 +1,6 @@
 ---
 name: notifyd-deploy
-description: Deploy and configure a notifyd instance (one Rust binary + Postgres) with Docker Compose or Dokploy — one instance per company, providers by environment variables (Resend, Cloudflare Email Service, SMTP, Telnyx, Twilio), fallback provider, pacing, public URL, admin and read-only keys, MCP access. Use when standing up notifyd, adding a provider, tuning rate limits, or diagnosing a deployment.
+description: Deploy and configure a notifyd instance (one Rust binary + Postgres) with Docker Compose or Dokploy — one instance per company, providers by environment variables (Resend, Cloudflare Email Service, SMTP, Telnyx, Twilio, smsmode), fallback provider, pacing, public URL, admin and read-only keys, MCP access. Use when standing up notifyd, adding a provider, tuning rate limits, or diagnosing a deployment.
 license: MIT
 metadata:
   author: rmzlb
@@ -25,9 +25,9 @@ variables, never in the repo.
 | `EMAIL_PROVIDER` + credentials | `resend` (`RESEND_API_KEY`), `cloudflare` (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_API_TOKEN`), `smtp` (`SMTP_HOST`…), `agentmail`, `log` (dev only) |
 | `EMAIL_FROM`, `EMAIL_FROM_NAME` | default sender, domain verified at the provider |
 | `EMAIL_FALLBACK_PROVIDER` + its credentials | second provider used on 429/5xx; same sender domain verified there too |
-| `PUBLIC_URL` | public base URL of the instance: hosts the one-click unsubscribe links and the Twilio SMS status callbacks |
+| `PUBLIC_URL` | public base URL of the instance: hosts the one-click unsubscribe links and the Twilio and smsmode SMS status callbacks |
 | `CORS_ORIGINS` | back-office origins allowed to open the in-app stream and call `/mcp` from a browser |
-| `SMS_PROVIDER` + `SMS_FROM` + `TELNYX_API_KEY` or `TWILIO_*` | optional SMS; `TELNYX_WHATSAPP_API_KEY` + `WHATSAPP_FROM` for WhatsApp |
+| `SMS_PROVIDER` + `SMS_FROM` + `TELNYX_API_KEY`, `TWILIO_*` or `SMSMODE_API_KEY` (+ `SMSMODE_WEBHOOK_SECRET`) | optional SMS (switch: docs/CONNECTORS.md § Switching provider); `TELNYX_WHATSAPP_API_KEY` + `WHATSAPP_FROM` for WhatsApp |
 | `EMAIL_RATE_PER_SEC` (8), `WORKER_MAX_ATTEMPTS` (5) | pacing under the provider limit, attempts before `failed` |
 
 Generate secrets with `openssl rand -hex 32`. Never write a value in a file

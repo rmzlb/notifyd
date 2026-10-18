@@ -54,6 +54,22 @@ refuses it at enqueue (`422 channel_not_configured`) while that is missing.
 |---|---|
 | `telnyx` | `TELNYX_API_KEY`, `TELNYX_MESSAGING_PROFILE_ID` (optional) |
 | `twilio` | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` |
+| `smsmode` | `SMSMODE_API_KEY`, `SMSMODE_WEBHOOK_SECRET` (delivery status) |
+
+With smsmode, the API key belongs to one smsmode channel and sends through it:
+take it from a `TRANSACTIONAL` channel, whose messages carry no `STOP` and no
+sending-hours limit (a channel's traffic type cannot change after it is
+created). A sender is at most 11 characters, an E.164 number written without
+its `+`; a longer one is refused at enqueue. Nobody can answer an
+alphanumeric sender: for replies, send from a number smsmode rents you or from
+the channel's short code (`36034`), which smsmode shows as one of its shared
+short codes (38047, 38164…, not always the same one).
+smsmode reads a text as GSM 7-bit and silently replaces what that alphabet
+lacks (`’` becomes `'`, an emoji `?`), so notifyd sends any text outside
+GSM 03.38 as `UNICODE` (70 characters per part instead of 160), as Twilio
+does on its own. The job id is the message's `refClient`: smsmode copies it
+onto the replies to that message, so a project receiving them (channel
+webhook « Réception de SMS (MO) ») can tell which notifyd job was answered.
 
 ### Delivery status (Twilio)
 
@@ -81,7 +97,46 @@ callback body over 64 KiB is refused (`413`).
 
 Without `PUBLIC_URL`, the request to Twilio carries no `StatusCallback`, SMS
 jobs stay `sent`, the callback route answers `503` and the digest says what is
-missing. Telnyx statuses are not ingested: Telnyx jobs stay `sent`.
+missing. The route checks callbacks whenever `TWILIO_AUTH_TOKEN` is set, also
+under `SMS_PROVIDER=smsmode`. Telnyx statuses are not ingested: Telnyx jobs
+stay `sent`.
+
+### Delivery status (smsmode)
+
+With `SMS_PROVIDER=smsmode`, `PUBLIC_URL` and `SMSMODE_WEBHOOK_SECRET` set,
+every message asks smsmode for its delivery reports on
+`PUBLIC_URL/webhooks/smsmode/status?job=<job id>` (`callbackUrlStatus`, at
+most 255 characters: a longer one is left out with a warning), and the job
+records them with the same rules as Twilio's:
+
+| smsmode `status.value` | Job | Webhook event |
+|---|---|---|
+| `DELIVERED` | `delivered_at` stamped, status unchanged (`sent`) | `job.delivered` |
+| `UNDELIVERABLE`, `UNDELIVERED` | the job turns `bounced`: `error` = `smsmode <status.detail>` (e.g. `smsmode SPAM`, `smsmode INSUFFICIENT_CREDIT`), or `smsmode <status.value>` without a detail | `job.bounced` |
+| `SCHEDULED`, `ENROUTE` | unchanged | none |
+
+A send smsmode answers `201` with a message already `UNDELIVERABLE` or
+`UNDELIVERED` fails the job at once (`smsmode UNDELIVERABLE
+ROUTE_NOT_AVAILABLE`). smsmode signs each report with HMAC-SHA256 of the raw
+body under the secret set in its interface (Paramètres > Webhooks, signature
+cryptographique) and sends `X-Smsmode-256: sha256=<hex>`; notifyd compares it
+in constant time and refuses anything else (`403`). Set the same value in
+smsmode and in `SMSMODE_WEBHOOK_SECRET`. Without the secret notifyd asks for
+no report (smsmode would retry each refused one for a day), smsmode jobs stay
+`sent`, the route answers `503` and the digest says so. The route checks
+reports whenever the secret is set, also after a switch back to Twilio. A body
+over 64 KiB is refused (`413`); the recipient, sender and text it carries are
+never logged or stored.
+
+### Switching provider
+
+`SMS_PROVIDER` picks the provider every new SMS leaves through; change it and
+redeploy. Keep the previous provider's variables for a day or two: Twilio
+(`TWILIO_AUTH_TOKEN`) and smsmode (`SMSMODE_WEBHOOK_SECRET`) still report on
+the messages they took before the switch, and notifyd records those reports on
+their jobs. A report only ever changes a job its own provider sent. Senders
+are the provider's own: a Twilio number cannot send through smsmode, so move
+`SMS_FROM` and the projects' `sms.from` with the switch.
 
 ## WhatsApp — Telnyx
 
@@ -193,9 +248,10 @@ stream. An unknown subscriber is a permanent error.
 
 `PUBLIC_URL` (e.g. `https://api-os.philoeparis.com/notifyd`) is the base of the
 links this instance hosts: the one-click unsubscribe endpoint `/u/<token>` on
-bulk email, and the Twilio SMS status callback `/webhooks/twilio/status`.
-Without it, bulk email leaves without `List-Unsubscribe` headers, Twilio SMS
-get no delivery status, and the digest says so.
+bulk email, and the SMS status callbacks `/webhooks/twilio/status` and
+`/webhooks/smsmode/status`. Without it, bulk email leaves without
+`List-Unsubscribe` headers, Twilio and smsmode SMS get no delivery status, and
+the digest says so.
 
 ## Operator keys
 
