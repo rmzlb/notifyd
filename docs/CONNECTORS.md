@@ -138,6 +138,45 @@ their jobs. A report only ever changes a job its own provider sent. Senders
 are the provider's own: a Twilio number cannot send through smsmode, so move
 `SMS_FROM` and the projects' `sms.from` with the switch.
 
+## RCS — `RCS_PROVIDER` (smsmode)
+
+`RCS_PROVIDER=smsmode` with `SMSMODE_RCS_API_KEY` (or `SMSMODE_API_KEY` when
+the RCS agent channel shares the key), optional `RCS_FROM` (1 to 11 chars),
+`SMSMODE_WEBHOOK_SECRET` (same HMAC-SHA256 secret as SMS delivery reports),
+pacing `RCS_RATE_PER_SEC` (10).
+
+`channel: "rcs"` sends via `POST https://rest.smsmode.com/rcs/v1/messages` with
+application-friendly defaults:
+
+- **Automatic `BASIC` vs `TEXT` tier selection:** plain messages `<= 160`
+  characters with no buttons are sent as `body.type = "BASIC"` (full UTF-8 and
+  emojis included, billed at the Basic RCS rate); longer messages (`<= 1000`
+  characters) or messages with suggestion buttons upgrade automatically to
+  `body.type = "TEXT"`.
+- **Action buttons without boilerplate:**
+  - Top-level `"url"` adds an `OPEN_URL` suggestion button (label defaults to
+    `"Open"`, or `"rcs": {"button": "Confirmer"}`).
+  - `"rcs": {"replies": ["Oui", "Non"]}` adds quick-reply (`REPLY`) buttons
+    (`<= 25` chars each).
+  - `"rcs": {"dial": "+33140000000"}` or `{"dial": {"text": "Appeler le centre", "phone": "+33140000000"}}`
+    adds a click-to-call (`DIAL_PHONE`) button.
+  - Every suggestion gets its required `postbackData` filled automatically when
+    omitted.
+- **Rich cards and carousels:**
+  - `"rcs": {"card": {"file_url": "https://…/map.png", "replies": ["Confirmer", "Annuler"]}}`
+    builds a `STANDALONE_RICH_CARD` using the notification's `subject` as
+    `title` (`<= 200` chars), `body` as `description` (`<= 2000` chars), and
+    `url` as an `OPEN_URL` button.
+  - `"rcs": {"carousel": {"width": "MEDIUM", "cards": [...]}}` builds a
+    `CAROUSEL_RICH_CARD` (`2..=10` cards).
+  - `"rcs": {"file_url": "https://…/devis.pdf"}` sends a `FILE` message, and
+    `"rcs": {"body": {...}}` passes a raw smsmode RCS `body` object through.
+- **Delivery and read receipts:** RCS reports share `/webhooks/smsmode/status`:
+  `DELIVERED` and `READ` stamp `delivered_at` (`job.delivered`), while
+  `UNDELIVERABLE` and `UNDELIVERED` (including `PHONE_NOT_SUITABLE` /
+  `NETWORK_NOT_SUITABLE` when a handset does not support RCS) mark the job
+  `bounced` (`job.bounced`).
+
 ## WhatsApp — Telnyx
 
 `TELNYX_WHATSAPP_API_KEY` (falls back to `TELNYX_API_KEY`), `WHATSAPP_FROM`

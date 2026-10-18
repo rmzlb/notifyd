@@ -50,9 +50,12 @@ services:
       EMAIL_FALLBACK_PROVIDER: ${EMAIL_FALLBACK_PROVIDER:-}
       EMAIL_FAILOVER_COOLDOWN_SECS: ${EMAIL_FAILOVER_COOLDOWN_SECS:-60}
 
-      # SMS connector (SMS_PROVIDER: telnyx | twilio | smsmode) + WhatsApp (Telnyx)
+      # SMS connector (SMS_PROVIDER: telnyx | twilio | smsmode), RCS (smsmode) + WhatsApp (Telnyx)
       SMS_PROVIDER: ${SMS_PROVIDER:-}
       SMS_FROM: ${SMS_FROM:-}
+      RCS_PROVIDER: ${RCS_PROVIDER:-}
+      RCS_FROM: ${RCS_FROM:-}
+      SMSMODE_RCS_API_KEY: ${SMSMODE_RCS_API_KEY:-}
       TELNYX_API_KEY: ${TELNYX_API_KEY:-}
       TELNYX_MESSAGING_PROFILE_ID: ${TELNYX_MESSAGING_PROFILE_ID:-}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
@@ -66,6 +69,7 @@ services:
       WORKER_MAX_ATTEMPTS: ${WORKER_MAX_ATTEMPTS:-5}
       EMAIL_RATE_PER_SEC: ${EMAIL_RATE_PER_SEC:-8}
       SMS_RATE_PER_SEC: ${SMS_RATE_PER_SEC:-10}
+      RCS_RATE_PER_SEC: ${RCS_RATE_PER_SEC:-10}
       WHATSAPP_RATE_PER_SEC: ${WHATSAPP_RATE_PER_SEC:-10}
       RATE_LIMIT_PAUSE_SECS: ${RATE_LIMIT_PAUSE_SECS:-2}
       # Svix signing secret of the Resend webhook endpoint. Empty = the

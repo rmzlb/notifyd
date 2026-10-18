@@ -1,4 +1,4 @@
-type NotifydChannel = 'email' | 'sms' | 'whatsapp' | 'push' | 'in_app' | 'telegram' | 'slack' | 'discord' | (string & {});
+type NotifydChannel = 'email' | 'sms' | 'rcs' | 'whatsapp' | 'push' | 'in_app' | 'telegram' | 'slack' | 'discord' | (string & {});
 /**
  * Email attachment. `content` is the file bytes encoded as a base64 string
  * (no data-URL prefix). `contentType` is optional — Resend infers it from
@@ -16,6 +16,58 @@ interface NotifydClientConfig {
     subscriberToken?: string;
     fetch?: typeof fetch;
     eventSource?: EventSourceFactory;
+}
+interface SmsExtras {
+    /** Override the instance's `SMS_FROM` for this message (E.164 number or 1-11 char alphanumeric sender). */
+    from?: string;
+}
+interface RcsCardExtras {
+    title?: string;
+    description?: string;
+    fileUrl?: string;
+    file_url?: string;
+    thumbnailUrl?: string;
+    thumbnail_url?: string;
+    height?: 'SHORT' | 'MEDIUM' | 'TALL';
+    orientation?: 'VERTICAL' | 'HORIZONTAL';
+    thumbnailAlignment?: 'LEFT' | 'RIGHT';
+    url?: string;
+    button?: string;
+    replies?: string[];
+    dial?: string | {
+        text?: string;
+        phone: string;
+        postbackData?: string;
+    };
+    suggestions?: Array<Record<string, unknown>>;
+}
+interface RcsExtras {
+    /** Override the instance's `RCS_FROM` (smsmode RCS channel / agent sender) for this message. */
+    from?: string;
+    /** Label for the top-level `url` suggestion button (defaults to `"Open"`). */
+    button?: string;
+    /** Quick-reply suggestion buttons (`<= 25` chars each). */
+    replies?: string[];
+    /** Click-to-call suggestion button (E.164 phone string or `{ text, phone }`). */
+    dial?: string | {
+        text?: string;
+        phone: string;
+        postbackData?: string;
+    };
+    /** Raw smsmode RCS suggestions (`REPLY`, `OPEN_URL`, `DIAL_PHONE`, `SHOW_LOCATION`, `REQUEST_LOCATION`, `CREATE_CALENDAR_EVENT`). */
+    suggestions?: Array<Record<string, unknown>>;
+    /** Rich card (`STANDALONE_RICH_CARD`); defaults `title` to `subject` and `description` to `body`. */
+    card?: RcsCardExtras;
+    /** Rich card carousel (`2..=10` cards). */
+    carousel?: {
+        width?: 'SMALL' | 'MEDIUM';
+        cards: RcsCardExtras[];
+    };
+    /** Media file URL (`FILE` message). */
+    fileUrl?: string;
+    file_url?: string;
+    /** Full smsmode RCS `body` object passthrough (`type`: `BASIC` | `TEXT` | `FILE` | `STANDALONE_RICH_CARD` | `CAROUSEL_RICH_CARD`). */
+    body?: Record<string, unknown>;
 }
 interface SendNotificationInput {
     channel?: NotifydChannel;
@@ -62,6 +114,10 @@ interface SendNotificationInput {
         text?: string;
         button?: string;
     };
+    /** SMS extras (`from` sender override). */
+    sms?: SmsExtras;
+    /** RCS extras (agent `from`, quick `replies`, `dial`, rich `card`, `carousel`, `fileUrl`). */
+    rcs?: RcsExtras;
 }
 interface PushExtras {
     badge?: number;
@@ -145,6 +201,8 @@ interface BatchNotificationInput {
         text?: string;
         button?: string;
     };
+    sms?: SmsExtras;
+    rcs?: RcsExtras;
 }
 interface BatchNotificationResponse {
     success: boolean;
@@ -511,4 +569,4 @@ declare function createNotifydClient(config: NotifydClientConfig): {
     openInboxStream(subscriberId: string, options?: OpenInboxStreamOptions): Promise<OpenInboxStreamResult>;
 };
 
-export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushExtras, type PushToken, type PushTokensResponse, type Segment, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };
+export { type BatchNotificationInput, type BatchNotificationResponse, type EventSourceFactory, type EventSourceLike, type InboxNotification, type InboxQuery, type InboxResponse, type Job, type JobStatus, type ListResponse, type MarkAllReadResponse, type NotifydAttachment, type NotifydChannel, type NotifydClientConfig, NotifydError, type NotifydErrorDetails, type NotifydPriority, type OpenInboxStreamOptions, type OpenInboxStreamResult, type Page, type Preference, type PreferenceInput, type ProviderEvent, type PushExtras, type PushToken, type PushTokensResponse, type RcsCardExtras, type RcsExtras, type Segment, type SendNotificationInput, type SendNotificationResponse, type SendWindow, type SmsExtras, type StreamMessageEvent, type StreamTicketResponse, type Subscriber, type SubscriberInput, type SubscriberTokenInput, type SubscriberTokenResponse, type Suppression, type Template, type TemplateInput, type TriggerWorkflowInput, type UnreadCountResponse, type UpdateInboxMessageInput, type UpdateInboxMessageResponse, type VapidPublicKeyResponse, type WebPushSubscriptionInput, type Workflow, type WorkflowInput, type WorkflowRun, type WorkflowStep, createNotifydClient };

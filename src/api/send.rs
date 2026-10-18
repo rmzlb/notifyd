@@ -170,6 +170,9 @@ pub struct SendRequest {
     /// this message, so one project can send under several identities (one
     /// per shop, clinic…). See `connectors::sms::valid_sender`.
     pub sms: Option<Value>,
+    /// RCS extras: `{"from", "replies", "dial", "suggestions", "card", "carousel", "file_url", "body"}`
+    /// (see `connectors/rcs.rs`).
+    pub rcs: Option<Value>,
     /// Marks a message the subscriber cannot decline: password reset, magic
     /// link, email verification, order receipt, security alert. Subscription
     /// preferences (topic, workflow, channel and global opt-outs) are skipped
@@ -341,6 +344,8 @@ pub struct BatchRequest {
     pub chat: Option<Value>,
     /// SMS extras, see `/v1/send`.
     pub sms: Option<Value>,
+    /// RCS extras, see `/v1/send`.
+    pub rcs: Option<Value>,
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -391,6 +396,21 @@ pub async fn send_notification(
         .as_ref()
         .and_then(|sms| sms.get("from"))
         .and_then(Value::as_str);
+    let rcs = req
+        .rcs
+        .as_ref()
+        .map(crate::connectors::rcs::validate_extras)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    let rcs_from = rcs
+        .as_ref()
+        .and_then(|rcs| rcs.get("from"))
+        .and_then(Value::as_str);
     // Without `to`, each channel takes its address from the subscriber record
     // (email, phone, data.telegram_chat_id…); in_app and push use the id.
     let addresses = match (&req.to, req.subscriber_id.as_deref()) {
@@ -411,7 +431,12 @@ pub async fn send_notification(
     for channel in &channels {
         // Queued, it would only fail in the worker while the caller took the
         // 200 for a send.
-        if let Some(reason) = state.config.connectors.refusal(channel, sms_from) {
+        let sender_override = match channel.as_str() {
+            "sms" => sms_from,
+            "rcs" => rcs_from,
+            _ => None,
+        };
+        if let Some(reason) = state.config.connectors.refusal(channel, sender_override) {
             tracing::warn!("project {} asked for {}: {}", project.id, channel, reason);
             skipped.push(json!({ "channel": channel, "reason": reason }));
             refusals.push(reason);
@@ -626,10 +651,11 @@ pub async fn send_notification(
         }
     }
 
-    // Always present, so a `vars.sms` merged below cannot stand in for the
-    // validated extras.
+    // Always present, so a `vars.sms` / `vars.rcs` merged below cannot stand
+    // in for the validated extras.
     if let Some(p) = payload.as_object_mut() {
         p.insert("sms".to_string(), sms.unwrap_or(Value::Null));
+        p.insert("rcs".to_string(), rcs.unwrap_or(Value::Null));
     }
 
     // Durable: the worker re-checks preferences when it claims the job, so the
@@ -1139,12 +1165,32 @@ pub async fn batch_notification(
         .as_ref()
         .and_then(|sms| sms.get("from"))
         .and_then(Value::as_str);
+    let rcs = req
+        .rcs
+        .as_ref()
+        .map(crate::connectors::rcs::validate_extras)
+        .transpose()
+        .map_err(|error| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": error })),
+            )
+        })?;
+    let rcs_from = rcs
+        .as_ref()
+        .and_then(|rcs| rcs.get("from"))
+        .and_then(Value::as_str);
     // Stricter than /v1/send: a campaign is refused whole rather than sent on
     // part of the channels it names.
     let refused: Vec<(&String, String)> = channels
         .iter()
         .filter_map(|channel| {
-            let reason = state.config.connectors.refusal(channel, sms_from)?;
+            let sender_override = match channel.as_str() {
+                "sms" => sms_from,
+                "rcs" => rcs_from,
+                _ => None,
+            };
+            let reason = state.config.connectors.refusal(channel, sender_override)?;
             Some((channel, reason))
         })
         .collect();
@@ -1236,6 +1282,7 @@ pub async fn batch_notification(
         "push": req.push,
         "chat": req.chat,
         "sms": sms,
+        "rcs": rcs,
     });
 
     // Addresses and timezones of every recipient in one query: each job

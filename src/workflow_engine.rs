@@ -163,7 +163,7 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                 let recipient = match subscriber {
                     Some(sub) => match channel.as_str() {
                         "email" => sub.email.unwrap_or_default(),
-                        "sms" => sub.phone.unwrap_or_default(),
+                        "sms" | "rcs" => sub.phone.unwrap_or_default(),
                         "in_app" => sub.id.clone(),
                         _ => sub.id.clone(),
                     },
@@ -409,7 +409,7 @@ async fn flush_digest(state: &Arc<AppState>, run: &WorkflowRun) -> Result<()> {
     let recipient = match subscriber {
         Some(sub) => match channel {
             "email" => sub.email.unwrap_or_default(),
-            "sms" => sub.phone.unwrap_or_default(),
+            "sms" | "rcs" => sub.phone.unwrap_or_default(),
             _ => sub.id.clone(),
         },
         None => return Ok(()),

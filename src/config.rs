@@ -63,6 +63,8 @@ pub struct PacingConfig {
     #[serde(default = "default_sms_per_sec")]
     pub sms_per_sec: f64,
     #[serde(default = "default_sms_per_sec")]
+    pub rcs_per_sec: f64,
+    #[serde(default = "default_sms_per_sec")]
     pub whatsapp_per_sec: f64,
     #[serde(default = "default_push_per_sec")]
     pub push_per_sec: f64,
@@ -89,6 +91,7 @@ impl Default for PacingConfig {
         Self {
             email_per_sec: default_email_per_sec(),
             sms_per_sec: default_sms_per_sec(),
+            rcs_per_sec: default_sms_per_sec(),
             whatsapp_per_sec: default_sms_per_sec(),
             push_per_sec: default_push_per_sec(),
             telegram_per_sec: default_telegram_per_sec(),
@@ -137,6 +140,8 @@ pub struct ConnectorsConfig {
     pub email_fallback: Option<EmailConfig>,
     pub sms: Option<SmsConfig>,
     #[serde(default)]
+    pub rcs: Option<RcsConfig>,
+    #[serde(default)]
     pub whatsapp: Option<WhatsappConfig>,
     pub push: Option<PushConfig>,
     /// Native APNs for `push_tokens.platform = 'apns'`.
@@ -151,9 +156,10 @@ impl ConnectorsConfig {
     /// Why the worker would fail `channel` on this instance, by the rules it
     /// applies when it claims the job; `None` when it can deliver it. The API
     /// refuses at enqueue what would otherwise fail one step later. `sms_from`
-    /// is the message's own sender; without one, `SMS_FROM` applies. Chat
-    /// channels and unknown names are not judged here: a project can bring
-    /// its own Telegram bot, and the worker reports an unknown channel itself.
+    /// is the message's own sender; without one, `SMS_FROM` / `RCS_FROM`
+    /// applies. Chat channels and unknown names are not judged here: a project
+    /// can bring its own Telegram bot, and the worker reports an unknown
+    /// channel itself.
     pub fn refusal(&self, channel: &str, sms_from: Option<&str>) -> Option<String> {
         use crate::connectors::Channel;
         let missing = || Some(format!("{channel} connector not configured"));
@@ -170,8 +176,26 @@ impl ConnectorsConfig {
                         .map(|why| format!("sms cannot be sent from '{from}': {why}"))
                 }
             },
+            Some(Channel::Rcs) => match &self.rcs {
+                None => missing(),
+                Some(rcs) => rcs.sender_refusal(sms_from).map(|why| {
+                    format!(
+                        "rcs cannot be sent from '{}': {why}",
+                        sms_from.or(rcs.from.as_deref()).unwrap_or_default()
+                    )
+                }),
+            },
             _ => None,
         }
+    }
+
+    /// Secret smsmode signs its delivery and read reports with, whether SMS,
+    /// RCS or both are configured.
+    pub fn smsmode_webhook_secret(&self) -> Option<&str> {
+        self.sms
+            .as_ref()
+            .and_then(|s| s.webhook_secret.as_deref())
+            .or_else(|| self.rcs.as_ref().and_then(|r| r.webhook_secret.as_deref()))
     }
 }
 
@@ -273,6 +297,44 @@ impl SmsConfig {
                 webhook_secret: env_non_empty("SMSMODE_WEBHOOK_SECRET"),
                 from,
             }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RcsConfig {
+    pub provider: String, // "smsmode"
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
+    /// Optional default RCS agent identifier (`from`, 1..=40 characters).
+    /// When omitted, smsmode uses the channel's default RCS Agent.
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+impl RcsConfig {
+    /// `RCS_PROVIDER=smsmode` with `SMSMODE_RCS_API_KEY` (falls back to
+    /// `SMSMODE_API_KEY`), or `SMSMODE_RCS_API_KEY` alone. `RCS_FROM` is
+    /// optional (when unset, smsmode uses the channel's default RCS Agent).
+    pub fn from_env() -> Option<Self> {
+        let provider = match env_non_empty("RCS_PROVIDER") {
+            Some(p) => p,
+            None if env_non_empty("SMSMODE_RCS_API_KEY").is_some() => "smsmode".to_string(),
+            None => return None,
+        };
+        match provider.as_str() {
+            "smsmode" => {
+                let api_key = env_non_empty("SMSMODE_RCS_API_KEY")
+                    .or_else(|| env_non_empty("SMSMODE_API_KEY"))?;
+                Some(Self {
+                    provider,
+                    api_key: Some(api_key),
+                    webhook_secret: env_non_empty("SMSMODE_WEBHOOK_SECRET"),
+                    from: env_non_empty("RCS_FROM"),
+                })
+            }
             _ => None,
         }
     }
@@ -581,6 +643,9 @@ impl Config {
         if config.connectors.sms.is_none() {
             config.connectors.sms = SmsConfig::from_env();
         }
+        if config.connectors.rcs.is_none() {
+            config.connectors.rcs = RcsConfig::from_env();
+        }
         Ok(config)
     }
 
@@ -612,6 +677,7 @@ impl Config {
                 pacing: PacingConfig {
                     email_per_sec: env_parse("EMAIL_RATE_PER_SEC", default_email_per_sec()),
                     sms_per_sec: env_parse("SMS_RATE_PER_SEC", default_sms_per_sec()),
+                    rcs_per_sec: env_parse("RCS_RATE_PER_SEC", default_sms_per_sec()),
                     whatsapp_per_sec: env_parse("WHATSAPP_RATE_PER_SEC", default_sms_per_sec()),
                     push_per_sec: env_parse("PUSH_RATE_PER_SEC", default_push_per_sec()),
                     telegram_per_sec: env_parse(
@@ -634,6 +700,7 @@ impl Config {
                 email: EmailConfig::from_env()?,
                 email_fallback: EmailConfig::fallback_from_env()?,
                 sms: SmsConfig::from_env(),
+                rcs: RcsConfig::from_env(),
                 whatsapp: WhatsappConfig::from_env(),
                 push: PushConfig::from_env(),
                 apns: ApnsConfig::from_env().map_err(anyhow::Error::msg)?,

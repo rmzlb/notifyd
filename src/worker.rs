@@ -870,8 +870,8 @@ async fn build_send_request(
         if let Some(sid) = &job.subscriber_id {
             obj.insert("subscriber_id".into(), Value::String(sid.clone()));
         }
-        // Twilio reports an SMS's delivery to a URL naming its job.
-        if job.channel == "sms" {
+        // Twilio and smsmode report SMS/RCS delivery to a URL naming its job.
+        if matches!(job.channel.as_str(), "sms" | "rcs") {
             obj.insert(
                 crate::connectors::sms::JOB_ID_METADATA.into(),
                 Value::String(job.id.to_string()),
@@ -1040,9 +1040,9 @@ async fn cleanup_old_jobs(state: &Arc<AppState>) -> Result<()> {
     .execute(&state.pool)
     .await?;
 
-    // A bounced SMS is a failed send that holds a phone number: same 30 days.
+    // A bounced SMS or RCS is a failed send that holds a phone number: same 30 days.
     let failed_deleted = sqlx::query(
-        "DELETE FROM jobs WHERE (status = 'failed' OR (status = 'bounced' AND channel = 'sms'))
+        "DELETE FROM jobs WHERE (status = 'failed' OR (status = 'bounced' AND channel IN ('sms', 'rcs')))
          AND created_at < now() - interval '30 days'",
     )
     .execute(&state.pool)
@@ -1094,27 +1094,45 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
     // Per-user Telegram route: payload chat.telegram_route_id (UUID = credential id)
     // overrides the instance bot. Present but invalid/missing → permanent failure, no fallback.
     if job.channel == "telegram" {
-        if let Some(rid_str) = job.payload.get("chat")
+        if let Some(rid_str) = job
+            .payload
+            .get("chat")
             .and_then(|v| v.get("telegram_route_id"))
             .and_then(Value::as_str)
         {
             let route_id = match uuid::Uuid::parse_str(rid_str) {
                 Ok(id) => id,
-                Err(_) => return Err(ProviderError::permanent("telegram", "invalid telegram_route_id: not a UUID")),
+                Err(_) => {
+                    return Err(ProviderError::permanent(
+                        "telegram",
+                        "invalid telegram_route_id: not a UUID",
+                    ))
+                }
             };
             return match crate::api::telegram::load_telegram_route(
-                &state.pool, route_id, &job.project_id,
-            ).await {
-                None => Err(ProviderError::permanent("telegram", "route not found, unverified, or credential unavailable")),
+                &state.pool,
+                route_id,
+                &job.project_id,
+            )
+            .await
+            {
+                None => Err(ProviderError::permanent(
+                    "telegram",
+                    "route not found, unverified, or credential unavailable",
+                )),
                 Some(r) => {
                     if r.address != job.recipient {
-                        return Err(ProviderError::permanent("telegram", "route address mismatch"));
+                        return Err(ProviderError::permanent(
+                            "telegram",
+                            "route address mismatch",
+                        ));
                     }
                     if let Some(tid) = r.telegram_thread_id {
                         if let Some(obj) = req.metadata.as_object_mut() {
                             let chat = obj.entry("chat").or_insert_with(|| serde_json::json!({}));
                             if let Some(c) = chat.as_object_mut() {
-                                c.entry("telegram_thread_id").or_insert(serde_json::json!(tid));
+                                c.entry("telegram_thread_id")
+                                    .or_insert(serde_json::json!(tid));
                             }
                         }
                     }
@@ -1123,11 +1141,16 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
                         telegram_api_base: state.config.connectors.chat.telegram_api_base.clone(),
                         ..Default::default()
                     };
-                    let connector = crate::connectors::chat::ChatConnector::new(Channel::Telegram, cfg);
+                    let connector =
+                        crate::connectors::chat::ChatConnector::new(Channel::Telegram, cfg);
                     state.pacer.acquire("telegram").await;
                     let started = Instant::now();
                     let result = connector.send(&req).await;
-                    metrics::observe_latency("telegram", connector.provider(), started.elapsed().as_secs_f64());
+                    metrics::observe_latency(
+                        "telegram",
+                        connector.provider(),
+                        started.elapsed().as_secs_f64(),
+                    );
                     result
                 }
             };
@@ -1165,6 +1188,13 @@ async fn dispatch_job(state: &Arc<AppState>, job: &Job) -> SendResult {
                     ProviderError::permanent("none", "SMS connector not configured")
                 })?;
             Box::new(SmsConnector::new(config.clone()))
+        }
+        Some(Channel::Rcs) => {
+            let config =
+                state.config.connectors.rcs.as_ref().ok_or_else(|| {
+                    ProviderError::permanent("none", "RCS connector not configured")
+                })?;
+            Box::new(crate::connectors::rcs::RcsConnector::new(config.clone()))
         }
         Some(Channel::Whatsapp) => {
             let config = state.config.connectors.whatsapp.as_ref().ok_or_else(|| {

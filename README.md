@@ -190,6 +190,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 **Channels**
 - **Email** — Resend, Cloudflare Email Service, AgentMail, any SMTP (`lettre`), attachments, per-project sender identity
 - **SMS** — Telnyx, Twilio or smsmode, swap with one variable
+- **RCS** — smsmode (`BASIC` / `TEXT` auto-selection, quick replies, click-to-call, rich cards and carousels)
 - **WhatsApp** — Telnyx
 - **Push** — APNs natively (`.p8` token auth, HTTP/2, badge, sound, thread id, silent pushes, dead tokens dropped), Web Push (VAPID), FCM
 - **In-app inbox** — REST + realtime SSE (`EventSource`), read / archive / star, unread badge, multi-replica through Postgres `NOTIFY`

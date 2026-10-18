@@ -1,4 +1,4 @@
-export type NotifydChannel = 'email' | 'sms' | 'whatsapp' | 'push' | 'in_app' | 'telegram' | 'slack' | 'discord' | (string & {});
+export type NotifydChannel = 'email' | 'sms' | 'rcs' | 'whatsapp' | 'push' | 'in_app' | 'telegram' | 'slack' | 'discord' | (string & {});
 
 /**
  * Email attachment. `content` is the file bytes encoded as a base64 string
@@ -18,6 +18,53 @@ export interface NotifydClientConfig {
   subscriberToken?: string;
   fetch?: typeof fetch;
   eventSource?: EventSourceFactory;
+}
+
+export interface SmsExtras {
+  /** Override the instance's `SMS_FROM` for this message (E.164 number or 1-11 char alphanumeric sender). */
+  from?: string;
+}
+
+export interface RcsCardExtras {
+  title?: string;
+  description?: string;
+  fileUrl?: string;
+  file_url?: string;
+  thumbnailUrl?: string;
+  thumbnail_url?: string;
+  height?: 'SHORT' | 'MEDIUM' | 'TALL';
+  orientation?: 'VERTICAL' | 'HORIZONTAL';
+  thumbnailAlignment?: 'LEFT' | 'RIGHT';
+  url?: string;
+  button?: string;
+  replies?: string[];
+  dial?: string | { text?: string; phone: string; postbackData?: string };
+  suggestions?: Array<Record<string, unknown>>;
+}
+
+export interface RcsExtras {
+  /** Override the instance's `RCS_FROM` (smsmode RCS channel / agent sender) for this message. */
+  from?: string;
+  /** Label for the top-level `url` suggestion button (defaults to `"Open"`). */
+  button?: string;
+  /** Quick-reply suggestion buttons (`<= 25` chars each). */
+  replies?: string[];
+  /** Click-to-call suggestion button (E.164 phone string or `{ text, phone }`). */
+  dial?: string | { text?: string; phone: string; postbackData?: string };
+  /** Raw smsmode RCS suggestions (`REPLY`, `OPEN_URL`, `DIAL_PHONE`, `SHOW_LOCATION`, `REQUEST_LOCATION`, `CREATE_CALENDAR_EVENT`). */
+  suggestions?: Array<Record<string, unknown>>;
+  /** Rich card (`STANDALONE_RICH_CARD`); defaults `title` to `subject` and `description` to `body`. */
+  card?: RcsCardExtras;
+  /** Rich card carousel (`2..=10` cards). */
+  carousel?: {
+    width?: 'SMALL' | 'MEDIUM';
+    cards: RcsCardExtras[];
+  };
+  /** Media file URL (`FILE` message). */
+  fileUrl?: string;
+  file_url?: string;
+  /** Full smsmode RCS `body` object passthrough (`type`: `BASIC` | `TEXT` | `FILE` | `STANDALONE_RICH_CARD` | `CAROUSEL_RICH_CARD`). */
+  body?: Record<string, unknown>;
 }
 
 export interface SendNotificationInput {
@@ -56,6 +103,10 @@ export interface SendNotificationInput {
   push?: PushExtras;
   /** Chat extras (Telegram, Slack, Discord): exact text instead of subject + body, button label. */
   chat?: { text?: string; button?: string };
+  /** SMS extras (`from` sender override). */
+  sms?: SmsExtras;
+  /** RCS extras (agent `from`, quick `replies`, `dial`, rich `card`, `carousel`, `fileUrl`). */
+  rcs?: RcsExtras;
 }
 
 export interface PushExtras {
@@ -136,6 +187,8 @@ export interface BatchNotificationInput {
   track?: false | { opens?: boolean; clicks?: boolean };
   push?: PushExtras;
   chat?: { text?: string; button?: string };
+  sms?: SmsExtras;
+  rcs?: RcsExtras;
 }
 
 export interface BatchNotificationResponse {
@@ -796,6 +849,8 @@ export function createNotifydClient(config: NotifydClientConfig) {
           track: input.track,
           push: pushToWire(input.push),
           chat: input.chat,
+          sms: input.sms,
+          rcs: input.rcs,
         },
       });
 
@@ -842,6 +897,8 @@ export function createNotifydClient(config: NotifydClientConfig) {
           track: input.track,
           push: pushToWire(input.push),
           chat: input.chat,
+          sms: input.sms,
+          rcs: input.rcs,
         },
       });
 

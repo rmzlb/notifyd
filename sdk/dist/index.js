@@ -262,7 +262,9 @@ function createNotifydClient(config) {
           topic: input.topic,
           track: input.track,
           push: pushToWire(input.push),
-          chat: input.chat
+          chat: input.chat,
+          sms: input.sms,
+          rcs: input.rcs
         }
       });
       return {
@@ -297,7 +299,9 @@ function createNotifydClient(config) {
           topic: input.topic,
           track: input.track,
           push: pushToWire(input.push),
-          chat: input.chat
+          chat: input.chat,
+          sms: input.sms,
+          rcs: input.rcs
         }
       });
       return {

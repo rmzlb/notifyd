@@ -17,6 +17,7 @@
 //! body also carries the recipient, the sender and the text: they are
 //! covered by the signature and never logged, stored or echoed.
 
+#[cfg(test)]
 use crate::config::SmsConfig;
 use crate::sms_status::Report;
 use crate::AppState;
@@ -74,16 +75,16 @@ fn verify(secret: &str, body: &[u8], header: Option<&str>) -> bool {
     mac.verify_slice(&signature).is_ok()
 }
 
-/// 503 while the route cannot tell smsmode from anyone (no SMS connector or
-/// no `SMSMODE_WEBHOOK_SECRET`), 403 on a bad or missing signature. The 503
-/// is logged at debug only: anyone can post here, and the digest already
-/// names the missing setting.
+/// 503 while the route cannot tell smsmode from anyone (no
+/// `SMSMODE_WEBHOOK_SECRET`), 403 on a bad or missing signature. The 503 is
+/// logged at debug only: anyone can post here, and the digest already names
+/// the missing setting.
 fn authenticate(
-    sms: Option<&SmsConfig>,
+    secret: Option<&str>,
     body: &[u8],
     signature: Option<&str>,
 ) -> Result<(), StatusCode> {
-    let Some(secret) = sms.and_then(|sms| sms.webhook_secret.as_deref()) else {
+    let Some(secret) = secret else {
         debug!("smsmode status callback received but the route is off: it needs SMSMODE_WEBHOOK_SECRET");
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
@@ -95,9 +96,10 @@ fn authenticate(
 }
 
 /// smsmode's `status.value` (and `status.detail`) in notifyd's terms.
+/// RCS also reports `READ` when the recipient opens the message.
 fn report(value: &str, detail: Option<&str>) -> Report {
     match value {
-        "DELIVERED" => Report::Delivered,
+        "DELIVERED" | "READ" => Report::Delivered,
         "UNDELIVERABLE" | "UNDELIVERED" => Report::Failed(bounce_error(value, detail)),
         _ => Report::Pending,
     }
@@ -160,7 +162,11 @@ pub async fn status_callback(
     body: Bytes,
 ) -> Result<StatusCode, StatusCode> {
     let signature = headers.get("x-smsmode-256").and_then(|v| v.to_str().ok());
-    authenticate(state.config.connectors.sms.as_ref(), &body, signature)?;
+    authenticate(
+        state.config.connectors.smsmode_webhook_secret(),
+        &body,
+        signature,
+    )?;
 
     let callback: Callback = serde_json::from_slice(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
     if callback.direction.as_deref() == Some("MO") {
@@ -255,15 +261,19 @@ mod tests {
         let unavailable = Err(StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(authenticate(None, body, Some(SIGNATURE)), unavailable);
         assert_eq!(
-            authenticate(Some(&sms(None)), body, Some(SIGNATURE)),
+            authenticate(sms(None).webhook_secret.as_deref(), body, Some(SIGNATURE)),
             unavailable
         );
         assert_eq!(
-            authenticate(Some(&sms(Some(SECRET))), body, None),
+            authenticate(sms(Some(SECRET)).webhook_secret.as_deref(), body, None),
             Err(StatusCode::FORBIDDEN)
         );
         assert_eq!(
-            authenticate(Some(&sms(Some(SECRET))), body, Some(SIGNATURE)),
+            authenticate(
+                sms(Some(SECRET)).webhook_secret.as_deref(),
+                body,
+                Some(SIGNATURE)
+            ),
             Ok(())
         );
         // Switched back to Twilio with the smsmode secret left in place.
@@ -271,15 +281,23 @@ mod tests {
             provider: "twilio".to_string(),
             ..sms(Some(SECRET))
         };
-        assert_eq!(authenticate(Some(&twilio), body, Some(SIGNATURE)), Ok(()));
+        assert_eq!(
+            authenticate(twilio.webhook_secret.as_deref(), body, Some(SIGNATURE)),
+            Ok(())
+        );
     }
 
     #[test]
     fn statuses_map_to_delivered_bounced_or_nothing() {
         assert_eq!(report("DELIVERED", None), Report::Delivered);
+        assert_eq!(report("READ", None), Report::Delivered);
         assert_eq!(
             report("UNDELIVERABLE", Some("SPAM")),
             Report::Failed("smsmode SPAM".to_string())
+        );
+        assert_eq!(
+            report("UNDELIVERED", Some("PHONE_NOT_SUITABLE")),
+            Report::Failed("smsmode PHONE_NOT_SUITABLE".to_string())
         );
         assert_eq!(
             report("UNDELIVERED", None),
