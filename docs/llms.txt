@@ -67,6 +67,8 @@ Job lifecycle (GET /v1/jobs/:id): pending -> processing -> sent | retry | failed
 - after sent, provider feedback: Resend webhooks (email) and Twilio status callbacks (SMS, need PUBLIC_URL;
   POST /webhooks/twilio/status, X-Twilio-Signature, no API key). Twilio delivered -> delivered_at + job.delivered;
   undelivered|failed on a sent (or still processing) job -> bounced, bounced_at, error "twilio <ErrorCode>" + job.bounced;
+  smsmode (SMS, need PUBLIC_URL and SMSMODE_WEBHOOK_SECRET; POST /webhooks/smsmode/status, X-Smsmode-256, no API key):
+  DELIVERED -> delivered_at + job.delivered; UNDELIVERABLE|UNDELIVERED -> bounced, bounced_at, error "smsmode <detail>" + job.bounced;
   first terminal status wins; a job's events can arrive in any order, GET /v1/jobs/:id is the truth
 Worker claims jobs ORDER BY priority, scheduled_at: bulk never delays transactional.
 Jobs stuck in processing > 10 min (worker crash) are re-queued by a reaper (attempt consumed).
@@ -346,7 +348,7 @@ GET /v1/admin/audit — Audit log (query: ?project_id=xxx&limit=50)
 POST /v1/admin/webhooks — Create webhook
 Body: {"project_id": "myapp", "url": "https://myapp.com/hooks", "events": ["job.sent", "job.failed", "job.delivered", "job.bounced"], "secret": "whsec_xxx"}
 Events (exact names; an unlisted event is not sent): job.sent (also skipped jobs, provider skipped), job.failed,
-job.delivered (Twilio SMS), job.bounced (email bounce, SMS undelivered/failed), job.complained (email spam complaint).
+job.delivered (Twilio or smsmode SMS), job.bounced (email bounce, SMS undelivered/failed), job.complained (email spam complaint).
 
 GET /v1/admin/webhooks — List webhooks
 DELETE /v1/admin/webhooks/:id — Delete webhook
@@ -423,7 +425,7 @@ from_name = "My App"
 
 Env-only deployments (no TOML): EMAIL_PROVIDER, RESEND_API_KEY | CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_EMAIL_API_TOKEN
 | SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD/SMTP_SECURITY | AGENTMAIL_API_KEY, EMAIL_FROM, EMAIL_FROM_NAME,
-SMS_PROVIDER (telnyx|twilio) + SMS_FROM + TELNYX_API_KEY | TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN,
+SMS_PROVIDER (telnyx|twilio|smsmode) + SMS_FROM + TELNYX_API_KEY | TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN | SMSMODE_API_KEY (+ SMSMODE_WEBHOOK_SECRET),
 WORKER_MAX_ATTEMPTS, EMAIL_RATE_PER_SEC, SMS_RATE_PER_SEC, WHATSAPP_RATE_PER_SEC, PUSH_RATE_PER_SEC, RATE_LIMIT_PAUSE_SECS.
 Metrics: GET /v1/metrics (JSON) and GET /v1/metrics/prometheus (text), admin key as x-api-key or Bearer.
 
@@ -439,7 +441,7 @@ list_projects, update_project, list_suppressions, add_suppression, release_suppr
 Agent Skills: npx skills add rmzlb/notifyd (notifyd-operate, notifyd-integrate, notifyd-deploy).
 
 [connectors.sms]
-provider = "twilio"          # or "telnyx"
+provider = "twilio"          # or "telnyx", "smsmode"
 account_sid = "ACxxx"
 auth_token = "xxx"
 from = "+33600000000"

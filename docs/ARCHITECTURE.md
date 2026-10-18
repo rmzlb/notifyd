@@ -198,7 +198,7 @@ pub trait Connector: Send + Sync {
 
 Simple HTTP POST to Resend API. Supports HTML (`body_html`) and plain text (`body`).
 
-### SMS: Twilio / Telnyx
+### SMS: Twilio / Telnyx / smsmode
 
 Swappable via config — change `provider = "twilio"` to `provider = "telnyx"` and it works. Same interface, different HTTP calls internally.
 

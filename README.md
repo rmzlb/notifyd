@@ -59,7 +59,7 @@ your agent ───▶  │ POST /mcp ─▶ digest · jobs · retry · suppres
   Retries, idempotency and quiet hours in each recipient's time zone are
   built in.
 - **Your providers, your data.** Resend, Cloudflare Email, any SMTP,
-  AgentMail, Telnyx, Twilio, APNs, Web Push, FCM. Self-hosted, MIT.
+  AgentMail, Telnyx, Twilio, smsmode, APNs, Web Push, FCM. Self-hosted, MIT.
 - **Operated by an API or an AI agent.** No admin UI: a digest endpoint says
   what needs attention and what to do, and the same operations are MCP
   tools, so the person on call can be an agent.
@@ -189,7 +189,7 @@ Published on the official MCP registry as `mcp-name: io.github.rmzlb/notifyd`
 
 **Channels**
 - **Email** — Resend, Cloudflare Email Service, AgentMail, any SMTP (`lettre`), attachments, per-project sender identity
-- **SMS** — Telnyx or Twilio, swap with one variable
+- **SMS** — Telnyx, Twilio or smsmode, swap with one variable
 - **WhatsApp** — Telnyx
 - **Push** — APNs natively (`.p8` token auth, HTTP/2, badge, sound, thread id, silent pushes, dead tokens dropped), Web Push (VAPID), FCM
 - **In-app inbox** — REST + realtime SSE (`EventSource`), read / archive / star, unread badge, multi-replica through Postgres `NOTIFY`
@@ -411,8 +411,8 @@ Required: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_API_KEY`. Then one provider:
 | `EMAIL_FROM`, `EMAIL_FROM_NAME` | Instance default sender; projects can override |
 | `EMAIL_FALLBACK_PROVIDER` | Second provider on 429 / 5xx |
 | `EMAIL_RATE_PER_SEC` | Outbound pacing per replica |
-| `SMS_PROVIDER`, `SMS_FROM` | `telnyx` or `twilio` with their credentials |
-| `PUBLIC_URL` | Base URL for one-click unsubscribe links and Twilio SMS delivery status |
+| `SMS_PROVIDER`, `SMS_FROM` | `telnyx`, `twilio` or `smsmode` with their credentials |
+| `PUBLIC_URL` | Base URL for one-click unsubscribe links and Twilio and smsmode SMS delivery status |
 | `READONLY_API_KEY` | Optional read-only operator key |
 
 → Every variable, per provider: [docs/CONNECTORS.md](docs/CONNECTORS.md) and
