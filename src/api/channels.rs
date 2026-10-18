@@ -8,9 +8,10 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
 /// The channels whose delivery depends on a connector of this instance.
-const REPORTED: [Channel; 5] = [
+const REPORTED: [Channel; 6] = [
     Channel::Email,
     Channel::Sms,
+    Channel::Rcs,
     Channel::Whatsapp,
     Channel::Push,
     Channel::InApp,

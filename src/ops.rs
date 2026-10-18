@@ -55,6 +55,7 @@ pub struct InstanceInfo {
     pub uptime_seconds: u64,
     pub email_provider: Option<String>,
     pub sms_provider: Option<String>,
+    pub rcs_provider: Option<String>,
     pub whatsapp_provider: Option<String>,
     pub paused_lanes: Vec<String>,
     pub email_fallback_provider: Option<String>,
@@ -377,6 +378,12 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
             .sms
             .as_ref()
             .map(|c| c.provider.clone()),
+        rcs_provider: state
+            .config
+            .connectors
+            .rcs
+            .as_ref()
+            .map(|c| c.provider.clone()),
         whatsapp_provider: state
             .config
             .connectors
@@ -393,12 +400,7 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
         email_primary_resting_seconds: state.email_breaker.open_for().map(|d| d.as_secs()),
         email_failovers_since_boot: state.email_breaker.trips(),
         public_url: crate::unsubscribe::public_url(),
-        smsmode_webhook_secret: state
-            .config
-            .connectors
-            .sms
-            .as_ref()
-            .is_some_and(|c| c.webhook_secret.is_some()),
+        smsmode_webhook_secret: state.config.connectors.smsmode_webhook_secret().is_some(),
     };
 
     let findings = compute_findings(
@@ -428,7 +430,7 @@ pub async fn digest(state: &Arc<AppState>, window: Duration) -> Result<Digest> {
 }
 
 /// What this instance loses without `PUBLIC_URL`: one-click unsubscribe on
-/// bulk email, delivery status on Twilio and smsmode SMS.
+/// bulk email, delivery status on Twilio and smsmode SMS/RCS.
 fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
     if instance.public_url.is_some() {
         return None;
@@ -439,17 +441,27 @@ fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
         losses.push("bulk email leaves without List-Unsubscribe headers");
         reasons.push("Gmail and Yahoo require one-click unsubscribe on bulk senders");
     }
+    let has_smsmode_sms = instance.sms_provider.as_deref() == Some("smsmode");
+    let has_smsmode_rcs = instance.rcs_provider.as_deref() == Some("smsmode");
     match instance.sms_provider.as_deref() {
         Some("twilio") => {
             losses.push("Twilio SMS get no delivery status and stay `sent`");
             reasons.push("Twilio reports delivered or undelivered to a callback URL built from it");
         }
-        Some("smsmode") => {
+        Some("smsmode") if !has_smsmode_rcs => {
             losses.push("smsmode SMS get no delivery status and stay `sent`");
             reasons
                 .push("smsmode reports delivered or undelivered to a callback URL built from it");
         }
         _ => {}
+    }
+    if has_smsmode_rcs {
+        if has_smsmode_sms {
+            losses.push("smsmode SMS and RCS get no delivery status and stay `sent`");
+        } else {
+            losses.push("smsmode RCS get no delivery status and stay `sent`");
+        }
+        reasons.push("smsmode reports delivered or undelivered to a callback URL built from it");
     }
     if losses.is_empty() {
         return None;
@@ -465,9 +477,11 @@ fn missing_public_url(instance: &InstanceInfo) -> Option<Finding> {
 }
 
 /// smsmode signs its delivery reports with a secret set on both sides;
-/// without it notifyd asks for none, so smsmode SMS stay `sent`.
+/// without it notifyd asks for none, so smsmode SMS/RCS stay `sent`.
 fn missing_smsmode_secret(instance: &InstanceInfo) -> Option<Finding> {
-    (instance.sms_provider.as_deref() == Some("smsmode") && !instance.smsmode_webhook_secret).then(
+    let uses_smsmode = instance.sms_provider.as_deref() == Some("smsmode")
+        || instance.rcs_provider.as_deref() == Some("smsmode");
+    (uses_smsmode && !instance.smsmode_webhook_secret).then(
         || Finding {
             severity: "warning",
             message: "SMSMODE_WEBHOOK_SECRET is not set: smsmode SMS get no delivery status and stay `sent`.".to_string(),
@@ -659,6 +673,7 @@ impl Digest {
                 uptime_seconds: 0,
                 email_provider: None,
                 sms_provider: None,
+                rcs_provider: None,
                 whatsapp_provider: None,
                 paused_lanes: Vec::new(),
                 email_fallback_provider: None,
@@ -688,11 +703,16 @@ pub fn render_markdown(d: &Digest) -> String {
         d.generated_at.format("%Y-%m-%d %H:%M UTC")
     ));
     out.push_str(&format!(
-        "Instance: commit `{}`, up {}, email `{}`, sms `{}`, whatsapp `{}`{}\n\n",
+        "Instance: commit `{}`, up {}, email `{}`, sms `{}`{}, whatsapp `{}`{}\n\n",
         d.instance.commit,
         human_duration(d.instance.uptime_seconds),
         d.instance.email_provider.as_deref().unwrap_or("none"),
         d.instance.sms_provider.as_deref().unwrap_or("none"),
+        d.instance
+            .rcs_provider
+            .as_deref()
+            .map(|p| format!(", rcs `{p}`"))
+            .unwrap_or_default(),
         d.instance.whatsapp_provider.as_deref().unwrap_or("none"),
         match (
             &d.instance.email_fallback_provider,
@@ -1455,6 +1475,7 @@ mod tests {
             uptime_seconds: 10,
             email_provider: Some("log".into()),
             sms_provider: None,
+            rcs_provider: None,
             whatsapp_provider: None,
             paused_lanes: vec!["email".into()],
             email_fallback_provider: None,
@@ -1519,6 +1540,7 @@ mod tests {
             uptime_seconds: 10,
             email_provider: Some("resend".into()),
             sms_provider: None,
+            rcs_provider: None,
             whatsapp_provider: None,
             paused_lanes: vec![],
             email_fallback_provider: Some("smtp".into()),
@@ -1555,6 +1577,7 @@ mod tests {
                 uptime_seconds: 10,
                 email_provider: email.map(str::to_string),
                 sms_provider: sms.map(str::to_string),
+                rcs_provider: None,
                 whatsapp_provider: None,
                 paused_lanes: vec![],
                 email_fallback_provider: None,

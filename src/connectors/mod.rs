@@ -5,6 +5,7 @@ pub mod email;
 pub mod in_app;
 pub mod log;
 pub mod push;
+pub mod rcs;
 pub mod sms;
 pub mod smtp;
 pub mod whatsapp;
@@ -17,6 +18,7 @@ use std::time::Duration;
 pub enum Channel {
     Email,
     Sms,
+    Rcs,
     Whatsapp,
     InApp,
     Push,
@@ -30,6 +32,7 @@ impl Channel {
         match s {
             "email" => Some(Self::Email),
             "sms" => Some(Self::Sms),
+            "rcs" => Some(Self::Rcs),
             "whatsapp" => Some(Self::Whatsapp),
             "in_app" | "inapp" => Some(Self::InApp),
             "push" | "fcm" => Some(Self::Push),
@@ -43,6 +46,7 @@ impl Channel {
         match self {
             Self::Email => "email",
             Self::Sms => "sms",
+            Self::Rcs => "rcs",
             Self::Whatsapp => "whatsapp",
             Self::InApp => "in_app",
             Self::Push => "push",

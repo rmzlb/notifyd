@@ -84,6 +84,7 @@ impl Pacer {
         match channel {
             "email" => self.config.email_per_sec,
             "sms" => self.config.sms_per_sec,
+            "rcs" => self.config.rcs_per_sec,
             "whatsapp" => self.config.whatsapp_per_sec,
             "push" => self.config.push_per_sec,
             "telegram" => self.config.telegram_per_sec,
@@ -148,6 +149,7 @@ mod tests {
         Pacer::new(PacingConfig {
             email_per_sec,
             sms_per_sec: 10.0,
+            rcs_per_sec: 10.0,
             whatsapp_per_sec: 10.0,
             push_per_sec: 50.0,
             telegram_per_sec: 20.0,

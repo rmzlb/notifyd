@@ -46,7 +46,7 @@ impl SubscriberAddresses {
         };
         match channel {
             "email" => non_empty(&self.email),
-            "sms" | "whatsapp" => non_empty(&self.phone),
+            "sms" | "rcs" | "whatsapp" => non_empty(&self.phone),
             "telegram" => data_str("telegram_chat_id"),
             "slack" => data_str("slack")
                 .or_else(|| data_str("slack_webhook"))
@@ -62,7 +62,7 @@ impl SubscriberAddresses {
 pub fn missing_reason(channel: &str) -> String {
     let field = match channel {
         "email" => "email",
-        "sms" | "whatsapp" => "phone",
+        "sms" | "rcs" | "whatsapp" => "phone",
         "telegram" => "data.telegram_chat_id",
         "slack" => "data.slack (webhook URL or channel id)",
         "discord" => "data.discord_webhook",

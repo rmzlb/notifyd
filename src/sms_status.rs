@@ -55,13 +55,14 @@ pub(crate) fn outcome(status: &str, delivered: bool, report: &Report) -> Option<
 #[derive(Debug, PartialEq)]
 pub(crate) struct Changed {
     pub(crate) event: &'static str,
+    pub(crate) channel: String,
     pub(crate) project_id: String,
     pub(crate) subscriber_id: Option<String>,
 }
 
-/// Records `report` on the SMS job `job_id` sent through `provider`, when the
-/// job holds `message_id` (or no message yet). A callback for an unknown job,
-/// another provider's job or another message changes nothing.
+/// Records `report` on the SMS or RCS job `job_id` sent through `provider`,
+/// when the job holds `message_id` (or no message yet). A callback for an
+/// unknown job, another provider's job or another message changes nothing.
 pub(crate) async fn record(
     pool: &PgPool,
     provider: &'static str,
@@ -73,14 +74,14 @@ pub(crate) async fn record(
     // callback can beat by a few milliseconds.
     let job: Option<(String, bool, Option<String>)> = sqlx::query_as(
         "SELECT status, delivered_at IS NOT NULL, provider_message_id FROM jobs
-         WHERE id = $1 AND channel = 'sms' AND (provider = $2 OR provider IS NULL)",
+         WHERE id = $1 AND channel IN ('sms', 'rcs') AND (provider = $2 OR provider IS NULL)",
     )
     .bind(job_id)
     .bind(provider)
     .fetch_optional(pool)
     .await?;
     let Some((status, delivered, held_id)) = job else {
-        debug!("{provider} status callback for unknown SMS job {job_id}: ignored");
+        debug!("{provider} status callback for unknown SMS/RCS job {job_id}: ignored");
         return Ok(None);
     };
 
@@ -109,6 +110,8 @@ pub(crate) async fn record(
     }
 }
 
+type UpdatedRow = (String, String, Option<String>);
+
 /// Each UPDATE re-checks the state the outcome was decided on, so two
 /// callbacks racing each other still change the job once and fire one event.
 async fn apply(
@@ -117,14 +120,14 @@ async fn apply(
     message_id: &str,
     outcome: Outcome,
 ) -> Result<Option<Changed>, sqlx::Error> {
-    let (event, changed): (&str, Option<(String, Option<String>)>) = match outcome {
+    let (event, changed): (&str, Option<UpdatedRow>) = match outcome {
         Outcome::Delivered => (
             "job.delivered",
             sqlx::query_as(
                 "UPDATE jobs SET delivered_at = now()
                  WHERE id = $1 AND provider_message_id = $2
                    AND delivered_at IS NULL AND status <> 'bounced'
-                 RETURNING project_id, subscriber_id",
+                 RETURNING channel, project_id, subscriber_id",
             )
             .bind(job_id)
             .bind(message_id)
@@ -136,7 +139,7 @@ async fn apply(
                 "UPDATE jobs SET status = 'bounced', bounced_at = now(), error = $3
                  WHERE id = $1 AND provider_message_id = $2
                    AND status IN ('sent', 'processing') AND delivered_at IS NULL
-                 RETURNING project_id, subscriber_id",
+                 RETURNING channel, project_id, subscriber_id",
             )
             .bind(job_id)
             .bind(message_id)
@@ -149,8 +152,9 @@ async fn apply(
             ("job.bounced", changed)
         }
     };
-    Ok(changed.map(|(project_id, subscriber_id)| Changed {
+    Ok(changed.map(|(channel, project_id, subscriber_id)| Changed {
         event,
+        channel,
         project_id,
         subscriber_id,
     }))
@@ -160,6 +164,7 @@ async fn apply(
 pub(crate) fn announce(state: &Arc<AppState>, job_id: Uuid, changed: Option<Changed>) {
     if let Some(Changed {
         event,
+        channel,
         project_id,
         subscriber_id,
     }) = changed
@@ -169,7 +174,7 @@ pub(crate) fn announce(state: &Arc<AppState>, job_id: Uuid, changed: Option<Chan
             &project_id,
             event,
             job_id,
-            "sms",
+            &channel,
             subscriber_id,
         );
     }

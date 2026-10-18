@@ -116,7 +116,7 @@ pub fn tools() -> Value {
                 "properties": {
                     "project_id": {"type": "string"},
                     "status": {"type": "string", "enum": ["pending", "processing", "retry", "sent", "failed", "cancelled"]},
-                    "channel": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push"]},
+                    "channel": {"type": "string", "enum": ["email", "sms", "rcs", "whatsapp", "in_app", "push"]},
                     "recipient": {"type": "string", "description": "Exact address or phone number."},
                     "topic": {"type": "string", "description": "Only jobs carrying this topic (e.g. \"tips\")."},
                     "since": {"type": "string", "format": "date-time"},
@@ -162,7 +162,7 @@ pub fn tools() -> Value {
                 "properties": {
                     "id": {"type": "string"},
                     "name": {"type": "string"},
-                    "channels": {"type": "array", "items": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push", "telegram", "slack", "discord"]}},
+                    "channels": {"type": "array", "items": {"type": "string", "enum": ["email", "sms", "rcs", "whatsapp", "in_app", "push", "telegram", "slack", "discord"]}},
                     "from_email": {"type": "string"},
                     "from_name": {"type": "string"},
                     "rate_limit_per_min": {"type": "integer", "minimum": 1},
@@ -215,7 +215,7 @@ pub fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "channel": {"type": "string", "enum": ["email", "sms", "whatsapp", "in_app", "push"]},
+                    "channel": {"type": "string", "enum": ["email", "sms", "rcs", "whatsapp", "in_app", "push"]},
                     "to": {"type": "string", "description": "Email, E.164 number or subscriber id (in_app/push)."},
                     "subject": {"type": "string"},
                     "body": {"type": "string"}

@@ -244,7 +244,7 @@ fn is_alphanumeric_sender(from: &str) -> bool {
 }
 
 /// The job id the worker put on the request.
-fn job_id(metadata: &Value) -> Option<Uuid> {
+pub(super) fn job_id(metadata: &Value) -> Option<Uuid> {
     metadata
         .get(JOB_ID_METADATA)
         .and_then(Value::as_str)
@@ -264,7 +264,7 @@ fn status_callback(public_url: Option<&str>, metadata: &Value) -> Option<String>
 /// a public URL, can check smsmode's signature (`SMSMODE_WEBHOOK_SECRET`)
 /// and the request carries its job id. Without the secret every report
 /// would be refused and retried for a day, so none is asked for.
-fn smsmode_status_callback(
+pub(super) fn smsmode_status_callback(
     public_url: Option<&str>,
     has_secret: bool,
     job: Option<Uuid>,
@@ -325,7 +325,7 @@ fn is_gsm7(text: &str) -> bool {
 
 /// A 201 whose message smsmode already declares undeliverable (no route, no
 /// credit…): the job fails now rather than waiting for a report.
-fn smsmode_refusal(json: &Value) -> Option<String> {
+pub(super) fn smsmode_refusal(json: &Value) -> Option<String> {
     let status = json.get("status")?;
     let value = status.get("value").and_then(Value::as_str)?;
     if !matches!(value, "UNDELIVERABLE" | "UNDELIVERED") {

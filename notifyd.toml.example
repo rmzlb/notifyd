@@ -101,6 +101,16 @@ from = "+33600000000"
 # messaging_profile_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # optional
 # from = "+33600000000"
 
+# ─── RCS connector (smsmode) ──────────────────────────────────────────
+# Uses POST https://rest.smsmode.com/rcs/v1/messages. Requires a launched
+# smsmode RCS agent channel. Can also be configured via RCS_PROVIDER=smsmode
+# and SMSMODE_RCS_API_KEY (or SMSMODE_API_KEY).
+# [connectors.rcs]
+# provider = "smsmode"
+# api_key = "your_smsmode_rcs_api_key"
+# webhook_secret = "your_smsmode_webhook_secret"
+# from = "HelmAI"  # optional sender / channel override (11 characters max)
+
 # ─── WhatsApp connector (Telnyx) ──────────────────────────────────────
 # Uses POST /v2/messages/whatsapp. Free-form text only works inside the
 # 24h conversation window; outside it, pass a Meta-approved template via
