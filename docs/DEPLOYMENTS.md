@@ -22,16 +22,19 @@ No secret value is ever written here, only variable names.
   pinned Dockerfile makes the resulting binaries identical. `/v1/health`
   exposes `commit` and `built_at_epoch` so drift between instances is visible.
 
-## Inventory (verified 2026-09-05)
+## Inventory (verified 2026-09-05, belote rows 2026-10-21)
 
 | Company | Server (Dokploy alias) | Dokploy service | Public URL | Notes |
 |---|---|---|---|---|
 | CRAIE | CRAIE's own server (own Dokploy) | compose from this repo, autodeploy `main` | `notifyd.craie.ctrlnz.com` | Dedicated instance, redeploys within ~5 min of a push to `main`. |
 | sqare + helmai | square | compose `novu/notifyd-stack` | `notifyd.ctrlnz.com` | Shared by two companies. Global sender is Helmai; the `sqare` project has its own `from_email`. Its stale `craie` project (created 2026-06, no key hash, zero jobs) is gone (checked 2026-09-25). The orphan Application `notifyd/notifyd` (2026-03) was removed on 2026-09-25 (app, database and empty Dokploy project; its containers had no network and no connection; a verified dump is kept on the server). Sends SMS through Twilio (`SMS_PROVIDER=twilio`): `PUBLIC_URL` is required for SMS delivery status (`/webhooks/twilio/status`, docs/CONNECTORS.md). `SMSMODE_API_KEY` (smsmode channel `sqhealm`, TRANSACTIONAL) is set since 2026-10-17 for the switch to smsmode (docs/CONNECTORS.md § Switching provider); `SMSMODE_WEBHOOK_SECRET` is set since 2026-10-18 and must equal the secret entered in smsmode (Paramètres > Webhooks), or smsmode delivery reports are refused (403). |
 | Philoé | philoe | compose `notifyd` (git source, autodeploy `main` via a GitHub webhook on this repo) | internal `http://notifyd:3400`; public `https://api-os.philoeparis.com/notifyd` (path route on the API host, `stripPath`) for the admin in-app inbox | Created 2026-09-05. Path route instead of a dedicated hostname because no Cloudflare DNS token was available; switch to `notifyd-os.philoeparis.com` when one exists. Project `philoe`, `from_email` in `philoeparis.fr`. |
+| Baaton | belote (the Dokploy shared with RVK and belote) | compose `baaton/notifyd`, **raw** compose (not this repository's file), image `ghcr.io/rmzlb/notifyd:0.4.0`, autodeploy off | internal `http://baaton-notifyd:3400` (dedicated alias), used by `baaton/api` | Checked 2026-10-21. Sends through Cloudflare (`EMAIL_PROVIDER=cloudflare`). A push to `main` does not update it: it stays on 0.4.0 until its image tag is raised. |
+| RVK | belote | compose `rvk/notifyd` (Dokploy GitHub app, autodeploy `main`), app name `rvk-notifyd-2raxon` | internal `http://rvk-notifyd-2raxon-notifyd-1:3400` (container name, see *Two instances on one server*) | Created 2026-10-21. Project `rvk`, `from_email` `no-reply@rvk.ctrlnz.com`; the sending subdomain `rvk.ctrlnz.com` is onboarded in Cloudflare Email Service. `EMAIL_PROVIDER=log` until a Cloudflare token limited to Email Sending is set (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_API_TOKEN`). No public route: a temporary path route was used for the setup and removed. |
 
-All instances use the same Resend team today (every company domain is
-verified there). A per-company Resend team would need a per-instance
+The CRAIE, square and Philoé instances use the same Resend team (every
+company domain is verified there); Baaton and RVK send through Cloudflare
+Email Service. A per-company Resend team would need a per-instance
 `RESEND_API_KEY`, which this layout already allows.
 
 Keep this table current: it is the only place that says which instance
@@ -53,6 +56,13 @@ serves which company.
    the alias `notifyd`, so applications on the same server reach it at
    `http://notifyd:3400` without leaving the host. Add a public domain in
    Dokploy only if browsers must reach it (in-app inbox over SSE).
+
+   **Two instances on one server.** The compose service name `notifyd` is a
+   DNS name on `dokploy-network` as well, so with two instances on one server
+   `http://notifyd:3400` answers from either of them. Address each instance by
+   a name of its own: its container name `<app name>-notifyd-1` (RVK), or a
+   dedicated alias in a raw compose (Baaton).
+
 4. Create the company project, from the server (`docker exec` into the
    container, or any host that can reach the instance):
 
@@ -69,13 +79,14 @@ serves which company.
    fresh `built_at_epoch`; `GET /v1/admin/projects` lists the project with its
    `from_email`.
 
-## Two things every new instance needs
+## Two things about every new instance
 
-- **Delete the seeded `craie` project.** Migration `005_craie_project.sql` inserts a
-  `craie` project (random plaintext key, no hash, so it cannot authenticate) and
-  CRAIE templates into every fresh database. On any instance that is not CRAIE's,
-  `DELETE /v1/admin/projects/craie` right after the first boot. The `craie`
-  project seen on the square instance is this seed, not a CRAIE integration.
+- **The seeded `craie` project is gone on its own.** Migration `005_craie_project.sql`
+  inserts a `craie` project and CRAIE templates into every fresh database;
+  migration `023_drop_unused_seed_project.sql` removes them again wherever they were
+  never used. A fresh instance therefore starts with no project (checked on the RVK
+  instance, 2026-10-21). Delete `craie` by hand (`DELETE /v1/admin/projects/craie`)
+  only on an instance older than migration 023 that still lists it.
 - **Autodeploy without the GitHub App.** A compose with a `git` source needs a
   push webhook on this repository pointing at
   `<dokploy>/api/deploy/compose/<refreshToken>` (the token is on the compose
