@@ -758,9 +758,10 @@ The API is still simple REST + SSE. Any HTTP client works. See the examples abov
 
 ## Email Deliverability
 
-"Sent" only means the provider accepted the API call. Resend webhooks close the
-loop: notifyd records what actually happened (delivered, bounced, complained)
-and stops writing to addresses that bounced or complained.
+"Sent" only means the provider accepted the API call. Resend webhooks, or
+Cloudflare delivery events, close the loop: notifyd records what actually
+happened (delivered, bounced, complained) and stops writing to addresses that
+bounced or complained.
 
 ### Webhook ingestion
 
@@ -786,6 +787,52 @@ message id). Effects per event:
 Events map back to jobs through the `notifyd_job_id` tag that the worker adds
 to every outgoing email. Projects subscribed to outbound webhooks also receive
 `job.bounced` / `job.complained`.
+
+### Cloudflare delivery events
+
+With `EMAIL_PROVIDER=cloudflare` (or as fallback), Cloudflare publishes
+delivery events to a Cloudflare Queue and notifyd pulls it over the REST API:
+no Worker, no public route, no signing secret. Configure it once per instance:
+
+1. Cloudflare dashboard → Queues: create a queue (one per notifyd instance:
+   two instances on one queue would consume each other's events) and enable
+   **HTTP pull** as its consumer, with **20 retries** and a dead letter queue
+   (the default of 3 retries, without one, deletes an event for good after a
+   short database outage).
+2. Queue → Subscriptions → Subscribe to events: source **Email Sending**, one
+   subscription per sending domain, events `message.delivered`,
+   `message.deferred`, `message.bounced`, `message.failed`, `message.rejected`,
+   `message.complained`.
+3. Create an account API token limited to **Queues Edit** (pulling a message
+   and acknowledging it both need write access).
+4. Set `CLOUDFLARE_EMAIL_EVENTS_QUEUE_ID` (queue id), `CLOUDFLARE_QUEUES_API_TOKEN`
+   and `CLOUDFLARE_ACCOUNT_ID`, then restart. A queue id without the other two
+   is a start-up error.
+
+notifyd pulls every 15 s (at once again while full batches succeed). An event
+it cannot record (database down) goes back to the queue for 60 s per attempt,
+up to an hour. It stores each event in `provider_events` with
+`provider = 'cloudflare'`, id
+`cloudflare:<eventId>` (idempotent), under the Resend event names so digests
+and metrics count both providers:
+
+| Cloudflare event | Stored as | Effect |
+|---|---|---|
+| `message.delivered` | `email.delivered` | stamps `jobs.delivered_at` |
+| `message.bounced`, bounce type `hard` | `email.bounced` | job status → `bounced`, **suppression created** |
+| `message.bounced`, bounce type `soft` (retries exhausted) | `email.bounced` | job status → `bounced`, no suppression |
+| `message.complained` | `email.complained` | job stays `sent`, **suppression created** |
+| `message.deferred` | `email.delivery_delayed` | recorded only |
+| `message.rejected` (reason `suppressed`) | `email.suppressed` | recorded only |
+| `message.rejected` (other), `message.failed` | `email.failed` | recorded only |
+
+Events map back to jobs through `payload.messageId`, the id the send API
+returned (`jobs.provider_message_id`). An event that matches no job goes back
+to the queue once (60 s: the worker may not have stored the id yet); after
+that, events for messages notifyd did not send are dropped, except bounces and
+complaints, which are recorded without a job. A recipient Cloudflare reports
+in `suppressed_recipients` at send time fails the job permanently. Cloudflare also keeps its own suppression list (hard bounces,
+complaints); notifyd's list stays the one projects inspect and release.
 
 ### Commercial unsubscribe (bulk email)
 

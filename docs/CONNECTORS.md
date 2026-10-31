@@ -20,7 +20,7 @@ Common: `EMAIL_FROM` (default sender, verified at the provider),
 | `EMAIL_PROVIDER` | Variables | Notes |
 |---|---|---|
 | `resend` (default when `RESEND_API_KEY` is set) | `RESEND_API_KEY` | Native batch (`/emails/batch`, 100 per call), tags, headers, attachments on single send. Rate limit 10 req/s per team: keep `EMAIL_RATE_PER_SEC` ≤ 8 per replica. |
-| `cloudflare` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_API_TOKEN` (token with the Email Sending permission) | Cloudflare Email Service REST API (beta, Workers Paid). Headers, reply-to, cc, attachments (5 MiB total). A recipient reported in `permanent_bounces` fails the job permanently. No provider message id. |
+| `cloudflare` | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_API_TOKEN` (token with the Email Sending permission) | Cloudflare Email Service REST API (Workers Paid). Headers, reply-to, cc, attachments (25 MiB per message). A recipient reported in `permanent_bounces` fails the job permanently. The provider message id is `result.message_id` (angle brackets removed); later bounces and complaints arrive through `CLOUDFLARE_EMAIL_EVENTS_QUEUE_ID` (docs/API.md § Email Deliverability). |
 | `smtp` | `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_SECURITY` = `starttls` \| `tls` \| `none` | Any SMTP submission service: Amazon SES, Postmark, Brevo, Mailgun, OVH, Cloudflare (`smtp.mx.cloudflare.net:465`, `tls`), a relay. Multipart text+HTML, headers, attachments; the generated `Message-ID` is the provider message id. SMTP 4xx = transient, 5xx = permanent. |
 | `agentmail` | `AGENTMAIL_API_KEY`, `EMAIL_FROM` = inbox address | Agent inbox provider. |
 | `log` | — | Nothing is sent. One info log line per message, `provider="log"` in metrics. Development and previews only. |
