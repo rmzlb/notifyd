@@ -1,11 +1,15 @@
-# Gate on every push and pull request. Deploys are NOT done here: each
-# company's Dokploy pulls `main` itself (docs/DEPLOYMENTS.md).
+# Gate on pull requests and on code pushed to main; documentation-only
+# changes skip it. Deploys are NOT done here: each company's Dokploy pulls
+# `main` itself and builds the image (docs/DEPLOYMENTS.md), so the image is
+# built here on pull requests only.
 name: ci
 
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "skills/**", "**/*.md"]
   pull_request:
+    paths-ignore: ["docs/**", "skills/**", "**/*.md"]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -34,12 +38,12 @@ jobs:
       EMAIL_PROVIDER: log
       EMAIL_FROM: ci@example.invalid
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked
       - run: cargo test --locked
       - name: Image builds and embeds the commit
+        if: github.event_name == 'pull_request'
         run: |
           docker build -t notifyd:ci .
           docker run --rm --entrypoint sh notifyd:ci -c 'test -x /usr/local/bin/notifyd && ls migrations | wc -l'
@@ -47,11 +51,11 @@ jobs:
   clients:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -61,7 +65,7 @@ jobs:
           pnpm exec tsc --noEmit --strict --target es2020 --moduleResolution bundler --module esnext --skipLibCheck sdk/index.ts
           pnpm run build:sdk
           git diff --exit-code -- sdk/dist || { echo "sdk/dist is stale: run pnpm build:sdk and commit"; exit 1; }
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
       - name: Python client tests and build
         working-directory: clients/python
         run: |

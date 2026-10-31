@@ -20,7 +20,7 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Pin server.json to the release
         run: |
           v="${{ inputs.tag }}"; v="${v#v}"
