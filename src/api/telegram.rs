@@ -233,9 +233,9 @@ pub async fn put_owner(
     let bot_username = tg_get_me(&client, &base, &body.bot_token).await.map_err(|e| bad(&e))?;
 
     #[derive(sqlx::FromRow)]
-    struct ExRow { id: Uuid, bot_username: String, webhook_connection_id: Uuid, bot_token_enc: Vec<u8> }
+    struct ExRow { bot_username: String, webhook_connection_id: Uuid, bot_token_enc: Vec<u8> }
     let existing: Option<ExRow> = sqlx::query_as(
-        "SELECT id, bot_username, webhook_connection_id, bot_token_enc
+        "SELECT bot_username, webhook_connection_id, bot_token_enc
          FROM telegram_credentials WHERE project_id=$1 AND owner=$2")
         .bind(&project.id).bind(&owner)
         .fetch_optional(&state.pool).await.map_err(ierr)?;

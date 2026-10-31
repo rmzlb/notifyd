@@ -68,7 +68,7 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
 
     let mut tx = state.pool.begin().await?;
 
-    let jobs: Vec<Job> = sqlx::query_as(&format!(
+    let jobs: Vec<Job> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         r#"
         SELECT {JOB_COLUMNS}
         FROM jobs
@@ -80,7 +80,7 @@ async fn process_batch(state: &Arc<AppState>) -> Result<()> {
         LIMIT $2
         FOR UPDATE SKIP LOCKED
         "#
-    ))
+    )))
     .bind(now)
     .bind(batch_size)
     .bind(&paused)
@@ -835,10 +835,10 @@ async fn build_send_request(
     ctx: Option<&EmailContext>,
 ) -> Result<SendRequest, ProviderError> {
     let (subject, body, body_html) = if let Some(tmpl_id) = &job.template_id {
-        let tmpl: Option<crate::db::Template> = sqlx::query_as(&format!(
+        let tmpl: Option<crate::db::Template> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT {} FROM templates WHERE project_id=$1 AND id=$2 AND channel=$3",
             crate::db::TEMPLATE_COLUMNS
-        ))
+        )))
         .bind(&job.project_id)
         .bind(tmpl_id)
         .bind(&job.channel)

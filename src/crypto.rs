@@ -19,9 +19,9 @@ pub fn load_key() -> Result<[u8; 32]> {
 pub fn encrypt(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| anyhow!("{e}"))?;
     let nonce_bytes: [u8; 12] = uuid::Uuid::new_v4().as_bytes()[..12].try_into().unwrap();
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::from(nonce_bytes);
     let ciphertext = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(&nonce, plaintext)
         .map_err(|e| anyhow!("encrypt: {e}"))?;
     let mut out = Vec::with_capacity(12 + ciphertext.len());
     out.extend_from_slice(&nonce_bytes);
@@ -35,9 +35,9 @@ pub fn decrypt(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
     }
     let (nonce_bytes, ciphertext) = blob.split_at(12);
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| anyhow!("{e}"))?;
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce = Nonce::try_from(nonce_bytes).map_err(|_| anyhow!("credential unavailable"))?;
     cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|_| anyhow!("credential unavailable"))
 }
 

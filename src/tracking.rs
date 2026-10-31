@@ -293,7 +293,11 @@ async fn record(state: &Arc<AppState>, job_id: Uuid, event: &str, payload: Value
     let sql = format!(
         "UPDATE jobs SET {column} = COALESCE({column}, now()) WHERE id = $1 AND channel = 'email'"
     );
-    if let Err(e) = sqlx::query(&sql).bind(job_id).execute(&state.pool).await {
+    if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(job_id)
+        .execute(&state.pool)
+        .await
+    {
         tracing::warn!("tracking job update failed: {}", e);
     }
 }

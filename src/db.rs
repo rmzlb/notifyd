@@ -186,14 +186,18 @@ mod schema_smoke {
             .await
             .expect("migrations");
 
-        sqlx::query_as::<_, Job>(&format!("SELECT {JOB_COLUMNS} FROM jobs LIMIT 1"))
-            .fetch_optional(&pool)
-            .await
-            .expect("Job columns");
-        sqlx::query_as::<_, Template>(&format!("SELECT {TEMPLATE_COLUMNS} FROM templates LIMIT 1"))
-            .fetch_optional(&pool)
-            .await
-            .expect("Template columns");
+        sqlx::query_as::<_, Job>(sqlx::AssertSqlSafe(format!(
+            "SELECT {JOB_COLUMNS} FROM jobs LIMIT 1"
+        )))
+        .fetch_optional(&pool)
+        .await
+        .expect("Job columns");
+        sqlx::query_as::<_, Template>(sqlx::AssertSqlSafe(format!(
+            "SELECT {TEMPLATE_COLUMNS} FROM templates LIMIT 1"
+        )))
+        .fetch_optional(&pool)
+        .await
+        .expect("Template columns");
         sqlx::query_as::<_, Subscriber>(
             "SELECT id, project_id, email, phone, first_name, last_name, locale, data, created_at, updated_at FROM subscribers LIMIT 1",
         )

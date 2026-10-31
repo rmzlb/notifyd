@@ -46,10 +46,10 @@ pub async fn get_job(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
 
-    let job: Option<Job> = sqlx::query_as(&format!(
+    let job: Option<Job> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {} FROM jobs WHERE id=$1 AND project_id=$2",
         crate::db::JOB_COLUMNS
-    ))
+    )))
     .bind(id)
     .bind(&project.id)
     .fetch_optional(&state.pool)

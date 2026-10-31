@@ -495,7 +495,7 @@ mod tests {
         let s3 = seen.clone();
         let app = Router::new()
             .route(
-                "/bot:token/sendMessage",
+                "/bot{token}/sendMessage",
                 post(move |Path(token): Path<String>, headers: HeaderMap, Json(body): Json<Value>| {
                     let seen = s1.clone();
                     async move {
