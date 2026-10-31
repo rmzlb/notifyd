@@ -4,7 +4,7 @@
 # déployées depuis ce dépôt). Refresh des pins volontaire, avec le Cargo.lock.
 # cargo-chef arrive précompilé : plus de `cargo install` de plusieurs minutes
 # à chaque perte de cache Docker.
-FROM lukemathwalker/cargo-chef:latest-rust-1.98.0-alpine@sha256:917b051d1fc8e234a3aad123378b5263c95fa5d8739439ee25aa789c2db97a90 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.99.1-alpine@sha256:2c27e67049f17e8b67d882a2cf2f5e1a1d4d71c206ec97f91edf278254688e95 AS chef
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static git
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked --bin notifyd
 
-FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS runtime
+FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS runtime
 RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
 COPY --from=builder /app/target/release/notifyd /usr/local/bin/notifyd
