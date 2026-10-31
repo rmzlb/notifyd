@@ -305,7 +305,7 @@ mod tests {
 
         let app = Router::new()
             .route(
-                "/v1/inbox/:subscriber_id/stream",
+                "/v1/inbox/{subscriber_id}/stream",
                 get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
             )
             .layer(trace_layer());

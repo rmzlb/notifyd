@@ -45,15 +45,15 @@ pub fn router(state: Arc<AppState>) -> Router {
     // Commercial unsubscribe links (RFC 8058 one-click), signed tokens.
     let unsubscribe = Router::new()
         .route(
-            "/u/:token",
+            "/u/{token}",
             axum::routing::get(crate::unsubscribe::get).post(crate::unsubscribe::post),
         )
         .with_state(state.clone());
 
     // Open pixel and click redirects (src/tracking.rs), signed tokens.
     let tracking = Router::new()
-        .route("/t/o/:token", axum::routing::get(crate::tracking::open))
-        .route("/t/c/:token", axum::routing::get(crate::tracking::click))
+        .route("/t/o/{token}", axum::routing::get(crate::tracking::open))
+        .route("/t/c/{token}", axum::routing::get(crate::tracking::click))
         .with_state(state.clone());
 
     // Model Context Protocol endpoint for agents (admin key).
@@ -90,37 +90,37 @@ fn api_routes(state: Arc<AppState>) -> Router {
         // What this project can send on this instance
         .route("/channels", get(channels::list_channels))
         // Jobs
-        .route("/jobs/:id", get(jobs::get_job).delete(jobs::cancel_job))
+        .route("/jobs/{id}", get(jobs::get_job).delete(jobs::cancel_job))
         // Subscribers (list + create)
         .route(
             "/subscribers",
             post(subscribers::upsert_subscriber).get(subscribers::list_subscribers),
         )
         .route(
-            "/subscribers/:id",
+            "/subscribers/{id}",
             get(subscribers::get_subscriber).delete(subscribers::delete_subscriber),
         )
         // Preferences
         .route(
-            "/subscribers/:id/preferences",
+            "/subscribers/{id}/preferences",
             get(preferences::get_preferences).put(preferences::set_preferences),
         )
         // Inbox
-        .route("/inbox/:subscriber_id", get(inbox::list_notifications))
+        .route("/inbox/{subscriber_id}", get(inbox::list_notifications))
         .route(
-            "/inbox/:subscriber_id/unread-count",
+            "/inbox/{subscriber_id}/unread-count",
             get(inbox::unread_count),
         )
-        .route("/inbox/:subscriber_id/read-all", post(inbox::read_all))
+        .route("/inbox/{subscriber_id}/read-all", post(inbox::read_all))
         .route(
-            "/inbox/:subscriber_id/:msg_id",
+            "/inbox/{subscriber_id}/{msg_id}",
             patch(inbox::update_notification),
         )
         .route(
-            "/inbox/:subscriber_id/stream-ticket",
+            "/inbox/{subscriber_id}/stream-ticket",
             post(inbox::stream_ticket),
         )
-        .route("/inbox/:subscriber_id/stream", get(inbox::sse_stream))
+        .route("/inbox/{subscriber_id}/stream", get(inbox::sse_stream))
         // Workflows
         .route(
             "/workflows",
@@ -128,26 +128,26 @@ fn api_routes(state: Arc<AppState>) -> Router {
         )
         .route("/workflows/trigger", post(workflows::trigger_workflow))
         .route("/workflows/runs", get(workflows::list_runs))
-        .route("/workflows/runs/:id", delete(workflows::cancel_run))
+        .route("/workflows/runs/{id}", delete(workflows::cancel_run))
         .route(
-            "/workflows/:id",
+            "/workflows/{id}",
             get(workflows::get_workflow).delete(workflows::delete_workflow),
         )
         // Push tokens — BUG FIX #4: split list-by-subscriber and delete-by-uuid
         .route("/push/vapid-public-key", get(push_tokens::vapid_public_key))
         .route("/push-tokens", post(push_tokens::register_token))
         .route(
-            "/push-tokens/subscriber/:subscriber_id",
+            "/push-tokens/subscriber/{subscriber_id}",
             get(push_tokens::list_tokens),
         )
-        .route("/push-tokens/:id", delete(push_tokens::delete_token))
+        .route("/push-tokens/{id}", delete(push_tokens::delete_token))
         // Templates
         .route(
             "/templates",
             post(templates::upsert_template).get(templates::list_templates),
         )
         .route(
-            "/templates/:id",
+            "/templates/{id}",
             get(templates::get_template).delete(templates::delete_template),
         )
         // Deliverability (suppression list)
@@ -156,7 +156,7 @@ fn api_routes(state: Arc<AppState>) -> Router {
             get(crate::deliverability::list_suppressions).post(admin_ops::project_add_suppression),
         )
         .route(
-            "/suppressions/:id",
+            "/suppressions/{id}",
             delete(crate::deliverability::release_suppression),
         )
         // Admin
@@ -164,13 +164,16 @@ fn api_routes(state: Arc<AppState>) -> Router {
             "/admin/projects",
             post(projects::create_project).get(projects::list_projects),
         )
-        .route("/admin/projects/:id/rotate-key", post(projects::rotate_key))
         .route(
-            "/admin/projects/:id/revoke-secondary",
+            "/admin/projects/{id}/rotate-key",
+            post(projects::rotate_key),
+        )
+        .route(
+            "/admin/projects/{id}/revoke-secondary",
             post(projects::revoke_secondary),
         )
         .route(
-            "/admin/projects/:id",
+            "/admin/projects/{id}",
             delete(projects::delete_project).patch(admin_ops::patch_project),
         )
         .route("/admin/audit", get(projects::audit_log))
@@ -179,31 +182,31 @@ fn api_routes(state: Arc<AppState>) -> Router {
         .route("/admin/digest/notify", post(admin_ops::digest_notify))
         .route("/admin/metrics/templates", get(admin_ops::template_metrics))
         .route("/admin/jobs", get(admin_ops::list_jobs))
-        .route("/admin/jobs/:id", get(admin_ops::admin_get_job))
+        .route("/admin/jobs/{id}", get(admin_ops::admin_get_job))
         .route("/admin/send-test", post(admin_ops::admin_send_test))
-        .route("/admin/jobs/:id/retry", post(admin_ops::admin_retry_job))
-        .route("/admin/jobs/:id/cancel", post(admin_ops::admin_cancel_job))
+        .route("/admin/jobs/{id}/retry", post(admin_ops::admin_retry_job))
+        .route("/admin/jobs/{id}/cancel", post(admin_ops::admin_cancel_job))
         .route(
             "/admin/suppressions",
             get(admin_ops::admin_list_suppressions).post(admin_ops::admin_add_suppression),
         )
         .route(
-            "/admin/suppressions/:id",
+            "/admin/suppressions/{id}",
             delete(admin_ops::admin_release_suppression),
         )
-        .route("/jobs/:id/retry", post(admin_ops::project_retry_job))
+        .route("/jobs/{id}/retry", post(admin_ops::project_retry_job))
         // Telegram per-user credentials, destinations, links, and webhook ingestion
         // Webhooks
         .route(
             "/admin/webhooks",
             post(webhooks::create_webhook).get(webhooks::list_webhooks),
         )
-        .route("/admin/webhooks/:id", delete(webhooks::delete_webhook))
+        .route("/admin/webhooks/{id}", delete(webhooks::delete_webhook))
         // Per-user Telegram (credentials, destinations, linking, lookup, webhooks)
-        .route("/telegram/:owner", axum::routing::get(telegram::get_owner).put(telegram::put_owner).delete(telegram::delete_owner))
-        .route("/telegram/:owner/destination", axum::routing::put(telegram::put_destination).delete(telegram::delete_destination))
-        .route("/telegram/:owner/link", axum::routing::post(telegram::post_link))
+        .route("/telegram/{owner}", axum::routing::get(telegram::get_owner).put(telegram::put_owner).delete(telegram::delete_owner))
+        .route("/telegram/{owner}/destination", axum::routing::put(telegram::put_destination).delete(telegram::delete_destination))
+        .route("/telegram/{owner}/link", axum::routing::post(telegram::post_link))
         .route("/telegram/lookup", axum::routing::post(telegram::lookup))
-        .route("/telegram/webhooks/:id", axum::routing::post(telegram::webhook_handler))
+        .route("/telegram/webhooks/{id}", axum::routing::post(telegram::webhook_handler))
         .with_state(state)
 }

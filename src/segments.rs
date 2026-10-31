@@ -269,7 +269,7 @@ pub async fn resolve(
     let sql =
         format!("SELECT id, timezone FROM subscribers WHERE {where_sql} ORDER BY created_at, id");
     apply_binds(
-        sqlx::query_as::<_, (String, Option<String>)>(&sql),
+        sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql)),
         project_id,
         &binds,
     )
@@ -289,22 +289,30 @@ pub async fn preview(
 ) -> Result<(i64, Vec<String>), String> {
     let (where_sql, binds) = compile(segment)?;
     let count_sql = format!("SELECT COUNT(*) FROM subscribers WHERE {where_sql}");
-    let (count,): (i64,) = apply_binds(sqlx::query_as(&count_sql), project_id, &binds)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("segment count failed: {}", e);
-            "segment query failed".to_string()
-        })?;
+    let (count,): (i64,) = apply_binds(
+        sqlx::query_as(sqlx::AssertSqlSafe(count_sql)),
+        project_id,
+        &binds,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("segment count failed: {}", e);
+        "segment query failed".to_string()
+    })?;
     let sample_sql =
         format!("SELECT id FROM subscribers WHERE {where_sql} ORDER BY created_at, id LIMIT 10");
-    let sample: Vec<(String,)> = apply_binds(sqlx::query_as(&sample_sql), project_id, &binds)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("segment sample failed: {}", e);
-            "segment query failed".to_string()
-        })?;
+    let sample: Vec<(String,)> = apply_binds(
+        sqlx::query_as(sqlx::AssertSqlSafe(sample_sql)),
+        project_id,
+        &binds,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("segment sample failed: {}", e);
+        "segment query failed".to_string()
+    })?;
     Ok((count, sample.into_iter().map(|(id,)| id).collect()))
 }
 

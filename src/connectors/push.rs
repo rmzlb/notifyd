@@ -6,9 +6,15 @@ use base64::Engine;
 use serde_json::{json, Value};
 use tracing::info;
 use web_push::{
-    ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
-    WebPushMessageBuilder,
+    request_builder, ContentEncoding, SubscriptionInfo, VapidSignatureBuilder, WebPushError,
+    WebPushMessage, WebPushMessageBuilder,
 };
+
+/// Push services answer in well under a second; a hung endpoint must not
+/// hold a worker slot.
+const WEB_PUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Same cap as web-push's own clients: error bodies are small JSON.
+const WEB_PUSH_MAX_RESPONSE: usize = 64 * 1024;
 
 pub struct PushConnector {
     config: PushConfig,
@@ -19,7 +25,12 @@ impl PushConnector {
     pub fn new(config: PushConfig) -> Self {
         Self {
             config,
-            client: reqwest::Client::new(),
+            // A push service that redirects would turn the POST into a GET
+            // without payload and still answer 2xx: never follow.
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("push HTTP client"),
         }
     }
 
@@ -161,8 +172,7 @@ impl PushConnector {
         }
 
         message_builder.set_vapid_signature(signature_builder.build()?);
-        let client = IsahcWebPushClient::new()?;
-        client.send(message_builder.build()?).await?;
+        self.post_web_push(message_builder.build()?).await?;
 
         info!(
             "Push sent via Web Push to {}",
@@ -170,6 +180,39 @@ impl PushConnector {
         );
         Ok(())
     }
+}
+
+impl PushConnector {
+    /// Sends a built Web Push message with notifyd's own HTTP client (no
+    /// libcurl) and reads the answer with web-push's response parser.
+    async fn post_web_push(&self, message: WebPushMessage) -> Result<()> {
+        let (parts, body) = request_builder::build_request::<Vec<u8>>(message).into_parts();
+        let mut request = self
+            .client
+            .post(parts.uri.to_string())
+            .timeout(WEB_PUSH_TIMEOUT)
+            .body(body);
+        for (name, value) in parts.headers.iter() {
+            request = request.header(name.as_str(), value.as_bytes());
+        }
+        let mut response = request.send().await.map_err(transport_error)?;
+        let status = http02::StatusCode::from_u16(response.status().as_u16())
+            .map_err(|_| WebPushError::InvalidResponse)?;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+            if body.len() + chunk.len() > WEB_PUSH_MAX_RESPONSE {
+                return Err(WebPushError::ResponseTooLarge.into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        request_builder::parse_response(status, body)?;
+        Ok(())
+    }
+}
+
+/// A network failure is retryable, like web-push's own clients report it.
+fn transport_error(error: reqwest::Error) -> WebPushError {
+    WebPushError::Io(std::io::Error::other(error))
 }
 
 #[async_trait]
@@ -198,7 +241,6 @@ impl Connector for PushConnector {
 /// retrying; the subscription should be dropped instead. Push service
 /// outages are transient.
 pub fn classify_web_push_error(error: anyhow::Error) -> ProviderError {
-    use web_push::WebPushError;
     let message = error.to_string();
     match error.downcast_ref::<WebPushError>() {
         Some(WebPushError::ServerError { .. }) => ProviderError::transient("web-push", message),

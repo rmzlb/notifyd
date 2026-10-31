@@ -879,7 +879,7 @@ pub async fn template_metrics(
         other => return Err(anyhow!("bucket must be 1h or 1d (got {other})")),
     };
     let since = Utc::now() - window;
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"
         WITH j AS (
             SELECT id, status,
@@ -912,7 +912,7 @@ pub async fn template_metrics(
         GROUP BY j.template, j.bucket
         ORDER BY j.template, j.bucket
         "#
-    ))
+    )))
     .bind(since)
     .bind(project_id)
     .fetch_all(&state.pool)
@@ -1004,10 +1004,10 @@ pub async fn list_jobs(state: &Arc<AppState>, filter: &JobFilter) -> Result<Vec<
 
 /// One job with its provider events, admin scope (no project restriction).
 pub async fn get_job(state: &Arc<AppState>, job_id: Uuid) -> Result<Value> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {}, delivered_at, bounced_at FROM jobs WHERE id = $1",
         crate::db::JOB_COLUMNS
-    ))
+    )))
     .bind(job_id)
     .fetch_optional(&state.pool)
     .await?

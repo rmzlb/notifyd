@@ -424,7 +424,7 @@ qE7wkgWlbfA2Q5MegIe3BD98KwxLDfAAITCBleTv5NpB45V0CxTBsVCV
         let seen: Arc<Mutex<Vec<(String, HeaderMap, Value)>>> = Arc::new(Mutex::new(Vec::new()));
         let seen_in_handler = seen.clone();
         let app = Router::new().route(
-            "/3/device/:token",
+            "/3/device/{token}",
             post(
                 move |Path(token): Path<String>, headers: HeaderMap, Json(body): Json<Value>| {
                     let seen = seen_in_handler.clone();
