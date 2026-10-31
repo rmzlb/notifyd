@@ -1,6 +1,7 @@
 mod addresses;
 mod api;
 mod cli;
+mod cloudflare_events;
 mod config;
 mod connectors;
 mod crypto;
@@ -184,6 +185,10 @@ async fn main() -> anyhow::Result<()> {
     // Digest to a chat (DIGEST_NOTIFY), when configured. A bad value is a
     // start-up error, not a silent no-op.
     digest_notify::spawn_scheduler(state.clone())?;
+
+    // Cloudflare Email Sending delivery events (bounces, complaints), when
+    // CLOUDFLARE_EMAIL_EVENTS_QUEUE_ID is set.
+    cloudflare_events::spawn(state.clone())?;
 
     // SSE cleanup
     let cleanup_broadcaster = broadcaster.clone();

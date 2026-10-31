@@ -36,6 +36,10 @@ services:
       AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY:-}
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
+      # Cloudflare delivery events (bounces, complaints) pulled from a queue;
+      # empty queue id = off. Token limited to Queues Edit (docs/API.md).
+      CLOUDFLARE_EMAIL_EVENTS_QUEUE_ID: ${CLOUDFLARE_EMAIL_EVENTS_QUEUE_ID:-}
+      CLOUDFLARE_QUEUES_API_TOKEN: ${CLOUDFLARE_QUEUES_API_TOKEN:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}

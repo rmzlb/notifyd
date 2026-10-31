@@ -1,5 +1,6 @@
 //! Email deliverability: Resend webhook ingestion and the per-project
-//! suppression list.
+//! suppression list. Cloudflare delivery events come through
+//! cloudflare_events.rs and go through the same `apply_*` functions.
 //!
 //! "Sent" only means Resend accepted the API call. What the recipient's mail
 //! server did with it comes back minutes later through webhooks — and without
@@ -197,18 +198,51 @@ pub async fn resend_webhook(
     }
 
     match event_type.as_str() {
-        "email.delivered" => {
-            if let Some(id) = job_id {
-                let _ = sqlx::query(
-                    "UPDATE jobs SET delivered_at = COALESCE(delivered_at, now()) WHERE id = $1",
-                )
-                .bind(id)
-                .execute(&state.pool)
-                .await;
-            }
+        "email.delivered" => mark_delivered(&state.pool, job_id).await,
+        "email.bounced" => {
+            let bounce_type = payload
+                .pointer("/data/bounce/type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Permanent");
+            let message = payload
+                .pointer("/data/bounce/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("bounced");
+            // Transient bounces (full mailbox, greylisting) resolve on their own —
+            // only a permanent rejection proves the address is dead.
+            let bounce = Bounce {
+                permanent: bounce_type.eq_ignore_ascii_case("permanent"),
+                label: bounce_type,
+                message,
+            };
+            let source = EventSource {
+                provider_event_id: &svix_id,
+                actor: "resend-webhook",
+            };
+            apply_bounce(
+                &state,
+                job_id,
+                &bounce,
+                resend_recipients(&payload),
+                &source,
+            )
+            .await
         }
-        "email.bounced" => handle_bounce(&state, job_id, &payload, &svix_id).await,
-        "email.complained" => handle_complaint(&state, job_id, &payload, &svix_id).await,
+        "email.complained" => {
+            let detail = complaint_detail(payload.pointer("/data/subject"));
+            let source = EventSource {
+                provider_event_id: &svix_id,
+                actor: "resend-webhook",
+            };
+            apply_complaint(
+                &state,
+                job_id,
+                &detail,
+                resend_recipients(&payload),
+                &source,
+            )
+            .await
+        }
         other => {
             // Recorded above for audit; nothing to act on (yet).
             info!("Resend event {} recorded without action", other);
@@ -216,6 +250,40 @@ pub async fn resend_webhook(
     }
 
     Ok(StatusCode::OK)
+}
+
+/// Where a delivery event came from: its id in provider_events and the
+/// actor written in the audit log of the suppressions it creates.
+pub(crate) struct EventSource<'a> {
+    pub provider_event_id: &'a str,
+    pub actor: &'a str,
+}
+
+/// A bounce, whatever the provider calls it. `label` is the provider's own
+/// word (Resend "Permanent"/"Transient", Cloudflare "hard"/"soft").
+pub(crate) struct Bounce<'a> {
+    pub permanent: bool,
+    pub label: &'a str,
+    pub message: &'a str,
+}
+
+pub(crate) async fn mark_delivered(pool: &PgPool, job_id: Option<Uuid>) {
+    if let Some(id) = job_id {
+        let _ = sqlx::query(
+            "UPDATE jobs SET delivered_at = COALESCE(delivered_at, now()) WHERE id = $1",
+        )
+        .bind(id)
+        .execute(pool)
+        .await;
+    }
+}
+
+/// "marked as spam", with the subject when the provider sends it.
+pub(crate) fn complaint_detail(subject: Option<&Value>) -> String {
+    subject
+        .and_then(|v| v.as_str())
+        .map(|s| format!("marked as spam (subject: {})", s))
+        .unwrap_or_else(|| "marked as spam".to_string())
 }
 
 /// Look up the job a webhook event points at. Events for emails sent before
@@ -235,28 +303,20 @@ async fn job_context(
     .flatten()
 }
 
-async fn handle_bounce(
+pub(crate) async fn apply_bounce(
     state: &Arc<AppState>,
     job_id: Option<Uuid>,
-    payload: &Value,
-    svix_id: &str,
+    bounce: &Bounce<'_>,
+    recipients: Vec<String>,
+    source: &EventSource<'_>,
 ) {
-    let bounce_type = payload
-        .pointer("/data/bounce/type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Permanent");
-    let message = payload
-        .pointer("/data/bounce/message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("bounced");
-
     let Some((id, project_id, recipient, subscriber_id)) = job_context(&state.pool, job_id).await
     else {
         info!("Bounce event without a matching job — recorded only");
         return;
     };
 
-    let error_text = format!("bounced ({}): {}", bounce_type, message);
+    let error_text = format!("bounced ({}): {}", bounce.label, bounce.message);
     let _ = sqlx::query(
         "UPDATE jobs SET status = 'bounced', bounced_at = now(), error = $2
          WHERE id = $1 AND status = 'sent'",
@@ -266,19 +326,16 @@ async fn handle_bounce(
     .execute(&state.pool)
     .await;
 
-    // Transient bounces (full mailbox, greylisting) resolve on their own —
-    // only a permanent rejection proves the address is dead.
-    if bounce_type.eq_ignore_ascii_case("permanent") {
-        let impacted = impacted_recipients(payload, &recipient);
-        for address in impacted {
+    if bounce.permanent {
+        for address in impacted_recipients(recipients, &recipient) {
             suppress(
                 state,
                 &project_id,
                 &address,
                 "bounce",
-                message,
+                bounce.message,
                 Some(id),
-                svix_id,
+                source,
             )
             .await;
         }
@@ -287,7 +344,7 @@ async fn handle_bounce(
     warn!(
         "Job {} bounced ({}) for {}",
         id,
-        bounce_type,
+        bounce.label,
         crate::pii::mask_email(&recipient)
     );
     fire_job_event(
@@ -300,11 +357,12 @@ async fn handle_bounce(
     );
 }
 
-async fn handle_complaint(
+pub(crate) async fn apply_complaint(
     state: &Arc<AppState>,
     job_id: Option<Uuid>,
-    payload: &Value,
-    svix_id: &str,
+    detail: &str,
+    recipients: Vec<String>,
+    source: &EventSource<'_>,
 ) {
     let Some((id, project_id, recipient, subscriber_id)) = job_context(&state.pool, job_id).await
     else {
@@ -316,21 +374,15 @@ async fn handle_complaint(
     // 'sent'; what must change is that we never write to them again: spam
     // complaints are the one signal mailbox providers weigh most against a
     // sender domain.
-    let detail = payload
-        .pointer("/data/subject")
-        .and_then(|v| v.as_str())
-        .map(|s| format!("marked as spam (subject: {})", s))
-        .unwrap_or_else(|| "marked as spam".to_string());
-    let impacted = impacted_recipients(payload, &recipient);
-    for address in impacted {
+    for address in impacted_recipients(recipients, &recipient) {
         suppress(
             state,
             &project_id,
             &address,
             "complaint",
-            &detail,
+            detail,
             Some(id),
-            svix_id,
+            source,
         )
         .await;
     }
@@ -350,14 +402,22 @@ async fn handle_complaint(
     );
 }
 
-fn impacted_recipients(payload: &Value, fallback: &str) -> Vec<String> {
-    let mut recipients: Vec<String> = payload
+/// Recipients a Resend event names (`data.to`).
+fn resend_recipients(payload: &Value) -> Vec<String> {
+    payload
         .pointer("/data/to")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .map(str::trim)
+        .map(str::to_string)
+        .collect()
+}
+
+fn impacted_recipients(named: Vec<String>, fallback: &str) -> Vec<String> {
+    let mut recipients: Vec<String> = named
+        .iter()
+        .map(|address| address.trim())
         .filter(|address| !address.is_empty())
         .map(str::to_string)
         .collect();
@@ -378,7 +438,7 @@ async fn suppress(
     reason: &str,
     detail: &str,
     source_job_id: Option<Uuid>,
-    provider_event_id: &str,
+    source: &EventSource<'_>,
 ) {
     let res = sqlx::query(
         "INSERT INTO email_suppressions
@@ -391,7 +451,7 @@ async fn suppress(
     .bind(reason)
     .bind(detail)
     .bind(source_job_id)
-    .bind(provider_event_id)
+    .bind(source.provider_event_id)
     .execute(&state.pool)
     .await;
 
@@ -400,7 +460,7 @@ async fn suppress(
             middleware::audit(
                 &state.pool,
                 project_id,
-                "resend-webhook",
+                source.actor,
                 &format!("suppression.created ({})", reason),
                 Some(&crate::pii::mask_email(email)),
                 None,

@@ -5,8 +5,10 @@
 //! (2026-06): body `to`, `from` (string or `{address, name}`), `cc`, `bcc`,
 //! `reply_to`, `subject`, `html`, `text`, `headers`, `attachments`
 //! (`{content(base64), filename, type, disposition}`); response
-//! `result.delivered / queued / permanent_bounces`; 429 code 10004
-//! `email.sending.error.throttled`. Limits: 50 recipients, 5 MiB per message.
+//! `result.delivered / queued / permanent_bounces / message_id` (message_id
+//! in the API reference since 2026-10, read by cloudflare_events.rs to map
+//! delivery events back to the job); 429 code 10004
+//! `email.sending.error.throttled`. Limits: 50 recipients, 25 MiB per message.
 
 use super::{
     email::{cc_recipients, normalized_attachments, reply_to},
@@ -89,18 +91,30 @@ impl CloudflareEmailConnector {
 
 /// Cloudflare answers 200 even when the recipient bounced at once: the
 /// address then sits in `result.permanent_bounces`. That is a permanent
-/// error for this job, not a success.
+/// error for this job, not a success. Same for `result.suppressed_recipients`
+/// (sending domains with "drop suppressed recipients" on): nothing was sent.
 pub fn outcome_from_result(recipient: &str, result: &Value) -> Result<(), ProviderError> {
-    let bounced = result
-        .get("permanent_bounces")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(Value::as_str)
-                .any(|address| address.eq_ignore_ascii_case(recipient))
-        })
-        .unwrap_or(false);
-    if bounced {
+    let listed = |field: &str| {
+        result
+            .get(field)
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .any(|address| address.eq_ignore_ascii_case(recipient))
+            })
+            .unwrap_or(false)
+    };
+    if listed("suppressed_recipients") {
+        return Err(ProviderError::permanent(
+            "cloudflare",
+            format!(
+                "recipient {} is on the Cloudflare suppression list",
+                crate::pii::mask_email(recipient)
+            ),
+        ));
+    }
+    if listed("permanent_bounces") {
         return Err(ProviderError::permanent(
             "cloudflare",
             format!(
@@ -110,6 +124,16 @@ pub fn outcome_from_result(recipient: &str, result: &Value) -> Result<(), Provid
         ));
     }
     Ok(())
+}
+
+/// The id Cloudflare gives the message, stored as the job's
+/// provider_message_id without its angle brackets (delivery events carry it).
+pub fn message_id(result: &Value) -> Option<String> {
+    result
+        .get("message_id")
+        .and_then(Value::as_str)
+        .map(crate::cloudflare_events::normalize_message_id)
+        .filter(|id| !id.is_empty())
 }
 
 #[async_trait]
@@ -156,13 +180,13 @@ impl Connector for CloudflareEmailConnector {
                 .to_string();
             return Err(ProviderError::permanent("cloudflare", message));
         }
-        outcome_from_result(&req.recipient, parsed.get("result").unwrap_or(&Value::Null))?;
+        let result = parsed.get("result").unwrap_or(&Value::Null);
+        outcome_from_result(&req.recipient, result)?;
         info!(
             "Email sent via Cloudflare Email Service to {}",
             crate::pii::mask_email(&req.recipient)
         );
-        // The REST API reports recipient status, not a message id.
-        Ok(Delivery::new("cloudflare", None))
+        Ok(Delivery::new("cloudflare", message_id(result)))
     }
 }
 
@@ -215,6 +239,23 @@ mod tests {
             connector().endpoint(),
             "https://api.cloudflare.com/client/v4/accounts/acct123/email/sending/send"
         );
+    }
+
+    #[test]
+    fn recipient_on_cloudflare_suppression_list_is_a_permanent_error() {
+        let result = json!({"delivered": [], "suppressed_recipients": ["Jane@example.com"]});
+        let err = outcome_from_result("jane@example.com", &result).unwrap_err();
+        assert_eq!(err.kind, super::super::ProviderErrorKind::Permanent);
+        assert!(outcome_from_result("other@example.com", &result).is_ok());
+    }
+
+    #[test]
+    fn message_id_is_kept_without_angle_brackets() {
+        let result =
+            json!({"delivered": ["jane@example.com"], "message_id": "<aB3x@philoeparis.fr>"});
+        assert_eq!(message_id(&result).as_deref(), Some("aB3x@philoeparis.fr"));
+        assert_eq!(message_id(&json!({"delivered": []})), None);
+        assert_eq!(message_id(&json!({"message_id": " <> "})), None);
     }
 
     #[test]
