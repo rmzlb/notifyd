@@ -25,7 +25,12 @@ impl PushConnector {
     pub fn new(config: PushConfig) -> Self {
         Self {
             config,
-            client: reqwest::Client::new(),
+            // A push service that redirects would turn the POST into a GET
+            // without payload and still answer 2xx: never follow.
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("push HTTP client"),
         }
     }
 

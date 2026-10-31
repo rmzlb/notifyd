@@ -21,6 +21,8 @@ COPY . .
 RUN cargo build --release --locked --bin notifyd
 
 FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS runtime
+# ca-certificates est requis : reqwest 0.13 (rustls-platform-verifier) lit le
+# magasin système, et sans lui les clients HTTP ne démarrent pas.
 RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
 COPY --from=builder /app/target/release/notifyd /usr/local/bin/notifyd

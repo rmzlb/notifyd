@@ -381,10 +381,14 @@ pub async fn post_link(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(owner): Path<String>,
-    body: Option<Json<LinkBody>>,
+    body: axum::body::Bytes,
 ) -> ApiResult<Json<Value>> {
     let project = extract_project(&state, &headers).await?;
-    let kind = body.map(|b| b.0.kind).unwrap_or_else(private_kind);
+    // The body is optional: no body, or one that is not a LinkBody, means a
+    // private link (axum 0.8's Option<Json> would answer 400 instead).
+    let kind = serde_json::from_slice::<LinkBody>(&body)
+        .map(|b| b.kind)
+        .unwrap_or_else(|_| private_kind());
     if kind != "private" && kind != "group" { return Err(bad("kind must be 'private' or 'group'")); }
 
     #[derive(sqlx::FromRow)]
