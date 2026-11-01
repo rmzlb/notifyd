@@ -71,11 +71,20 @@ once_cell = "1"
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
 strip = true
+
+# Les ~380 dépendances restent en opt-level = 3 ; seul le crate binaire
+# d'orchestration HTTP/SQL compile sans passe d'optimisation LLVM lourde ni
+# LTO global à chaque déploiement Dokploy.
+[profile.release.package.notifyd]
+opt-level = 0
+codegen-units = 256
 
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[profile.dist.package.notifyd]
+opt-level = 3
+codegen-units = 16
