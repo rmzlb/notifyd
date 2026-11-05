@@ -187,9 +187,12 @@ impl PushConnector {
     /// libcurl) and reads the answer with web-push's response parser.
     async fn post_web_push(&self, message: WebPushMessage) -> Result<()> {
         let (parts, body) = request_builder::build_request::<Vec<u8>>(message).into_parts();
+        let target_url = crate::webhooks::validate_outbound_url(&parts.uri.to_string(), true)
+            .await
+            .map_err(|_| WebPushError::InvalidUri)?;
         let mut request = self
             .client
-            .post(parts.uri.to_string())
+            .post(target_url)
             .timeout(WEB_PUSH_TIMEOUT)
             .body(body);
         for (name, value) in parts.headers.iter() {

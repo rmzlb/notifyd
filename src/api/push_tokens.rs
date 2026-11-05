@@ -41,6 +41,11 @@ pub async fn register_token(
     Json(req): Json<RegisterToken>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let project = extract_project(&state, &headers).await?;
+    if let Some(ref endpoint) = req.endpoint {
+        crate::webhooks::validate_outbound_url(endpoint, true)
+            .await
+            .map_err(|msg| (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": msg}))))?;
+    }
     let token = req
         .token
         .clone()

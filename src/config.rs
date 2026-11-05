@@ -630,10 +630,24 @@ fn required(name: &str, context: &str) -> anyhow::Result<String> {
     env_non_empty(name).ok_or_else(|| anyhow::anyhow!("{name} is required with {context}"))
 }
 
+fn generate_ephemeral_jwt_secret() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
 impl Config {
     pub fn from_file(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let mut config: Config = toml::from_str(&content)?;
+        if config.server.jwt_secret.trim().is_empty()
+            || config.server.jwt_secret == "change-me-in-production"
+        {
+            config.server.jwt_secret =
+                env_non_empty("JWT_SECRET").unwrap_or_else(generate_ephemeral_jwt_secret);
+        }
         if config.connectors.push.is_none() {
             config.connectors.push = PushConfig::from_env();
         }
@@ -658,8 +672,9 @@ impl Config {
         let config = Config {
             server: ServerConfig {
                 port: env_parse("PORT", 3400),
-                jwt_secret: std::env::var("JWT_SECRET")
-                    .unwrap_or_else(|_| "change-me-in-production".to_string()),
+                jwt_secret: env_non_empty("JWT_SECRET")
+                    .filter(|s| s != "change-me-in-production")
+                    .unwrap_or_else(generate_ephemeral_jwt_secret),
             },
             database: DatabaseConfig {
                 url: std::env::var("DATABASE_URL").map_err(|_| {
