@@ -134,6 +134,32 @@ pub async fn advance_workflow(state: &Arc<AppState>, run_id: Uuid) -> Result<()>
                 body,
                 body_html,
             } => {
+                let allowed_channels: Option<Vec<String>> = if let Some(proj) =
+                    state.config.projects.get(&run.project_id)
+                {
+                    Some(proj.channels.clone())
+                } else {
+                    sqlx::query_scalar::<_, Option<Vec<String>>>(
+                        "SELECT channels FROM projects WHERE id = $1",
+                    )
+                    .bind(&run.project_id)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+                };
+                if let Some(ref allowed) = allowed_channels {
+                    if !allowed.is_empty() && !allowed.iter().any(|c| c == channel) {
+                        warn!(
+                            "Workflow {} step {} skipped: channel '{}' not allowed for project '{}'",
+                            run_id, current, channel, run.project_id
+                        );
+                        current += 1;
+                        continue;
+                    }
+                }
+
                 // Check preference before sending
                 if !check_preference(
                     state,

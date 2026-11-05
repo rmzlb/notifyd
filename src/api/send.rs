@@ -18,6 +18,7 @@ pub struct Project {
     pub id: String,
     #[allow(dead_code)]
     pub rate_limit: u32,
+    pub channels: Vec<String>,
 }
 
 pub fn extract_api_key(headers: &HeaderMap) -> &str {
@@ -50,9 +51,16 @@ pub async fn extract_project(
     // 1. Check TOML config (fast path, constant-time compare)
     for (id, proj) in &state.config.projects {
         if constant_time_eq(proj.api_key.as_bytes(), api_key.as_bytes()) {
+            if !state.rate_limiter.check(id, 600).await {
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({"error": "Rate limit exceeded"})),
+                ));
+            }
             return Ok(Project {
                 id: id.clone(),
                 rate_limit: 600,
+                channels: proj.channels.clone(),
             });
         }
     }
@@ -60,15 +68,15 @@ pub async fn extract_project(
     // 2. Check DB (hash the incoming key and compare against stored hashes)
     // BUG FIX #3: Never compare plaintext API keys in SQL
     let api_key_hash = crate::api::projects::hash_key(api_key);
-    let row: Option<(String, Option<i32>)> = sqlx::query_as(
-        "SELECT id, rate_limit_per_min FROM projects WHERE api_key_hash = $1 OR secondary_api_key_hash = $1"
+    let row: Option<(String, Option<i32>, Option<Vec<String>>)> = sqlx::query_as(
+        "SELECT id, rate_limit_per_min, channels FROM projects WHERE api_key_hash = $1 OR secondary_api_key_hash = $1"
     )
     .bind(&api_key_hash)
     .fetch_optional(&state.pool)
     .await
     .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "DB error"}))))?;
 
-    if let Some((id, rate_limit)) = row {
+    if let Some((id, rate_limit, channels)) = row {
         // Rate limit check
         let limit = rate_limit.unwrap_or(600) as u32;
         if !state.rate_limiter.check(&id, limit).await {
@@ -80,6 +88,7 @@ pub async fn extract_project(
         return Ok(Project {
             id,
             rate_limit: limit,
+            channels: channels.unwrap_or_default(),
         });
     }
 
@@ -374,6 +383,20 @@ pub async fn send_notification(
             .map(|s| s.trim().to_string())
             .collect()
     });
+
+    if !project.channels.is_empty() {
+        for ch in &channels {
+            if !project.channels.iter().any(|allowed| allowed == ch) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": "channel_not_allowed",
+                        "message": format!("Project '{}' is not allowed to send on channel '{}'", project.id, ch),
+                    })),
+                ));
+            }
+        }
+    }
 
     if req.to.is_none() && req.subscriber_id.is_none() {
         return Err((
@@ -1137,6 +1160,20 @@ pub async fn batch_notification(
             .map(|s| s.trim().to_string())
             .collect()
     });
+
+    if !project.channels.is_empty() {
+        for ch in &channels {
+            if !project.channels.iter().any(|allowed| allowed == ch) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": "channel_not_allowed",
+                        "message": format!("Project '{}' is not allowed to send on channel '{}'", project.id, ch),
+                    })),
+                ));
+            }
+        }
+    }
 
     // A fan-out never bypasses opt-outs. Refuse loudly instead of ignoring the
     // field, so nobody ships a campaign believing it reached people who

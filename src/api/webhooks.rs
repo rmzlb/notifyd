@@ -26,6 +26,9 @@ pub async fn create_webhook(
     Json(req): Json<CreateWebhook>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&headers)?;
+    crate::webhooks::validate_outbound_url(&req.url, false)
+        .await
+        .map_err(|msg| (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": msg}))))?;
 
     let secret = req
         .secret
