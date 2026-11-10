@@ -26,11 +26,11 @@ fn email_envelope(channel: &str, recipient: &str, payload: &Value) -> Option<Val
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let reply_to = payload
-        .get("reply_to")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    // One address (a string) or several (a list), as the job holds it.
+    let reply_to = payload.get("reply_to").filter(|value| {
+        value.as_str().is_some_and(|one| !one.trim().is_empty())
+            || value.as_array().is_some_and(|several| !several.is_empty())
+    });
 
     Some(json!({
         "to": [recipient],
