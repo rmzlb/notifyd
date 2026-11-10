@@ -41,7 +41,7 @@ Body:
   "tags": [{"name": "category", "value": "transactional"}],  // email; category=campaign|marketing|newsletter defaults priority to bulk
   "email_headers": {"List-Unsubscribe": "<https://...>"},    // email, custom MIME headers
   "attachments": [{"filename": "f.pdf", "content": "<base64>", "content_type": "application/pdf"}],
-  "cc": ["copy@example.com"], "reply_to": "support@example.com",
+  "cc": ["copy@example.com"], "reply_to": "support@example.com",  // or a list of addresses (resend provider only)
   "send_window": {"start":"09:00","end":"20:00","tz":"Europe/Paris","days":[1,2,3,4,5]},  // bulk waits for recipient daytime; false bypasses the project window
   "topic": "tips",                   // optional stream name; defaults to the template's topic. See TOPICS.
   "track": false,                    // or {"opens": false, "clicks": true}; see TRACKING. Default: project setting (on).

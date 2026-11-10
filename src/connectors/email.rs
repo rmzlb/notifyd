@@ -98,6 +98,8 @@ pub fn cc_recipients(metadata: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The one reply address of a job. A list (several addresses) is read only
+/// by Resend (`reply_to_value`): `/v1/send` refuses several for the others.
 pub fn reply_to(metadata: &Value) -> Option<String> {
     metadata
         .get("reply_to")
@@ -105,6 +107,22 @@ pub fn reply_to(metadata: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(String::from)
+}
+
+/// Resend's `reply_to`: the job's address as a string, or its list.
+fn reply_to_value(metadata: &Value) -> Option<Value> {
+    if let Some(one) = reply_to(metadata) {
+        return Some(json!(one));
+    }
+    let several: Vec<&str> = metadata
+        .get("reply_to")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect();
+    (!several.is_empty()).then(|| json!(several))
 }
 
 // ─── Resend ─────────────────────────────────────────────────────────
@@ -148,8 +166,8 @@ impl ResendConnector {
         if !cc.is_empty() {
             obj.insert("cc".to_string(), json!(cc));
         }
-        if let Some(reply_to) = reply_to(&req.metadata) {
-            obj.insert("reply_to".to_string(), json!(reply_to));
+        if let Some(reply_to) = reply_to_value(&req.metadata) {
+            obj.insert("reply_to".to_string(), reply_to);
         }
         // Only valid on single-send; the batch endpoint rejects attachments,
         // so the worker never batches these (see worker.rs).
@@ -399,6 +417,18 @@ mod tests {
         assert_eq!(
             body.get("from"),
             Some(&json!("Sender <sender@example.com>"))
+        );
+    }
+
+    #[test]
+    fn resend_payload_sends_several_reply_addresses_as_a_list() {
+        let connector = ResendConnector::new(config());
+        let body = connector.build_email_body(&request(json!({
+            "reply_to": ["reply+42@example.com", "desk@example.com"]
+        })));
+        assert_eq!(
+            body.get("reply_to"),
+            Some(&json!(["reply+42@example.com", "desk@example.com"]))
         );
     }
 

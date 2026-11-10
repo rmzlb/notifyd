@@ -112,6 +112,23 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 // ─── Request types ────────────────────────────────────────────────────────────
 
+/// `reply_to` of a send: one address, or several that all receive the reply.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ReplyTo {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl ReplyTo {
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            ReplyTo::One(address) => vec![address],
+            ReplyTo::Many(addresses) => addresses,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SendRequest {
     pub channel: Option<String>,
@@ -146,8 +163,8 @@ pub struct SendRequest {
     /// Carbon-copy recipients for email deliveries. These are part of the
     /// durable job payload so retries preserve the exact envelope.
     pub cc: Option<Vec<String>>,
-    /// Address that receives replies to the email.
-    pub reply_to: Option<String>,
+    /// Address that receives replies to the email: one, or a list (Resend only).
+    pub reply_to: Option<ReplyTo>,
     /// Display name of the sender for this email only ("Centre Foch"). The
     /// address stays the project's: only its domain is verified.
     pub from_name: Option<String>,
@@ -499,11 +516,22 @@ pub async fn send_notification(
         .map(|(_, a)| a.clone())
         .unwrap_or_default();
 
+    let reply_to_requested = req
+        .reply_to
+        .clone()
+        .map(ReplyTo::into_vec)
+        .unwrap_or_default();
     let (cc, reply_to) = validate_email_envelope(
         &channels,
         &email_recipient,
         req.cc.as_deref(),
-        req.reply_to.as_deref(),
+        &reply_to_requested,
+        state
+            .config
+            .connectors
+            .email
+            .as_ref()
+            .map(|email| email.provider.as_str()),
     )
     .map_err(|error| {
         (
@@ -638,9 +666,14 @@ pub async fn send_notification(
         }
     }
 
-    if let Some(reply_to) = reply_to {
+    // One address stays a string in the job, as before; several are a list.
+    if !reply_to.is_empty() {
         if let Some(p) = payload.as_object_mut() {
-            p.insert("reply_to".to_string(), json!(reply_to));
+            let value = match reply_to.as_slice() {
+                [one] => json!(one),
+                several => json!(several),
+            };
+            p.insert("reply_to".to_string(), value);
         }
     }
 
@@ -868,16 +901,21 @@ fn looks_like_email(value: &str) -> bool {
             .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.'))
 }
 
+/// Several reply addresses are sent only by the `resend` provider, whose API
+/// takes a list; the others take one address, so several are refused here
+/// rather than cut down in the connector.
 fn validate_email_envelope(
     channels: &[String],
     recipient: &str,
     cc: Option<&[String]>,
-    reply_to: Option<&str>,
-) -> Result<(Vec<String>, Option<String>), String> {
+    reply_to: &[String],
+    email_provider: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), String> {
     const MAX_CC_RECIPIENTS: usize = 10;
+    const MAX_REPLY_TO_ADDRESSES: usize = 10;
 
     let has_email = channels.iter().any(|channel| channel == "email");
-    if !has_email && (cc.is_some() || reply_to.is_some()) {
+    if !has_email && (cc.is_some() || !reply_to.is_empty()) {
         return Err("cc and reply_to can only be used with the email channel".to_string());
     }
 
@@ -899,17 +937,30 @@ fn validate_email_envelope(
         ));
     }
 
-    let normalized_reply_to = reply_to
-        .map(str::trim)
-        .filter(|address| !address.is_empty())
-        .map(|address| {
-            if looks_like_email(address) {
-                Ok(address.to_string())
-            } else {
-                Err(format!("Invalid reply_to email address: {address}"))
-            }
-        })
-        .transpose()?;
+    let mut seen_reply_to = HashSet::new();
+    let mut normalized_reply_to = Vec::new();
+    for address in reply_to.iter().map(|address| address.trim()) {
+        if address.is_empty() {
+            continue;
+        }
+        if !looks_like_email(address) {
+            return Err(format!("Invalid reply_to email address: {address}"));
+        }
+        if seen_reply_to.insert(address.to_ascii_lowercase()) {
+            normalized_reply_to.push(address.to_string());
+        }
+    }
+    if normalized_reply_to.len() > MAX_REPLY_TO_ADDRESSES {
+        return Err(format!(
+            "An email cannot contain more than {MAX_REPLY_TO_ADDRESSES} reply_to addresses"
+        ));
+    }
+    if normalized_reply_to.len() > 1 && email_provider != Some("resend") {
+        return Err(
+            "Several reply_to addresses need the resend email provider: this instance takes one"
+                .to_string(),
+        );
+    }
 
     Ok((normalized_cc, normalized_reply_to))
 }
@@ -1082,12 +1133,71 @@ mod tests {
             &channels,
             "SUPPLIER@example.com",
             Some(&cc),
-            Some(" orders@example.com "),
+            &[" orders@example.com ".to_string()],
+            Some("cloudflare"),
         )
         .expect("valid envelope");
 
         assert_eq!(cc, vec!["Buyer@example.com"]);
-        assert_eq!(reply_to.as_deref(), Some("orders@example.com"));
+        assert_eq!(reply_to, vec!["orders@example.com"]);
+    }
+
+    #[test]
+    fn several_reply_to_addresses_need_resend() {
+        let email = vec!["email".to_string()];
+        let several = vec![
+            " Reply+42@helmai.ai ".to_string(),
+            "desk@example.com".to_string(),
+            "reply+42@helmai.ai".to_string(),
+        ];
+
+        let (_, reply_to) = validate_email_envelope(
+            &email,
+            "insurer@example.com",
+            None,
+            &several,
+            Some("resend"),
+        )
+        .expect("Resend takes several reply addresses");
+        assert_eq!(reply_to, vec!["Reply+42@helmai.ai", "desk@example.com"]);
+
+        for provider in [Some("cloudflare"), Some("smtp"), Some("agentmail"), None] {
+            assert!(
+                validate_email_envelope(&email, "insurer@example.com", None, &several, provider)
+                    .is_err(),
+                "{provider:?} must refuse several reply addresses"
+            );
+        }
+        assert!(validate_email_envelope(
+            &email,
+            "insurer@example.com",
+            None,
+            &["desk@example.com".to_string(), "not-an-address".to_string()],
+            Some("resend"),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn reply_to_is_one_address_or_a_list() {
+        let one: super::SendRequest =
+            serde_json::from_value(json!({ "to": "a@example.com", "reply_to": "b@example.com" }))
+                .expect("a string");
+        assert_eq!(
+            one.reply_to.map(super::ReplyTo::into_vec),
+            Some(vec!["b@example.com".to_string()])
+        );
+        let many: super::SendRequest = serde_json::from_value(
+            json!({ "to": "a@example.com", "reply_to": ["b@example.com", "c@example.com"] }),
+        )
+        .expect("a list");
+        assert_eq!(
+            many.reply_to.map(super::ReplyTo::into_vec),
+            Some(vec![
+                "b@example.com".to_string(),
+                "c@example.com".to_string()
+            ])
+        );
     }
 
     #[test]
@@ -1096,14 +1206,16 @@ mod tests {
             &["in_app".to_string()],
             "subscriber-1",
             Some(&["buyer@example.com".to_string()]),
-            None,
+            &[],
+            Some("resend"),
         )
         .is_err());
         assert!(validate_email_envelope(
             &["email".to_string()],
             "supplier@example.com",
             Some(&["invalid".to_string()]),
-            None,
+            &[],
+            Some("resend"),
         )
         .is_err());
     }
